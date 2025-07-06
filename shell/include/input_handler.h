@@ -31,6 +31,7 @@ namespace Urbaxio {
             // Tool state
             bool isDrawingLineMode,
             bool isPushPullMode,
+            bool& isPushPullActive,
             uint64_t& hoveredObjId,
             std::vector<size_t>& hoveredFaceTriangleIndices,
             // Drawing mode & state (Input/Output)
@@ -61,6 +62,11 @@ namespace Urbaxio {
         uint64_t lastClickedObjId;
         size_t lastClickedTriangleIndex;
 
+        // Push/Pull internal state
+        uint64_t pushPull_objId;
+        std::vector<size_t> pushPull_faceIndices;
+        glm::vec3 pushPull_faceNormal;
+        glm::vec3 pushPull_startPoint;
 
         // Axis Locking State
         bool isAxisLocked;

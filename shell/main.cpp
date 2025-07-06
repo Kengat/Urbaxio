@@ -63,6 +63,7 @@ int main(int argc, char* argv[]) {
     // --- Tool State ---
     bool isDrawingLineMode = false;
     bool isPushPullMode = false;
+    bool isPushPullActive = false; // Is a Push/Pull operation currently in progress?
 
     // --- Push/Pull State ---
     uint64_t hoveredObjId = 0;
@@ -83,7 +84,7 @@ int main(int argc, char* argv[]) {
         int display_w, display_h; SDL_GetWindowSize(window, &display_w, &display_h);
         if (isDrawingLineMode && !isPlacingFirstPoint && !isPlacingSecondPoint) { isPlacingFirstPoint = true; } else if (!isDrawingLineMode && (isPlacingFirstPoint || isPlacingSecondPoint)) { isPlacingFirstPoint = false; isPlacingSecondPoint = false; lineLengthInputBuf[0] = '\0'; lineLengthValue = 0.0f; }
         
-        inputHandler.ProcessEvents(camera, should_quit, window, display_w, display_h, selectedObjId, selectedTriangleIndices, selectedLineIndices, isDrawingLineMode, isPushPullMode, hoveredObjId, hoveredFaceTriangleIndices, isPlacingFirstPoint, isPlacingSecondPoint, currentLineStartPoint, scene_ptr, currentRubberBandEnd, currentSnap, lineLengthInputBuf, lineLengthValue);
+        inputHandler.ProcessEvents(camera, should_quit, window, display_w, display_h, selectedObjId, selectedTriangleIndices, selectedLineIndices, isDrawingLineMode, isPushPullMode, isPushPullActive, hoveredObjId, hoveredFaceTriangleIndices, isPlacingFirstPoint, isPlacingSecondPoint, currentLineStartPoint, scene_ptr, currentRubberBandEnd, currentSnap, lineLengthInputBuf, lineLengthValue);
         
         static bool wasPlacingSecondPoint = false; if (wasPlacingSecondPoint && !isPlacingSecondPoint) { /* ... */ } wasPlacingSecondPoint = isPlacingSecondPoint;
         if (should_quit) break;
@@ -110,11 +111,11 @@ int main(int argc, char* argv[]) {
             ImGui::Text("App avg %.3f ms/f (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate); ImGui::Separator(); if (ImGui::Button("Create Box Object")) { object_counter++; std::string box_name = "Box_" + std::to_string(object_counter); Urbaxio::Engine::SceneObject* new_box = scene_ptr->create_box_object(box_name, 10.0, 20.0, 5.0); if (new_box && new_box->has_mesh()) { /* GPU upload handled by main loop now */ } else { if (!new_box) { std::cerr << "Shell: Failed to create SceneObject for '" << box_name << "'." << std::endl; } else { std::cerr << "Shell: Failed to triangulate or mesh is empty for '" << box_name << "'." << std::endl; } } } ImGui::Separator(); ImGui::ColorEdit3("Object Color", (float*)&objectColor); ImGui::ColorEdit3("Background Color", (float*)&clear_color); ImGui::Separator(); ImGui::Text("Lighting:"); ImGui::SliderFloat("Ambient Strength", &ambientStrength, 0.0f, 1.0f); static glm::vec3 lightDirInput = lightDirection; if (ImGui::SliderFloat3("Light Direction", glm::value_ptr(lightDirInput), -1.0f, 1.0f)) { if (glm::length(lightDirInput) > 1e-6f) { lightDirection = glm::normalize(lightDirInput); } } ImGui::ColorEdit3("Light Color", glm::value_ptr(lightColor)); ImGui::Separator(); ImGui::Text("View Options:"); ImGui::Checkbox("Show Grid", &showGrid); ImGui::SameLine(); ImGui::Checkbox("Show Axes", &showAxes); ImGui::SliderFloat("Grid Line Width", &gridLineWidth, 1.0f, maxLineWidth); ImGui::SliderFloat("Axis Line Width", &axisLineWidth, 1.0f, maxLineWidth); ImGui::Separator(); ImGui::Text("Gaussian Splat Test:"); ImGui::ColorEdit4("Splat Color", glm::value_ptr(splatColor), ImGuiColorEditFlags_AlphaBar); ImGui::SliderFloat("Splat Blur Strength", &splatBlurStrength, 1.0f, 50.0f); ImGui::Separator();
             ImGui::Text("Tools:");
             if (ImGui::Checkbox("Draw Line Mode", &isDrawingLineMode)) {
-                if (isDrawingLineMode) isPushPullMode = false; // Mutual exclusion
+                if (isDrawingLineMode) { isPushPullMode = false; isPushPullActive = false; }
             }
             ImGui::SameLine();
             if (ImGui::Checkbox("Push/Pull Mode", &isPushPullMode)) {
-                if (isPushPullMode) isDrawingLineMode = false; // Mutual exclusion
+                if (isPushPullMode) { isDrawingLineMode = false; } else { isPushPullActive = false; }
             }
             if (ImGui::Button("Clear Lines") && scene_ptr) { scene_ptr->ClearUserLines(); renderer.UpdateUserLinesBuffer(scene_ptr->GetLineSegments(), selectedLineIndices); isPlacingFirstPoint = isDrawingLineMode; isPlacingSecondPoint = false; lineLengthInputBuf[0] = '\0'; selectedLineIndices.clear(); }
 
