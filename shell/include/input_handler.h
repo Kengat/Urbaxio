@@ -26,8 +26,8 @@ namespace Urbaxio {
             int& display_w, int& display_h,
             // Selection state
             uint64_t& selectedObjId,
-            size_t& selectedTriangleBaseIndex,
-            std::vector<size_t>& selectedLineIndices, // <<< NEW: For selected lines
+            std::vector<size_t>& selectedTriangleIndices,
+            std::vector<size_t>& selectedLineIndices,
             // Drawing mode & state (Input/Output)
             bool isDrawingLineMode,
             bool& isPlacingFirstPoint,
@@ -52,6 +52,12 @@ namespace Urbaxio {
         bool isMouseFocused;
         bool firstMouse;
 
+        // Double-click detection state
+        uint32_t lastClickTimestamp;
+        uint64_t lastClickedObjId;
+        size_t lastClickedTriangleIndex;
+
+
         // Axis Locking State
         bool isAxisLocked;
         SnapType lockedAxisType;
@@ -65,7 +71,7 @@ namespace Urbaxio {
         void HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h);
         glm::vec3 GetCursorPointInWorld(const Camera& camera, int mouseX, int mouseY, int screenWidth, int screenHeight, const glm::vec3& fallbackPlanePoint);
 
-        // <<< NEW: Helper for line picking >>>
+        // Line picking helper
         bool RayLineSegmentIntersection(
             const glm::vec3& rayOrigin, const glm::vec3& rayDir,
             const glm::vec3& p1, const glm::vec3& p2, // Segment endpoints

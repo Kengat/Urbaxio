@@ -31,7 +31,8 @@ namespace Urbaxio {
             const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
             bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth,
             const glm::vec4& splatColor, float splatBlurStrength,
-            uint64_t selectedObjId, size_t selectedTriangleBaseIndex,
+            uint64_t selectedObjId,
+            const std::vector<size_t>& selectedTriangleIndices,
             const std::vector<size_t>& selectedLineIndices,
             const glm::vec3& selectionHighlightColor,
             bool isDrawingActive, const glm::vec3& rubberBandStart, const glm::vec3& rubberBandEnd,
@@ -41,7 +42,6 @@ namespace Urbaxio {
         void SetViewport(int x, int y, int width, int height);
         float GetMaxLineWidth() const { return maxLineWidth; }
 
-        // MODIFIED: Now takes line segments directly
         void UpdateUserLinesBuffer(const std::vector<std::pair<glm::vec3, glm::vec3>>& lineSegments, const std::vector<size_t>& selectedLineIndices);
 
     private:

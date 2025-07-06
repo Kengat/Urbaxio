@@ -32,20 +32,6 @@
 #include <charconv>
 #include <limits> // Required for numeric_limits 2222
 
-// OCCT Includes for face creation are now primarily in Scene.cpp // <<< COMMENTED OUT/REMOVED UNUSED OCCT INCLUDES
-// #include <gp_Pnt.hxx>
-// #include <TopoDS_Vertex.hxx>
-// #include <TopoDS_Edge.hxx>
-// #include <TopoDS_Wire.hxx>
-// #include <TopoDS_Face.hxx>
-// #include <BRepBuilderAPI_MakeVertex.hxx>
-// #include <BRepBuilderAPI_MakeEdge.hxx>
-// #include <BRepBuilderAPI_MakeWire.hxx>
-// #include <BRepBuilderAPI_MakeFace.hxx>
-// #include <TopExp_Explorer.hxx>
-// #include <gp_Pln.hxx>
-// #include <gp_Ax3.hxx>
-
 
 // --- GPU Mesh Upload Helper ---
 bool UploadMeshToGPU(Urbaxio::Engine::SceneObject& object) { /* ... */ const Urbaxio::CadKernel::MeshBuffers& mesh = object.get_mesh_buffers(); if (mesh.isEmpty() || mesh.normals.empty()) { if (mesh.normals.empty() && !mesh.vertices.empty()) { std::cerr << "UploadMeshToGPU: Mesh for object " << object.get_id() << " is missing normals!" << std::endl; } return false; } if (object.vao != 0) glDeleteVertexArrays(1, &object.vao); if (object.vbo_vertices != 0) glDeleteBuffers(1, &object.vbo_vertices); if (object.vbo_normals != 0) glDeleteBuffers(1, &object.vbo_normals); if (object.ebo != 0) glDeleteBuffers(1, &object.ebo); object.vao = object.vbo_vertices = object.vbo_normals = object.ebo = 0; object.index_count = 0; glGenVertexArrays(1, &object.vao); if (object.vao == 0) return false; glBindVertexArray(object.vao); glGenBuffers(1, &object.vbo_vertices); if (object.vbo_vertices == 0) { glDeleteVertexArrays(1, &object.vao); object.vao = 0; return false; } glBindBuffer(GL_ARRAY_BUFFER, object.vbo_vertices); glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(float), mesh.vertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glGenBuffers(1, &object.vbo_normals); if (object.vbo_normals == 0) { glDeleteBuffers(1, &object.vbo_vertices); glDeleteVertexArrays(1, &object.vao); object.vao = object.vbo_vertices = 0; return false; } glBindBuffer(GL_ARRAY_BUFFER, object.vbo_normals); glBufferData(GL_ARRAY_BUFFER, mesh.normals.size() * sizeof(float), mesh.normals.data(), GL_STATIC_DRAW); glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0); glEnableVertexAttribArray(1); glGenBuffers(1, &object.ebo); if (object.ebo == 0) { glDeleteBuffers(1, &object.vbo_normals); glDeleteBuffers(1, &object.vbo_vertices); glDeleteVertexArrays(1, &object.vao); object.vao = object.vbo_vertices = object.vbo_normals = 0; return false; } glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, object.ebo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(unsigned int), mesh.indices.data(), GL_STATIC_DRAW); object.index_count = static_cast<GLsizei>(mesh.indices.size()); glBindVertexArray(0); glBindBuffer(GL_ARRAY_BUFFER, 0); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0); std::cout << "UploadMeshToGPU: Successfully uploaded mesh for object " << object.get_id() << std::endl; return true; }
@@ -67,18 +53,27 @@ int main(int argc, char* argv[]) {
 
     Urbaxio::Renderer renderer; if (!renderer.Initialize()) { return 1; }
     Urbaxio::Camera camera; Urbaxio::InputHandler inputHandler;
-    ImVec4 clear_color = ImVec4(0.18f, 0.18f, 0.22f, 1.00f); int object_counter = 0; glm::vec3 objectColor(0.6f, 0.7f, 0.9f); glm::vec3 lightDirection = glm::normalize(glm::vec3(0.8f, 1.0f, -0.6f)); glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f); float ambientStrength = 0.15f; float gridLineWidth = 2.0f; float axisLineWidth = 4.0f; glm::vec4 splatColor = glm::vec4(1.0f, 0.5f, 0.2f, 0.8f); float splatBlurStrength = 10.0f; bool showGrid = true; bool showAxes = true; float maxLineWidth = renderer.GetMaxLineWidth(); uint64_t selectedObjId = 0; size_t selectedTriangleBaseIndex = 0; std::vector<size_t> selectedLineIndices; glm::vec3 selectionHighlightColor = glm::vec3(0.6f, 0.8f, 1.0f); bool isDrawingLineMode = false; bool isPlacingFirstPoint = false; bool isPlacingSecondPoint = false; glm::vec3 currentLineStartPoint(0.0f); glm::vec3 currentRubberBandEnd(0.0f); Urbaxio::SnapResult currentSnap; char lineLengthInputBuf[64] = ""; float lineLengthValue = 0.0f;
+    ImVec4 clear_color = ImVec4(0.18f, 0.18f, 0.22f, 1.00f); int object_counter = 0; glm::vec3 objectColor(0.6f, 0.7f, 0.9f); glm::vec3 lightDirection = glm::normalize(glm::vec3(0.8f, 1.0f, -0.6f)); glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f); float ambientStrength = 0.15f; float gridLineWidth = 2.0f; float axisLineWidth = 4.0f; glm::vec4 splatColor = glm::vec4(1.0f, 0.5f, 0.2f, 0.8f); float splatBlurStrength = 10.0f; bool showGrid = true; bool showAxes = true; float maxLineWidth = renderer.GetMaxLineWidth();
+    // --- Selection State ---
+    uint64_t selectedObjId = 0;
+    std::vector<size_t> selectedTriangleIndices;
+    std::vector<size_t> selectedLineIndices;
+    glm::vec3 selectionHighlightColor = glm::vec3(0.6f, 0.8f, 1.0f);
+    // --- Drawing State ---
+    bool isDrawingLineMode = false; bool isPlacingFirstPoint = false; bool isPlacingSecondPoint = false; glm::vec3 currentLineStartPoint(0.0f); glm::vec3 currentRubberBandEnd(0.0f); Urbaxio::SnapResult currentSnap; char lineLengthInputBuf[64] = ""; float lineLengthValue = 0.0f;
 
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
     while (!should_quit) {
         int display_w, display_h; SDL_GetWindowSize(window, &display_w, &display_h);
         if (isDrawingLineMode && !isPlacingFirstPoint && !isPlacingSecondPoint) { isPlacingFirstPoint = true; } else if (!isDrawingLineMode && (isPlacingFirstPoint || isPlacingSecondPoint)) { isPlacingFirstPoint = false; isPlacingSecondPoint = false; lineLengthInputBuf[0] = '\0'; lineLengthValue = 0.0f; }
-        inputHandler.ProcessEvents(camera, should_quit, window, display_w, display_h, selectedObjId, selectedTriangleBaseIndex, selectedLineIndices, isDrawingLineMode, isPlacingFirstPoint, isPlacingSecondPoint, currentLineStartPoint, scene_ptr, currentRubberBandEnd, currentSnap, lineLengthInputBuf, lineLengthValue);
+        
+        inputHandler.ProcessEvents(camera, should_quit, window, display_w, display_h, selectedObjId, selectedTriangleIndices, selectedLineIndices, isDrawingLineMode, isPlacingFirstPoint, isPlacingSecondPoint, currentLineStartPoint, scene_ptr, currentRubberBandEnd, currentSnap, lineLengthInputBuf, lineLengthValue);
+        
         static bool wasPlacingSecondPoint = false; if (wasPlacingSecondPoint && !isPlacingSecondPoint) { /* ... */ } wasPlacingSecondPoint = isPlacingSecondPoint;
         if (should_quit) break;
         if (scene_ptr) { renderer.UpdateUserLinesBuffer(scene_ptr->GetLineSegments(), selectedLineIndices); }
 
-        // <<< NEW: GPU Upload for newly created face objects >>>
+        // GPU Upload for newly created face objects
         if (scene_ptr) {
             std::vector<Urbaxio::Engine::SceneObject*> all_objects = scene_ptr->get_all_objects();
             for (Urbaxio::Engine::SceneObject* obj : all_objects) {
@@ -90,18 +85,15 @@ int main(int argc, char* argv[]) {
             }
             renderer.UpdateUserLinesBuffer(scene_ptr->GetLineSegments(), selectedLineIndices);
         }
-        // <<< END NEW GPU Upload >>>
 
         ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplSDL2_NewFrame(); ImGui::NewFrame();
 
-        { /* Urbaxio Controls Window */
+        { // Urbaxio Controls Window
             ImGui::Begin("Urbaxio Controls");
             // ... (FPS, Create Box, Colors, Lighting, View Options, Splat Test, Drawing - same as before) ...
             ImGui::Text("App avg %.3f ms/f (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate); ImGui::Separator(); if (ImGui::Button("Create Box Object")) { object_counter++; std::string box_name = "Box_" + std::to_string(object_counter); Urbaxio::Engine::SceneObject* new_box = scene_ptr->create_box_object(box_name, 10.0, 20.0, 5.0); if (new_box && new_box->has_mesh()) { /* GPU upload handled by main loop now */ } else { if (!new_box) { std::cerr << "Shell: Failed to create SceneObject for '" << box_name << "'." << std::endl; } else { std::cerr << "Shell: Failed to triangulate or mesh is empty for '" << box_name << "'." << std::endl; } } } ImGui::Separator(); ImGui::ColorEdit3("Object Color", (float*)&objectColor); ImGui::ColorEdit3("Background Color", (float*)&clear_color); ImGui::Separator(); ImGui::Text("Lighting:"); ImGui::SliderFloat("Ambient Strength", &ambientStrength, 0.0f, 1.0f); static glm::vec3 lightDirInput = lightDirection; if (ImGui::SliderFloat3("Light Direction", glm::value_ptr(lightDirInput), -1.0f, 1.0f)) { if (glm::length(lightDirInput) > 1e-6f) { lightDirection = glm::normalize(lightDirInput); } } ImGui::ColorEdit3("Light Color", glm::value_ptr(lightColor)); ImGui::Separator(); ImGui::Text("View Options:"); ImGui::Checkbox("Show Grid", &showGrid); ImGui::SameLine(); ImGui::Checkbox("Show Axes", &showAxes); ImGui::SliderFloat("Grid Line Width", &gridLineWidth, 1.0f, maxLineWidth); ImGui::SliderFloat("Axis Line Width", &axisLineWidth, 1.0f, maxLineWidth); ImGui::Separator(); ImGui::Text("Gaussian Splat Test:"); ImGui::ColorEdit4("Splat Color", glm::value_ptr(splatColor), ImGuiColorEditFlags_AlphaBar); ImGui::SliderFloat("Splat Blur Strength", &splatBlurStrength, 1.0f, 50.0f); ImGui::Separator();
             ImGui::Text("Drawing:"); ImGui::Checkbox("Draw Line Mode", &isDrawingLineMode); if (ImGui::Button("Clear Lines") && scene_ptr) { scene_ptr->ClearUserLines(); renderer.UpdateUserLinesBuffer(scene_ptr->GetLineSegments(), selectedLineIndices); isPlacingFirstPoint = isDrawingLineMode; isPlacingSecondPoint = false; lineLengthInputBuf[0] = '\0'; selectedLineIndices.clear(); }
 
-            // <<< Create Face Button is now for debug or removed >>>
-            // Face creation is attempted automatically in Scene::AddUserLine -> FindAndCreateFaces
             if (!selectedLineIndices.empty()) {
                 if (ImGui::Button("Show Selected Lines (Debug)")) {
                     std::cout << "DEBUG: Currently selected line segment indices: ";
@@ -111,7 +103,13 @@ int main(int argc, char* argv[]) {
             }
 
             if (isPlacingSecondPoint) { ImGui::Separator(); ImGui::Text("Length: %s", lineLengthInputBuf); ImGui::Separator(); }
-            ImGui::Text("Scene Info:"); ImGui::Text("Selected Object ID: %llu", selectedObjId); const char* snapTypeName = "None"; if (currentSnap.snapped) { switch (currentSnap.type) { case Urbaxio::SnapType::ENDPOINT: snapTypeName = "Endpoint"; break; case Urbaxio::SnapType::ORIGIN:   snapTypeName = "Origin"; break; case Urbaxio::SnapType::AXIS_X:   snapTypeName = "On Axis X"; break; case Urbaxio::SnapType::AXIS_Y:   snapTypeName = "On Axis Y"; break; case Urbaxio::SnapType::AXIS_Z:   snapTypeName = "On Axis Z"; break; default: snapTypeName = "Unknown"; break; } } ImGui::Text("Current Snap: %s (%.2f, %.2f, %.2f)", snapTypeName, currentSnap.worldPoint.x, currentSnap.worldPoint.y, currentSnap.worldPoint.z);
+            ImGui::Text("Scene Info:");
+            ImGui::Text("Selected Object ID: %llu", selectedObjId);
+            if (selectedObjId != 0) {
+                 ImGui::Text("Selected Triangles: %zu", selectedTriangleIndices.size());
+            }
+
+            const char* snapTypeName = "None"; if (currentSnap.snapped) { switch (currentSnap.type) { case Urbaxio::SnapType::ENDPOINT: snapTypeName = "Endpoint"; break; case Urbaxio::SnapType::ORIGIN:   snapTypeName = "Origin"; break; case Urbaxio::SnapType::AXIS_X:   snapTypeName = "On Axis X"; break; case Urbaxio::SnapType::AXIS_Y:   snapTypeName = "On Axis Y"; break; case Urbaxio::SnapType::AXIS_Z:   snapTypeName = "On Axis Z"; break; default: snapTypeName = "Unknown"; break; } } ImGui::Text("Current Snap: %s (%.2f, %.2f, %.2f)", snapTypeName, currentSnap.worldPoint.x, currentSnap.worldPoint.y, currentSnap.worldPoint.z);
             ImGui::Text("Scene Objects:"); if (scene_ptr) { std::vector<Urbaxio::Engine::SceneObject*> objects = scene_ptr->get_all_objects(); if (objects.empty()) { ImGui::TextDisabled("(No objects yet)"); } else { ImGui::BeginChild("ObjectList", ImVec2(0, 100), true, ImGuiWindowFlags_HorizontalScrollbar); for (const auto* obj : objects) { if (obj) { ImGui::BulletText("%s (ID:%llu)%s%s%s", obj->get_name().c_str(), obj->get_id(), obj->has_shape() ? " [Geo]" : "", obj->has_mesh() ? " [Mesh]" : "", (obj->vao != 0) ? " [GPU]" : ""); } } ImGui::EndChild(); } } else { ImGui::TextDisabled("(Scene pointer is null)"); }
             ImGui::End();
         }
@@ -120,7 +118,7 @@ int main(int argc, char* argv[]) {
         renderer.SetViewport(0, 0, display_w, display_h);
         glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightDirection, lightColor, ambientStrength, showGrid, showAxes, gridLineWidth, axisLineWidth, splatColor, splatBlurStrength, selectedObjId, selectedTriangleBaseIndex, selectedLineIndices, selectionHighlightColor, isPlacingSecondPoint, currentLineStartPoint, currentRubberBandEnd, currentSnap, ImGui::GetDrawData());
+        renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightDirection, lightColor, ambientStrength, showGrid, showAxes, gridLineWidth, axisLineWidth, splatColor, splatBlurStrength, selectedObjId, selectedTriangleIndices, selectedLineIndices, selectionHighlightColor, isPlacingSecondPoint, currentLineStartPoint, currentRubberBandEnd, currentSnap, ImGui::GetDrawData());
         SDL_GL_SwapWindow(window);
     }
 
