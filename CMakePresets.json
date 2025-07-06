@@ -1,0 +1,49 @@
+{
+  "$schema": "https://raw.githubusercontent.com/CMake/CMake/master/Help/manual/presets/schema.json",
+  "version": 8,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 23,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "vs2022",
+      "displayName": "Visual Studio 2022",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": {
+          "type": "STRING",
+          "value": "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+        }
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs2022-debug",
+      "displayName": "Debug",
+      "configurePreset": "vs2022",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vs2022-release",
+      "displayName": "Release",
+      "configurePreset": "vs2022",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "vs2022-debug-test",
+      "displayName": "Debug Tests",
+      "configurePreset": "vs2022",
+      "configuration": "Debug",
+      "output": {
+        "verbosity": "verbose"
+      }
+    }
+  ]
+} 
