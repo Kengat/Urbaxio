@@ -75,7 +75,6 @@ namespace Urbaxio {
         glm::vec3 pushPull_startPoint;
         int pushPull_startMouseX;
         int pushPull_startMouseY;
-        float pushPull_currentDistance;
 
         // Axis Locking State
         bool isAxisLocked;

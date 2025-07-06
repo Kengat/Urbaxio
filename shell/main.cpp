@@ -138,6 +138,7 @@ int main(int argc, char* argv[]) {
             }
 
             if (isPlacingSecondPoint) { ImGui::Separator(); ImGui::Text("Length: %s", lineLengthInputBuf); ImGui::Separator(); }
+            if (isPushPullActive) { ImGui::Separator(); ImGui::Text("Distance: %s", lineLengthInputBuf); ImGui::Separator(); }
             ImGui::Text("Scene Info:");
             ImGui::Text("Selected Object ID: %llu", selectedObjId);
             if (selectedObjId != 0) {
