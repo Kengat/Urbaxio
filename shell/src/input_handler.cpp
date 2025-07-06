@@ -21,6 +21,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/norm.hpp>
 #include <glm/gtx/vector_angle.hpp>
+#include <glm/gtx/intersect.hpp> // For glm::intersectRayPlane
 #include <cstddef>
 #include <charconv>
 #include <string>
@@ -31,6 +32,7 @@ namespace { // Anonymous namespace for utility functions
     const float SCREEN_EPSILON = 1e-4f;
     const float SCREEN_VECTOR_MIN_LENGTH_SQ = 4.0f;
     const float LINE_PICK_THRESHOLD_RADIUS = 0.25f;
+    const float MAX_EXTRUDE_DISTANCE = 1000.0f;
 
     void AppendCharToBuffer(char* buf, size_t bufSize, char c) { /* ... */ size_t len = strlen(buf); if (len + 1 < bufSize) { buf[len] = c; buf[len + 1] = '\0'; } }
     void RemoveLastChar(char* buf) { /* ... */ size_t len = strlen(buf); if (len > 0) { buf[len - 1] = '\0'; } }
@@ -47,11 +49,9 @@ namespace { // Anonymous namespace for utility functions
 
         const auto& mesh = object.get_mesh_buffers();
         if (!object.has_mesh() || startTriangleBaseIndex + 2 >= mesh.indices.size()) {
-            // Return just the one triangle if mesh is invalid or index is out of bounds
             return { startTriangleBaseIndex };
         }
 
-        // 1. Build edge-to-triangle map for the given object
         std::map<std::pair<unsigned int, unsigned int>, std::vector<size_t>> edgeToTriangles;
         for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
             unsigned int v_indices[3] = { mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2] };
@@ -63,25 +63,16 @@ namespace { // Anonymous namespace for utility functions
             }
         }
 
-        // 2. Setup for Breadth-First Search (BFS)
         std::vector<size_t> resultFaceTriangles;
         std::list<size_t> queue;
         std::set<size_t> visitedTriangles;
 
-        // 3. Get reference plane from the starting triangle
         unsigned int i0 = mesh.indices[startTriangleBaseIndex];
-        unsigned int i1 = mesh.indices[startTriangleBaseIndex + 1];
-        unsigned int i2 = mesh.indices[startTriangleBaseIndex + 2];
         
         glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
-        glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
-        glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
-
-        glm::vec3 referenceNormal = glm::normalize(glm::cross(v1 - v0, v2 - v0));
-        // For plane equation Ax + By + Cz + D = 0, D = -dot(N, P0)
+        glm::vec3 referenceNormal(mesh.normals[i0*3], mesh.normals[i0*3+1], mesh.normals[i0*3+2]);
         float referencePlaneD = -glm::dot(referenceNormal, v0);
 
-        // 4. Start BFS
         queue.push_back(startTriangleBaseIndex);
         visitedTriangles.insert(startTriangleBaseIndex);
 
@@ -90,7 +81,6 @@ namespace { // Anonymous namespace for utility functions
             queue.pop_front();
             resultFaceTriangles.push_back(currentTriangleIndex);
 
-            // Get edges of current triangle to find its neighbors
             unsigned int current_v_indices[3] = { mesh.indices[currentTriangleIndex], mesh.indices[currentTriangleIndex + 1], mesh.indices[currentTriangleIndex + 2] };
 
             for (int j = 0; j < 3; ++j) {
@@ -103,20 +93,14 @@ namespace { // Anonymous namespace for utility functions
                     if (neighborIndex == currentTriangleIndex) continue;
 
                     if (visitedTriangles.find(neighborIndex) == visitedTriangles.end()) {
-                        visitedTriangles.insert(neighborIndex); // Mark as visited immediately to avoid re-queueing
+                        visitedTriangles.insert(neighborIndex);
 
-                        // Check coplanarity of the neighbor
                         unsigned int n_i0 = mesh.indices[neighborIndex];
-                        unsigned int n_i1 = mesh.indices[neighborIndex + 1];
-                        unsigned int n_i2 = mesh.indices[neighborIndex + 2];
                         
                         glm::vec3 n_v0(mesh.vertices[n_i0*3], mesh.vertices[n_i0*3+1], mesh.vertices[n_i0*3+2]);
-                        glm::vec3 n_v1(mesh.vertices[n_i1*3], mesh.vertices[n_i1*3+1], mesh.vertices[n_i1*3+2]);
-                        glm::vec3 n_v2(mesh.vertices[n_i2*3], mesh.vertices[n_i2*3+1], mesh.vertices[n_i2*3+2]);
                         
-                        glm::vec3 neighborNormal = glm::normalize(glm::cross(n_v1 - n_v0, n_v2 - n_v0));
+                        glm::vec3 neighborNormal(mesh.normals[n_i0*3], mesh.normals[n_i0*3+1], mesh.normals[n_i0*3+2]);
                         
-                        // Check if normals are aligned and one point of the neighbor lies on the reference plane
                         if (glm::abs(glm::dot(referenceNormal, neighborNormal)) > NORMAL_DOT_TOLERANCE) {
                             float dist = glm::abs(glm::dot(referenceNormal, n_v0) + referencePlaneD);
                             if (dist < PLANE_DIST_TOLERANCE) {
@@ -160,124 +144,92 @@ namespace Urbaxio {
         char* lineLengthInputBuf,
         float& lineLengthValue
     ) {
-        // ... (Event loop and most logic remains the same) ...
-        SDL_Event event; ImGuiIO& io = ImGui::GetIO(); currentRubberBandEnd = glm::vec3(0.0f); currentSnap.snapped = false; currentSnap.type = SnapType::NONE; bool enterPressedThisFrame = false; bool shiftPressedDownThisFrame = false; bool currentShiftDown = (SDL_GetModState() & KMOD_SHIFT); if (currentShiftDown && !shiftWasPressed) { shiftPressedDownThisFrame = true; } shiftWasPressed = currentShiftDown; shiftDown = currentShiftDown;
-        while (SDL_PollEvent(&event)) { ImGui_ImplSDL2_ProcessEvent(&event); bool wantCaptureMouse = io.WantCaptureMouse; bool wantCaptureKeyboard = io.WantCaptureKeyboard; switch (event.type) { case SDL_QUIT: should_quit = true; break; case SDL_WINDOWEVENT: if (event.window.event == SDL_WINDOWEVENT_RESIZED) { SDL_GetWindowSize(window, &display_w, &display_h); } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) { isMouseFocused = true; } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) { isMouseFocused = false; middleMouseButtonDown = false; SDL_ShowCursor(SDL_ENABLE); if (isPlacingSecondPoint || isPlacingFirstPoint) { isPlacingFirstPoint = false; isPlacingSecondPoint = false; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line drawing cancelled due to focus loss." << std::endl; } if(isPushPullActive) { isPushPullActive = false; } } else if (event.window.event == SDL_WINDOWEVENT_ENTER) { isMouseFocused = true; } else if (event.window.event == SDL_WINDOWEVENT_LEAVE) { isMouseFocused = false; } break; case SDL_KEYDOWN: if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) { shiftDown = true; } if (event.key.keysym.sym == SDLK_ESCAPE) { if (isAxisLocked) { isAxisLocked = false; std::cout << "DEBUG: Axis lock cancelled by ESC." << std::endl; } else if (isPlacingSecondPoint) { isPlacingSecondPoint = false; isPlacingFirstPoint = true; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line drawing second point cancelled by ESC." << std::endl; } else if (isPlacingFirstPoint) { isPlacingFirstPoint = false; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line drawing first point placement cancelled by ESC." << std::endl; } else if (isPushPullActive) { isPushPullActive = false; std::cout << "DEBUG: Push/Pull operation cancelled by ESC." << std::endl;} } else if (isPlacingSecondPoint && !wantCaptureKeyboard) { SDL_Keycode key = event.key.keysym.sym; bool isEnter = (key == SDLK_RETURN || key == SDLK_KP_ENTER); bool isBackspace = (key == SDLK_BACKSPACE); if (isEnter) { enterPressedThisFrame = true; } else if (isBackspace) { RemoveLastChar(lineLengthInputBuf); } else { char c = '\0'; if ((key >= SDLK_0 && key <= SDLK_9)) { c = (char)key; } else if ((key >= SDLK_KP_0 && key <= SDLK_KP_9)) { c = '0' + (key - SDLK_KP_0); } else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(lineLengthInputBuf, '.') == nullptr) { c = '.'; } } if (c != '\0') { AppendCharToBuffer(lineLengthInputBuf, 64, c); } } } break; case SDL_KEYUP: if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) { shiftDown = false; } break;
+        // --- Event Loop ---
+        SDL_Event event; ImGuiIO& io = ImGui::GetIO(); bool enterPressedThisFrame = false; bool shiftPressedDownThisFrame = false; bool currentShiftDown = (SDL_GetModState() & KMOD_SHIFT); if (currentShiftDown && !shiftWasPressed) { shiftPressedDownThisFrame = true; } shiftWasPressed = currentShiftDown; shiftDown = currentShiftDown;
+        while (SDL_PollEvent(&event)) { ImGui_ImplSDL2_ProcessEvent(&event); bool wantCaptureMouse = io.WantCaptureMouse; bool wantCaptureKeyboard = io.WantCaptureKeyboard; switch (event.type) { case SDL_QUIT: should_quit = true; break; case SDL_WINDOWEVENT: if (event.window.event == SDL_WINDOWEVENT_RESIZED) { SDL_GetWindowSize(window, &display_w, &display_h); } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) { isMouseFocused = true; } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) { isMouseFocused = false; middleMouseButtonDown = false; SDL_ShowCursor(SDL_ENABLE); if (isPlacingSecondPoint || isPlacingFirstPoint) { isPlacingFirstPoint = false; isPlacingSecondPoint = false; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } if(isPushPullActive) { isPushPullActive = false; } } else if (event.window.event == SDL_WINDOWEVENT_ENTER) { isMouseFocused = true; } else if (event.window.event == SDL_WINDOWEVENT_LEAVE) { isMouseFocused = false; } break; case SDL_KEYDOWN: if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) { shiftDown = true; } if (event.key.keysym.sym == SDLK_ESCAPE) { if (isAxisLocked) { isAxisLocked = false; } else if (isPlacingSecondPoint) { isPlacingSecondPoint = false; isPlacingFirstPoint = true; lineLengthInputBuf[0] = '\0'; } else if (isPlacingFirstPoint) { isPlacingFirstPoint = false; lineLengthInputBuf[0] = '\0'; } else if (isPushPullActive) { isPushPullActive = false; std::cout << "DEBUG: Push/Pull operation cancelled by ESC." << std::endl;} } else if (isPlacingSecondPoint && !wantCaptureKeyboard) { SDL_Keycode key = event.key.keysym.sym; bool isEnter = (key == SDLK_RETURN || key == SDLK_KP_ENTER); bool isBackspace = (key == SDLK_BACKSPACE); if (isEnter) { enterPressedThisFrame = true; } else if (isBackspace) { RemoveLastChar(lineLengthInputBuf); } else { char c = '\0'; if ((key >= SDLK_0 && key <= SDLK_9)) { c = (char)key; } else if ((key >= SDLK_KP_0 && key <= SDLK_KP_9)) { c = '0' + (key - SDLK_KP_0); } else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(lineLengthInputBuf, '.') == nullptr) { c = '.'; } } if (c != '\0') { AppendCharToBuffer(lineLengthInputBuf, 64, c); } } } break; case SDL_KEYUP: if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) { shiftDown = false; } break;
         case SDL_MOUSEBUTTONDOWN:
             if (!wantCaptureMouse) {
                 if (event.button.button == SDL_BUTTON_MIDDLE) { middleMouseButtonDown = true; firstMouse = true; SDL_ShowCursor(SDL_DISABLE); }
                 else if (event.button.button == SDL_BUTTON_LEFT) {
                     int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
-                    if (isDrawingLineMode && scene) { /* ... line drawing clicks ... */ glm::vec3 clickPoint = currentSnap.worldPoint; if (isPlacingFirstPoint) { currentLineStartPoint = clickPoint; isPlacingFirstPoint = false; isPlacingSecondPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line Start Point Set: (" << clickPoint.x << ", " << clickPoint.y << ", " << clickPoint.z << ") Snap: " << (currentSnap.snapped ? "Yes" : "No") << std::endl; } else if (isPlacingSecondPoint) { glm::vec3 endPoint = clickPoint; if (glm::distance(currentLineStartPoint, endPoint) > 1e-3f) { scene->AddUserLine(currentLineStartPoint, endPoint); std::cout << "DEBUG: Line Added (Click): Start(...), End(" << endPoint.x << ", " << endPoint.y << ", " << endPoint.z << ") SnapType: " << (int)currentSnap.type << std::endl; } else { std::cout << "DEBUG: Points too close, line not added." << std::endl; } isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } }
-                    else { // Not drawing lines, so handle selection
-                        glm::vec3 rayOrigin, rayDir;
-                        Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
-                        
-                        if (isPushPullMode) {
-                            if (isPushPullActive) {
-                                // TODO: Finalize Push/Pull operation
-                                std::cout << "DEBUG: Push/Pull operation finalized (not implemented yet)." << std::endl;
-                                isPushPullActive = false;
-                            } else {
-                                if (hoveredObjId != 0 && !hoveredFaceTriangleIndices.empty()) {
-                                    isPushPullActive = true;
-                                    pushPull_objId = hoveredObjId;
-                                    pushPull_faceIndices = hoveredFaceTriangleIndices;
-                                    Urbaxio::Engine::SceneObject* obj = scene->get_object_by_id(pushPull_objId);
-                                    const auto& mesh = obj->get_mesh_buffers();
-                                    unsigned int firstTriFirstVertIdx = mesh.indices[pushPull_faceIndices[0]];
-                                    pushPull_faceNormal = glm::vec3(mesh.normals[firstTriFirstVertIdx*3], mesh.normals[firstTriFirstVertIdx*3+1], mesh.normals[firstTriFirstVertIdx*3+2]);
-
-                                    glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
-                                    float closestHitDist = std::numeric_limits<float>::max();
-                                    bool hit = SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir,
-                                        glm::vec3(mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+1], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+2]),
-                                        glm::vec3(mesh.vertices[mesh.indices[pushPull_faceIndices[0]+1]*3], mesh.vertices[mesh.indices[pushPull_faceIndices[0]+1]*3+1], mesh.vertices[mesh.indices[pushPull_faceIndices[0]+1]*3+2]),
-                                        glm::vec3(mesh.vertices[mesh.indices[pushPull_faceIndices[0]+2]*3], mesh.vertices[mesh.indices[pushPull_faceIndices[0]+2]*3+1], mesh.vertices[mesh.indices[pushPull_faceIndices[0]+2]*3+2]),
-                                        closestHitDist
-                                    );
-                                    if(hit) pushPull_startPoint = rayOrigin + rayDir * closestHitDist;
-                                    else pushPull_startPoint = glm::vec3(0); // Fallback
-
-                                    selectedObjId = 0; // Clear other selections
-                                    selectedTriangleIndices.clear();
-                                    std::cout << "DEBUG: Push/Pull operation started on Obj " << pushPull_objId << ", Normal (" << pushPull_faceNormal.x << ", " << pushPull_faceNormal.y << ", " << pushPull_faceNormal.z << ")" << std::endl;
-                                }
-                            }
-                        } else { // Default selection mode
-                        struct LineHit { size_t lineIndex; float distanceAlongRay; glm::vec3 intersectionPoint; };
-                        std::vector<LineHit> lineHits;
-                        const auto& lineSegments = scene->GetLineSegments();
-                        for (size_t i = 0; i < lineSegments.size(); ++i) { const auto& segment = lineSegments[i]; float distAlongRay; glm::vec3 closestPtOnSeg; if (RayLineSegmentIntersection(rayOrigin, rayDir, segment.first, segment.second, LINE_PICK_THRESHOLD_RADIUS, distAlongRay, closestPtOnSeg)) { lineHits.push_back({i, distAlongRay, closestPtOnSeg}); } }
-                        
-                        if (!lineHits.empty()) { // A line was hit, prioritize line selection
-                             std::sort(lineHits.begin(), lineHits.end(), [](const LineHit& a, const LineHit& b){ return a.distanceAlongRay < b.distanceAlongRay; }); size_t closestLineIndex = lineHits[0].lineIndex; if (!shiftDown) { selectedLineIndices.clear(); selectedLineIndices.push_back(closestLineIndex); selectedObjId = 0; selectedTriangleIndices.clear(); } else { auto it = std::find(selectedLineIndices.begin(), selectedLineIndices.end(), closestLineIndex); if (it != selectedLineIndices.end()) { selectedLineIndices.erase(it); } else { selectedLineIndices.push_back(closestLineIndex); } } std::cout << "DEBUG: Selected line index: " << closestLineIndex << " (Total selected: " << selectedLineIndices.size() << ")" << std::endl;
-                        } else { // No lines hit, try object/face picking
-                            if (!shiftDown) selectedLineIndices.clear(); // Clear line selection if not multi-selecting
-                            uint64_t hitObjectId = 0; size_t hitTriangleBaseIndex = 0; float closestHitDistance = std::numeric_limits<float>::max();
-                            std::vector<Urbaxio::Engine::SceneObject*> objects = scene->get_all_objects();
-                            for (Urbaxio::Engine::SceneObject* obj_ptr : objects) {
-                                const Urbaxio::Engine::SceneObject& obj = *obj_ptr;
-                                if (obj.has_mesh()) {
-                                    const auto& mesh = obj.get_mesh_buffers();
-                                    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-                                        glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]);
-                                        glm::vec3 v1(mesh.vertices[mesh.indices[i+1]*3], mesh.vertices[mesh.indices[i+1]*3+1], mesh.vertices[mesh.indices[i+1]*3+2]);
-                                        glm::vec3 v2(mesh.vertices[mesh.indices[i+2]*3], mesh.vertices[mesh.indices[i+2]*3+1], mesh.vertices[mesh.indices[i+2]*3+2]);
-                                        float t = -1.0f;
-                                        if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDistance) {
-                                            closestHitDistance = t; hitObjectId = obj.get_id(); hitTriangleBaseIndex = i;
-                                        }
-                                    }
-                                }
-                            }
+                    if (isDrawingLineMode && scene) { glm::vec3 clickPoint = currentSnap.worldPoint; if (isPlacingFirstPoint) { currentLineStartPoint = clickPoint; isPlacingFirstPoint = false; isPlacingSecondPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } else if (isPlacingSecondPoint) { glm::vec3 endPoint = clickPoint; if (glm::distance(currentLineStartPoint, endPoint) > 1e-3f) { scene->AddUserLine(currentLineStartPoint, endPoint); } isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } }
+                    else if (isPushPullMode && scene) {
+                        if (isPushPullActive) {
+                            glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
                             
-                            if (hitObjectId != 0) { // A triangle on an object was hit
-                                uint32_t currentTime = SDL_GetTicks();
-                                const uint32_t DOUBLE_CLICK_TIME = 300; // ms
-
-                                if (currentTime - lastClickTimestamp < DOUBLE_CLICK_TIME && hitObjectId == lastClickedObjId && hitTriangleBaseIndex == lastClickedTriangleIndex) {
-                                    // Double-click: select just one triangle
-                                    std::cout << "DEBUG: Double-click on Object " << hitObjectId << ", Triangle " << hitTriangleBaseIndex << std::endl;
-                                    selectedTriangleIndices.assign(1, hitTriangleBaseIndex);
-                                    selectedObjId = hitObjectId;
-                                    lastClickTimestamp = 0; // Prevent triple-click acting as single-click
-                                } else {
-                                    // Single-click: select coplanar face
-                                    std::cout << "DEBUG: Single-click on Object " << hitObjectId << ", Triangle " << hitTriangleBaseIndex << std::endl;
-                                    Urbaxio::Engine::SceneObject* hitObject = scene->get_object_by_id(hitObjectId);
-                                    if (hitObject) {
-                                        selectedTriangleIndices = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex);
-                                        selectedObjId = hitObjectId;
-                                        std::cout << "DEBUG: Found " << selectedTriangleIndices.size() << " coplanar triangles for face." << std::endl;
-                                    }
-                                    lastClickTimestamp = currentTime;
-                                    lastClickedObjId = hitObjectId;
-                                    lastClickedTriangleIndex = hitTriangleBaseIndex;
-                                }
-                            } else { // Clicked on empty space
-                                if (!shiftDown) { selectedObjId = 0; selectedTriangleIndices.clear(); }
-                                lastClickTimestamp = 0;
+                            // More robust distance calculation
+                            glm::vec3 pointOnMouseRay = rayOrigin + rayDir; // A point on the mouse ray
+                            glm::vec3 pointOnExtrusionAxis = ClosestPointOnLine(pushPull_startPoint, pushPull_faceNormal, pointOnMouseRay);
+                            glm::vec3 offsetVector = pointOnExtrusionAxis - pushPull_startPoint;
+                            float distance = glm::length(offsetVector);
+                            if (glm::dot(offsetVector, pushPull_faceNormal) < 0) {
+                                distance = -distance;
                             }
-                        }
+
+                            distance = std::clamp(distance, -MAX_EXTRUDE_DISTANCE, MAX_EXTRUDE_DISTANCE);
+                            scene->ExtrudeFace(pushPull_objId, pushPull_faceIndices, pushPull_faceNormal, distance);
+                            std::cout << "DEBUG: Push/Pull operation finalized with distance: " << distance << std::endl;
+                            isPushPullActive = false;
+
+                        } else { // Start a new Push/Pull operation
+                            if (hoveredObjId != 0 && !hoveredFaceTriangleIndices.empty()) {
+                                isPushPullActive = true;
+                                pushPull_objId = hoveredObjId;
+                                pushPull_faceIndices = hoveredFaceTriangleIndices;
+                                Urbaxio::Engine::SceneObject* obj = scene->get_object_by_id(pushPull_objId);
+                                const auto& mesh = obj->get_mesh_buffers();
+                                unsigned int firstTriFirstVertIdx = mesh.indices[pushPull_faceIndices[0]];
+                                pushPull_faceNormal = glm::normalize(glm::vec3(mesh.normals[firstTriFirstVertIdx*3], mesh.normals[firstTriFirstVertIdx*3+1], mesh.normals[firstTriFirstVertIdx*3+2]));
+                                
+                                glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
+                                float closestHitDist;
+                                glm::intersectRayPlane(rayOrigin, rayDir, glm::vec3(mesh.vertices[firstTriFirstVertIdx*3], mesh.vertices[firstTriFirstVertIdx*3+1], mesh.vertices[firstTriFirstVertIdx*3+2]), pushPull_faceNormal, closestHitDist);
+                                pushPull_startPoint = rayOrigin + rayDir * closestHitDist;
+
+                                selectedObjId = 0; selectedTriangleIndices.clear();
+                                std::cout << "DEBUG: Push/Pull operation started on Obj " << pushPull_objId << ", Normal (" << pushPull_faceNormal.x << ", " << pushPull_faceNormal.y << ", " << pushPull_faceNormal.z << ")" << std::endl;
+                            }
                         }
                     }
-                } else if (event.button.button == SDL_BUTTON_RIGHT) { /* ... same cancel logic ... */ if (isAxisLocked) { isAxisLocked = false; std::cout << "DEBUG: Axis lock cancelled by Right Click." << std::endl; } else if (isPlacingSecondPoint) { isPlacingSecondPoint = false; isPlacingFirstPoint = true; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line drawing second point cancelled by Right Click." << std::endl; } else if (isPlacingFirstPoint) { isPlacingFirstPoint = false; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line drawing first point placement cancelled by Right Click." << std::endl; } }
+                    else { // Default selection mode
+                        glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
+                        uint64_t hitObjectId = 0; size_t hitTriangleBaseIndex = 0; float closestHitDistance = std::numeric_limits<float>::max();
+                        struct LineHit { size_t lineIndex; float distanceAlongRay; }; std::vector<LineHit> lineHits; const auto& lineSegments = scene->GetLineSegments(); for (size_t i = 0; i < lineSegments.size(); ++i) { const auto& segment = lineSegments[i]; float distAlongRay; glm::vec3 closestPtOnSeg; if (RayLineSegmentIntersection(rayOrigin, rayDir, segment.first, segment.second, LINE_PICK_THRESHOLD_RADIUS, distAlongRay, closestPtOnSeg)) { lineHits.push_back({i, distAlongRay}); } }
+                        if (!lineHits.empty()) { std::sort(lineHits.begin(), lineHits.end(), [](const LineHit& a, const LineHit& b){ return a.distanceAlongRay < b.distanceAlongRay; }); size_t closestLineIndex = lineHits[0].lineIndex; if (!shiftDown) { selectedLineIndices.clear(); selectedLineIndices.push_back(closestLineIndex); selectedObjId = 0; selectedTriangleIndices.clear(); } else { auto it = std::find(selectedLineIndices.begin(), selectedLineIndices.end(), closestLineIndex); if (it != selectedLineIndices.end()) { selectedLineIndices.erase(it); } else { selectedLineIndices.push_back(closestLineIndex); } }
+                        } else {
+                            if (!shiftDown) selectedLineIndices.clear();
+                            for (Urbaxio::Engine::SceneObject* obj_ptr : scene->get_all_objects()) {
+                                if (obj_ptr->has_mesh()) {
+                                    const auto& mesh = obj_ptr->get_mesh_buffers();
+                                    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                                        glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]); glm::vec3 v1(mesh.vertices[mesh.indices[i+1]*3], mesh.vertices[mesh.indices[i+1]*3+1], mesh.vertices[mesh.indices[i+1]*3+2]); glm::vec3 v2(mesh.vertices[mesh.indices[i+2]*3], mesh.vertices[mesh.indices[i+2]*3+1], mesh.vertices[mesh.indices[i+2]*3+2]); float t; if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDistance) { closestHitDistance = t; hitObjectId = obj_ptr->get_id(); hitTriangleBaseIndex = i; }
+                                    }
+                                }
+                            }
+                            if (hitObjectId != 0) {
+                                uint32_t currentTime = SDL_GetTicks(); const uint32_t DOUBLE_CLICK_TIME = 300;
+                                if (currentTime - lastClickTimestamp < DOUBLE_CLICK_TIME && hitObjectId == lastClickedObjId && hitTriangleBaseIndex == lastClickedTriangleIndex) { selectedTriangleIndices.assign(1, hitTriangleBaseIndex); selectedObjId = hitObjectId; lastClickTimestamp = 0;
+                                } else { Urbaxio::Engine::SceneObject* hitObject = scene->get_object_by_id(hitObjectId); if (hitObject) { selectedTriangleIndices = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex); selectedObjId = hitObjectId; } lastClickTimestamp = currentTime; lastClickedObjId = hitObjectId; lastClickedTriangleIndex = hitTriangleBaseIndex; }
+                            } else { if (!shiftDown) { selectedObjId = 0; selectedTriangleIndices.clear(); } lastClickTimestamp = 0; }
+                        }
+                    }
+                } else if (event.button.button == SDL_BUTTON_RIGHT) { if (isAxisLocked) { isAxisLocked = false; } else if (isPlacingSecondPoint) { isPlacingSecondPoint = false; isPlacingFirstPoint = true; lineLengthInputBuf[0] = '\0'; } else if (isPlacingFirstPoint) { isPlacingFirstPoint = false; lineLengthInputBuf[0] = '\0'; } }
             } break;
-        case SDL_MOUSEBUTTONUP: /* ... same ... */ if (event.button.button == SDL_BUTTON_MIDDLE) { middleMouseButtonDown = false; SDL_ShowCursor(SDL_ENABLE); } break;
-        case SDL_MOUSEWHEEL: /* ... same ... */ if (!wantCaptureMouse) { camera.ProcessMouseScroll(static_cast<float>(event.wheel.y)); } break;
-        }} // End Event Loop & Switch
+        case SDL_MOUSEBUTTONUP: if (event.button.button == SDL_BUTTON_MIDDLE) { middleMouseButtonDown = false; SDL_ShowCursor(SDL_ENABLE); } break;
+        case SDL_MOUSEWHEEL: if (!wantCaptureMouse) { camera.ProcessMouseScroll(static_cast<float>(event.wheel.y)); } break;
+        }}
 
         // --- Per-frame updates (after event loop) ---
-        int currentMouseX, currentMouseY; SDL_GetMouseState(&currentMouseX, &currentMouseY);
-        hoveredObjId = 0; hoveredFaceTriangleIndices.clear();
+        int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
+        if(!isPushPullActive) {
+             hoveredObjId = 0; 
+             hoveredFaceTriangleIndices.clear();
+        }
         currentRubberBandEnd = glm::vec3(0.0f); currentSnap.snapped = false;
         
-        ImGuiIO& io_for_mouse = ImGui::GetIO();
-        if (!io_for_mouse.WantCaptureMouse && scene) {
+        if (!io.WantCaptureMouse && scene) {
             if (isPushPullMode && !isPushPullActive) {
-                // --- Push/Pull Hover Logic ---
-                glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(currentMouseX, currentMouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
+                glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
                 uint64_t currentHoveredObjId = 0; size_t currentHoveredTriangleIdx = 0; float closestHitDist = std::numeric_limits<float>::max();
                 for (Urbaxio::Engine::SceneObject* obj_ptr : scene->get_all_objects()) {
                     if (obj_ptr->has_mesh()) {
@@ -295,25 +247,28 @@ namespace Urbaxio {
                     }
                 }
             } else if (isPushPullActive) {
-                // TODO: Update Push/Pull preview logic
+                hoveredObjId = pushPull_objId;
+                hoveredFaceTriangleIndices = pushPull_faceIndices;
             }
             else if (isDrawingLineMode) {
-                // --- Line Drawing Snap Logic ---
-                glm::mat4 view = camera.GetViewMatrix(); glm::mat4 proj = camera.GetProjectionMatrix((display_h > 0) ? ((float)display_w / (float)display_h) : 1.0f); glm::vec3 cursorWorldPoint = GetCursorPointInWorld(camera, currentMouseX, currentMouseY, display_w, display_h, isPlacingSecondPoint ? currentLineStartPoint : glm::vec3(0.0f));
-        if (isPlacingSecondPoint) { if (!shiftDown && isAxisLocked) { isAxisLocked = false; std::cout << "DEBUG: Axis lock released." << std::endl; } else if (shiftPressedDownThisFrame && !isAxisLocked) { glm::vec2 startScreenPos, endScreenPos; bool startVisible = SnappingSystem::WorldToScreen(currentLineStartPoint, view, proj, display_w, display_h, startScreenPos); bool endVisible = SnappingSystem::WorldToScreen(cursorWorldPoint, view, proj, display_w, display_h, endScreenPos); if (startVisible && endVisible) { glm::vec2 rubberBandScreenVec = endScreenPos - startScreenPos; float screenLenSq = glm::length2(rubberBandScreenVec); if (screenLenSq > SCREEN_VECTOR_MIN_LENGTH_SQ) { glm::vec2 rubberBandScreenDir = glm::normalize(rubberBandScreenVec); float maxDot = -1.0f; SnapType bestAxisType = SnapType::NONE; glm::vec3 bestAxis3DDir(0.0f); const std::vector<std::pair<SnapType, glm::vec3>> globalAxes = { {SnapType::AXIS_X, AXIS_X_DIR}, {SnapType::AXIS_Y, AXIS_Y_DIR}, {SnapType::AXIS_Z, AXIS_Z_DIR} }; glm::vec2 originScreenPos; if (SnappingSystem::WorldToScreen(glm::vec3(0.0f), view, proj, display_w, display_h, originScreenPos)) { for (const auto& axisPair : globalAxes) { glm::vec2 axisEndScreenPos; if (SnappingSystem::WorldToScreen(axisPair.second, view, proj, display_w, display_h, axisEndScreenPos)) { glm::vec2 axisScreenVec = axisEndScreenPos - originScreenPos; if (glm::length2(axisScreenVec) > SCREEN_EPSILON * SCREEN_EPSILON) { glm::vec2 axisScreenDir = glm::normalize(axisScreenVec); float dot = abs(glm::dot(rubberBandScreenDir, axisScreenDir)); if (dot > maxDot) { maxDot = dot; bestAxisType = axisPair.first; bestAxis3DDir = axisPair.second; } } } } } if (bestAxisType != SnapType::NONE) { isAxisLocked = true; lockedAxisType = bestAxisType; lockedAxisDir = bestAxis3DDir; std::cout << "DEBUG: Axis direction lock activated (Visual): " << (int)lockedAxisType << std::endl; currentSnap.worldPoint = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, cursorWorldPoint); currentSnap.snapped = true; currentSnap.type = lockedAxisType; currentRubberBandEnd = currentSnap.worldPoint; goto skip_normal_snapping_update_label; } else { std::cout << "DEBUG: Shift pressed but no dominant screen axis found." << std::endl; } } else { std::cout << "DEBUG: Shift pressed but screen line direction is too short." << std::endl; } } else { std::cout << "DEBUG: Shift pressed but start/end points not visible on screen." << std::endl; } } } else { isAxisLocked = false; }
-        if (isAxisLocked) { glm::vec3 baseProjectedPoint = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, cursorWorldPoint); SnapResult cursorSnapResult = snappingSystem.FindSnapPoint(currentMouseX, currentMouseY, display_w, display_h, camera, *scene); if (cursorSnapResult.snapped && IsProjectablePointSnap(cursorSnapResult.type)) { glm::vec3 targetPoint = cursorSnapResult.worldPoint; currentSnap.worldPoint = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, targetPoint); currentSnap.snapped = true; currentSnap.type = cursorSnapResult.type; } else { currentSnap.worldPoint = baseProjectedPoint; currentSnap.snapped = true; currentSnap.type = lockedAxisType; } currentRubberBandEnd = currentSnap.worldPoint; }
-                else if ((isPlacingFirstPoint || isPlacingSecondPoint) && scene) { currentSnap = snappingSystem.FindSnapPoint(currentMouseX, currentMouseY, display_w, display_h, camera, *scene); currentRubberBandEnd = currentSnap.worldPoint; }
-                else { currentSnap.snapped = false; currentRubberBandEnd = GetCursorPointInWorld(camera, currentMouseX, currentMouseY, display_w, display_h, isPlacingSecondPoint ? currentLineStartPoint : glm::vec3(0.0f)); }
-                skip_normal_snapping_update_label:;
+                glm::vec3 cursorWorldPoint = GetCursorPointInWorld(camera, mouseX, mouseY, display_w, display_h, isPlacingSecondPoint ? currentLineStartPoint : glm::vec3(0.0f));
+                if (isPlacingSecondPoint) {
+                    glm::mat4 view = camera.GetViewMatrix(); glm::mat4 proj = camera.GetProjectionMatrix((display_h > 0) ? ((float)display_w / (float)display_h) : 1.0f);
+                    if (!shiftDown && isAxisLocked) { isAxisLocked = false; }
+                    else if (shiftPressedDownThisFrame && !isAxisLocked) { glm::vec2 startScreenPos, endScreenPos; bool sVis = SnappingSystem::WorldToScreen(currentLineStartPoint, view, proj, display_w, display_h, startScreenPos); bool eVis = SnappingSystem::WorldToScreen(cursorWorldPoint, view, proj, display_w, display_h, endScreenPos); if (sVis && eVis && glm::length2(endScreenPos - startScreenPos) > SCREEN_VECTOR_MIN_LENGTH_SQ) { glm::vec2 rbDir = glm::normalize(endScreenPos - startScreenPos); float maxDot = -1.0f; SnapType bestAxis = SnapType::NONE; glm::vec3 bestDir; const std::vector<std::pair<SnapType, glm::vec3>> axes = {{SnapType::AXIS_X, AXIS_X_DIR}, {SnapType::AXIS_Y, AXIS_Y_DIR}, {SnapType::AXIS_Z, AXIS_Z_DIR}}; glm::vec2 oScreen; if(SnappingSystem::WorldToScreen(glm::vec3(0.0f), view, proj, display_w, display_h, oScreen)) { for(const auto& ax : axes) { glm::vec2 axScreen; if(SnappingSystem::WorldToScreen(ax.second, view, proj, display_w, display_h, axScreen)) { glm::vec2 axDir = glm::normalize(axScreen - oScreen); float d = abs(glm::dot(rbDir, axDir)); if (d > maxDot) { maxDot = d; bestAxis = ax.first; bestDir = ax.second;}}}} if(bestAxis != SnapType::NONE) { isAxisLocked = true; lockedAxisType = bestAxis; lockedAxisDir = bestDir; } } }
+                }
+                if (isAxisLocked) { glm::vec3 basePt = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, cursorWorldPoint); SnapResult cSnap = snappingSystem.FindSnapPoint(mouseX, mouseY, display_w, display_h, camera, *scene); if (cSnap.snapped && IsProjectablePointSnap(cSnap.type)) { currentSnap.worldPoint = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, cSnap.worldPoint); currentSnap.snapped = true; currentSnap.type = cSnap.type; } else { currentSnap.worldPoint = basePt; currentSnap.snapped = true; currentSnap.type = lockedAxisType; }
+                } else { currentSnap = snappingSystem.FindSnapPoint(mouseX, mouseY, display_w, display_h, camera, *scene); }
+                currentRubberBandEnd = currentSnap.snapped ? currentSnap.worldPoint : cursorWorldPoint;
             }
         }
-
-        // --- Handle Line Length Input Confirmation ---
-        if (enterPressedThisFrame && isPlacingSecondPoint && scene) { /* ... same length parsing logic ... */ float length = 0.0f; auto [ptr, ec] = std::from_chars(lineLengthInputBuf, lineLengthInputBuf + strlen(lineLengthInputBuf), length); if (ec == std::errc() && ptr == lineLengthInputBuf + strlen(lineLengthInputBuf) && length > 1e-4f) { lineLengthValue = length; glm::vec3 direction; if (isAxisLocked) { float dotProd = glm::dot(currentRubberBandEnd - currentLineStartPoint, lockedAxisDir); direction = (dotProd >= 0.0f) ? lockedAxisDir : -lockedAxisDir; } else { direction = currentRubberBandEnd - currentLineStartPoint; if (glm::length(direction) < 1e-6f) { std::cerr << "Warning: Cannot determine line direction for length input." << std::endl; isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; goto end_event_processing_final_label_2; } direction = glm::normalize(direction); } glm::vec3 finalEndPoint = currentLineStartPoint + direction * lineLengthValue; scene->AddUserLine(currentLineStartPoint, finalEndPoint); std::cout << "DEBUG: Line Added (Length Input): Length=" << lineLengthValue << ", Dir=(" << direction.x << "," << direction.y << "," << direction.z << ")" << std::endl; isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } else { std::cerr << "Warning: Invalid line length input: '" << lineLengthInputBuf << "'" << std::endl; lineLengthInputBuf[0] = '\0'; } }
-        end_event_processing_final_label_2:;
+        
+        if (enterPressedThisFrame && isPlacingSecondPoint && scene) { float length; auto [ptr, ec] = std::from_chars(lineLengthInputBuf, lineLengthInputBuf + strlen(lineLengthInputBuf), length); if (ec == std::errc() && ptr == lineLengthInputBuf + strlen(lineLengthInputBuf) && length > 1e-4f) { lineLengthValue = length; glm::vec3 direction; if (isAxisLocked) { float dotProd = glm::dot(currentRubberBandEnd - currentLineStartPoint, lockedAxisDir); direction = (dotProd >= 0.0f) ? lockedAxisDir : -lockedAxisDir; } else { direction = currentRubberBandEnd - currentLineStartPoint; if (glm::length(direction) < 1e-6f) { isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; goto end_event_processing_final_label; } direction = glm::normalize(direction); } glm::vec3 finalEndPoint = currentLineStartPoint + direction * lineLengthValue; scene->AddUserLine(currentLineStartPoint, finalEndPoint); isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } else { lineLengthInputBuf[0] = '\0'; } }
+        end_event_processing_final_label:;
 
         HandleMouseMotion(camera, window, display_w, display_h);
     }
+
     void InputHandler::HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h) { /* ... */ int cX, cY; SDL_GetMouseState(&cX, &cY); if (middleMouseButtonDown && isMouseFocused) { if (firstMouse) { lastMouseX = cX; lastMouseY = cY; firstMouse = false; } else { float dX = static_cast<float>(cX - lastMouseX); float dY = static_cast<float>(cY - lastMouseY); if (std::abs(dX) > 1e-3f || std::abs(dY) > 1e-3f) { if (shiftDown) { camera.ProcessPan(dX, dY); } else { camera.ProcessOrbit(dX, dY); } int nX = cX; int nY = cY; bool w = false; const int m = 1; if (display_w > (m + 1) * 2 && display_h > (m + 1) * 2) { if (cX <= m) { nX = display_w - (m + 2); w = true; } else if (cX >= display_w - (m + 1)) { nX = m + 1; w = true; } if (cY <= m) { nY = display_h - (m + 2); w = true; } else if (cY >= display_h - (m + 1)) { nY = m + 1; w = true; } } if (w) { SDL_WarpMouseInWindow(window, nX, nY); lastMouseX = nX; lastMouseY = nY; } else { lastMouseX = cX; lastMouseY = cY; } } else { lastMouseX = cX; lastMouseY = cY; } } } else { firstMouse = true; lastMouseX = cX; lastMouseY = cY; } }
 
 } // namespace Urbaxio

@@ -13,6 +13,8 @@
 
 // Forward declare OCCT types to avoid including heavy headers here
 class gp_Pln;
+class TopoDS_Shape;
+class TopoDS_Face;
 
 namespace Urbaxio::Engine { class SceneObject; }
 
@@ -52,6 +54,9 @@ namespace Urbaxio::Engine {
         const std::vector<std::pair<glm::vec3, glm::vec3>>& GetLineSegments() const;
         void ClearUserLines();
 
+        // --- Geometry Modification ---
+        bool ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance);
+
     private:
         std::unordered_map<uint64_t, std::unique_ptr<SceneObject>> objects_;
         uint64_t next_object_id_ = 1;
@@ -77,6 +82,9 @@ namespace Urbaxio::Engine {
         );
         bool ArePointsCoplanar(const std::vector<glm::vec3>& points, gp_Pln& outPlane);
         void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
+        
+        // --- Push/Pull Helpers ---
+        TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices);
     };
 
 }
