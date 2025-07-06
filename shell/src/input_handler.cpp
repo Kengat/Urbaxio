@@ -147,6 +147,9 @@ namespace Urbaxio {
         std::vector<size_t>& selectedTriangleIndices,
         std::vector<size_t>& selectedLineIndices,
         bool isDrawingLineMode,
+        bool isPushPullMode,
+        uint64_t& hoveredObjId,
+        std::vector<size_t>& hoveredFaceTriangleIndices,
         bool& isPlacingFirstPoint,
         bool& isPlacingSecondPoint,
         glm::vec3& currentLineStartPoint,
@@ -165,9 +168,13 @@ namespace Urbaxio {
                 else if (event.button.button == SDL_BUTTON_LEFT) {
                     int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
                     if (isDrawingLineMode && scene) { /* ... line drawing clicks ... */ glm::vec3 clickPoint = currentSnap.worldPoint; if (isPlacingFirstPoint) { currentLineStartPoint = clickPoint; isPlacingFirstPoint = false; isPlacingSecondPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line Start Point Set: (" << clickPoint.x << ", " << clickPoint.y << ", " << clickPoint.z << ") Snap: " << (currentSnap.snapped ? "Yes" : "No") << std::endl; } else if (isPlacingSecondPoint) { glm::vec3 endPoint = clickPoint; if (glm::distance(currentLineStartPoint, endPoint) > 1e-3f) { scene->AddUserLine(currentLineStartPoint, endPoint); std::cout << "DEBUG: Line Added (Click): Start(...), End(" << endPoint.x << ", " << endPoint.y << ", " << endPoint.z << ") SnapType: " << (int)currentSnap.type << std::endl; } else { std::cout << "DEBUG: Points too close, line not added." << std::endl; } isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } }
-                    else if (!isDrawingLineMode && scene) { // Select lines, faces, or triangles
+                    else { // Not drawing lines, so handle selection
                         glm::vec3 rayOrigin, rayDir;
                         Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
+                        
+                        if (isPushPullMode) {
+                            // TODO: Add click logic for Push/Pull tool
+                        } else { // Default selection mode
                         struct LineHit { size_t lineIndex; float distanceAlongRay; glm::vec3 intersectionPoint; };
                         std::vector<LineHit> lineHits;
                         const auto& lineSegments = scene->GetLineSegments();
@@ -223,6 +230,7 @@ namespace Urbaxio {
                                 lastClickTimestamp = 0;
                             }
                         }
+                        }
                     }
                 } else if (event.button.button == SDL_BUTTON_RIGHT) { /* ... same cancel logic ... */ if (isAxisLocked) { isAxisLocked = false; std::cout << "DEBUG: Axis lock cancelled by Right Click." << std::endl; } else if (isPlacingSecondPoint) { isPlacingSecondPoint = false; isPlacingFirstPoint = true; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line drawing second point cancelled by Right Click." << std::endl; } else if (isPlacingFirstPoint) { isPlacingFirstPoint = false; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line drawing first point placement cancelled by Right Click." << std::endl; } }
             } break;
@@ -230,14 +238,42 @@ namespace Urbaxio {
         case SDL_MOUSEWHEEL: /* ... same ... */ if (!wantCaptureMouse) { camera.ProcessMouseScroll(static_cast<float>(event.wheel.y)); } break;
         }} // End Event Loop & Switch
 
-        // --- Update Snapping / Axis Locking (AFTER Event Loop) ---
-        // ... (same logic as before for axis lock activation, normal snapping, axis locked snapping with point projection) ...
-        int currentMouseX, currentMouseY; SDL_GetMouseState(&currentMouseX, &currentMouseY); glm::mat4 view = camera.GetViewMatrix(); glm::mat4 proj = camera.GetProjectionMatrix((display_h > 0) ? ((float)display_w / (float)display_h) : 1.0f); glm::vec3 cursorWorldPoint = GetCursorPointInWorld(camera, currentMouseX, currentMouseY, display_w, display_h, isPlacingSecondPoint ? currentLineStartPoint : glm::vec3(0.0f));
+        // --- Per-frame updates (after event loop) ---
+        int currentMouseX, currentMouseY; SDL_GetMouseState(&currentMouseX, &currentMouseY);
+        hoveredObjId = 0; hoveredFaceTriangleIndices.clear();
+        currentRubberBandEnd = glm::vec3(0.0f); currentSnap.snapped = false;
+        
+        ImGuiIO& io_for_mouse = ImGui::GetIO();
+        if (!io_for_mouse.WantCaptureMouse && scene) {
+            if (isPushPullMode) {
+                // --- Push/Pull Hover Logic ---
+                glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(currentMouseX, currentMouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
+                uint64_t currentHoveredObjId = 0; size_t currentHoveredTriangleIdx = 0; float closestHitDist = std::numeric_limits<float>::max();
+                for (Urbaxio::Engine::SceneObject* obj_ptr : scene->get_all_objects()) {
+                    if (obj_ptr->has_mesh()) {
+                        const auto& mesh = obj_ptr->get_mesh_buffers();
+                        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                            glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]); glm::vec3 v1(mesh.vertices[mesh.indices[i+1]*3], mesh.vertices[mesh.indices[i+1]*3+1], mesh.vertices[mesh.indices[i+1]*3+2]); glm::vec3 v2(mesh.vertices[mesh.indices[i+2]*3], mesh.vertices[mesh.indices[i+2]*3+1], mesh.vertices[mesh.indices[i+2]*3+2]); float t; if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDist) { closestHitDist = t; currentHoveredObjId = obj_ptr->get_id(); currentHoveredTriangleIdx = i; }
+                        }
+                    }
+                }
+                if (currentHoveredObjId != 0) {
+                    Urbaxio::Engine::SceneObject* hitObject = scene->get_object_by_id(currentHoveredObjId);
+                    if (hitObject) {
+                        hoveredFaceTriangleIndices = FindCoplanarAdjacentTriangles(*hitObject, currentHoveredTriangleIdx);
+                        hoveredObjId = currentHoveredObjId;
+                    }
+                }
+            } else if (isDrawingLineMode) {
+                // --- Line Drawing Snap Logic ---
+                glm::mat4 view = camera.GetViewMatrix(); glm::mat4 proj = camera.GetProjectionMatrix((display_h > 0) ? ((float)display_w / (float)display_h) : 1.0f); glm::vec3 cursorWorldPoint = GetCursorPointInWorld(camera, currentMouseX, currentMouseY, display_w, display_h, isPlacingSecondPoint ? currentLineStartPoint : glm::vec3(0.0f));
         if (isPlacingSecondPoint) { if (!shiftDown && isAxisLocked) { isAxisLocked = false; std::cout << "DEBUG: Axis lock released." << std::endl; } else if (shiftPressedDownThisFrame && !isAxisLocked) { glm::vec2 startScreenPos, endScreenPos; bool startVisible = SnappingSystem::WorldToScreen(currentLineStartPoint, view, proj, display_w, display_h, startScreenPos); bool endVisible = SnappingSystem::WorldToScreen(cursorWorldPoint, view, proj, display_w, display_h, endScreenPos); if (startVisible && endVisible) { glm::vec2 rubberBandScreenVec = endScreenPos - startScreenPos; float screenLenSq = glm::length2(rubberBandScreenVec); if (screenLenSq > SCREEN_VECTOR_MIN_LENGTH_SQ) { glm::vec2 rubberBandScreenDir = glm::normalize(rubberBandScreenVec); float maxDot = -1.0f; SnapType bestAxisType = SnapType::NONE; glm::vec3 bestAxis3DDir(0.0f); const std::vector<std::pair<SnapType, glm::vec3>> globalAxes = { {SnapType::AXIS_X, AXIS_X_DIR}, {SnapType::AXIS_Y, AXIS_Y_DIR}, {SnapType::AXIS_Z, AXIS_Z_DIR} }; glm::vec2 originScreenPos; if (SnappingSystem::WorldToScreen(glm::vec3(0.0f), view, proj, display_w, display_h, originScreenPos)) { for (const auto& axisPair : globalAxes) { glm::vec2 axisEndScreenPos; if (SnappingSystem::WorldToScreen(axisPair.second, view, proj, display_w, display_h, axisEndScreenPos)) { glm::vec2 axisScreenVec = axisEndScreenPos - originScreenPos; if (glm::length2(axisScreenVec) > SCREEN_EPSILON * SCREEN_EPSILON) { glm::vec2 axisScreenDir = glm::normalize(axisScreenVec); float dot = abs(glm::dot(rubberBandScreenDir, axisScreenDir)); if (dot > maxDot) { maxDot = dot; bestAxisType = axisPair.first; bestAxis3DDir = axisPair.second; } } } } } if (bestAxisType != SnapType::NONE) { isAxisLocked = true; lockedAxisType = bestAxisType; lockedAxisDir = bestAxis3DDir; std::cout << "DEBUG: Axis direction lock activated (Visual): " << (int)lockedAxisType << std::endl; currentSnap.worldPoint = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, cursorWorldPoint); currentSnap.snapped = true; currentSnap.type = lockedAxisType; currentRubberBandEnd = currentSnap.worldPoint; goto skip_normal_snapping_update_label; } else { std::cout << "DEBUG: Shift pressed but no dominant screen axis found." << std::endl; } } else { std::cout << "DEBUG: Shift pressed but screen line direction is too short." << std::endl; } } else { std::cout << "DEBUG: Shift pressed but start/end points not visible on screen." << std::endl; } } } else { isAxisLocked = false; }
         if (isAxisLocked) { glm::vec3 baseProjectedPoint = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, cursorWorldPoint); SnapResult cursorSnapResult = snappingSystem.FindSnapPoint(currentMouseX, currentMouseY, display_w, display_h, camera, *scene); if (cursorSnapResult.snapped && IsProjectablePointSnap(cursorSnapResult.type)) { glm::vec3 targetPoint = cursorSnapResult.worldPoint; currentSnap.worldPoint = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, targetPoint); currentSnap.snapped = true; currentSnap.type = cursorSnapResult.type; } else { currentSnap.worldPoint = baseProjectedPoint; currentSnap.snapped = true; currentSnap.type = lockedAxisType; } currentRubberBandEnd = currentSnap.worldPoint; }
-        else if ((isPlacingFirstPoint || isPlacingSecondPoint) && scene) { currentSnap = snappingSystem.FindSnapPoint(currentMouseX, currentMouseY, display_w, display_h, camera, *scene); currentRubberBandEnd = currentSnap.worldPoint; }
-        else { currentSnap.snapped = false; currentRubberBandEnd = cursorWorldPoint; }
-        skip_normal_snapping_update_label:;
+                else if ((isPlacingFirstPoint || isPlacingSecondPoint) && scene) { currentSnap = snappingSystem.FindSnapPoint(currentMouseX, currentMouseY, display_w, display_h, camera, *scene); currentRubberBandEnd = currentSnap.worldPoint; }
+                else { currentSnap.snapped = false; currentRubberBandEnd = GetCursorPointInWorld(camera, currentMouseX, currentMouseY, display_w, display_h, isPlacingSecondPoint ? currentLineStartPoint : glm::vec3(0.0f)); }
+                skip_normal_snapping_update_label:;
+            }
+        }
 
         // --- Handle Line Length Input Confirmation ---
         if (enterPressedThisFrame && isPlacingSecondPoint && scene) { /* ... same length parsing logic ... */ float length = 0.0f; auto [ptr, ec] = std::from_chars(lineLengthInputBuf, lineLengthInputBuf + strlen(lineLengthInputBuf), length); if (ec == std::errc() && ptr == lineLengthInputBuf + strlen(lineLengthInputBuf) && length > 1e-4f) { lineLengthValue = length; glm::vec3 direction; if (isAxisLocked) { float dotProd = glm::dot(currentRubberBandEnd - currentLineStartPoint, lockedAxisDir); direction = (dotProd >= 0.0f) ? lockedAxisDir : -lockedAxisDir; } else { direction = currentRubberBandEnd - currentLineStartPoint; if (glm::length(direction) < 1e-6f) { std::cerr << "Warning: Cannot determine line direction for length input." << std::endl; isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; goto end_event_processing_final_label_2; } direction = glm::normalize(direction); } glm::vec3 finalEndPoint = currentLineStartPoint + direction * lineLengthValue; scene->AddUserLine(currentLineStartPoint, finalEndPoint); std::cout << "DEBUG: Line Added (Length Input): Length=" << lineLengthValue << ", Dir=(" << direction.x << "," << direction.y << "," << direction.z << ")" << std::endl; isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } else { std::cerr << "Warning: Invalid line length input: '" << lineLengthInputBuf << "'" << std::endl; lineLengthInputBuf[0] = '\0'; } }

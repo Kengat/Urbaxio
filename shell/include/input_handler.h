@@ -28,8 +28,12 @@ namespace Urbaxio {
             uint64_t& selectedObjId,
             std::vector<size_t>& selectedTriangleIndices,
             std::vector<size_t>& selectedLineIndices,
-            // Drawing mode & state (Input/Output)
+            // Tool state
             bool isDrawingLineMode,
+            bool isPushPullMode,
+            uint64_t& hoveredObjId,
+            std::vector<size_t>& hoveredFaceTriangleIndices,
+            // Drawing mode & state (Input/Output)
             bool& isPlacingFirstPoint,
             bool& isPlacingSecondPoint,
             glm::vec3& currentLineStartPoint,

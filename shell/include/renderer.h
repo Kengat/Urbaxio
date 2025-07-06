@@ -26,15 +26,21 @@ namespace Urbaxio {
         void RenderFrame(
             SDL_Window* window,
             const Urbaxio::Camera& camera,
-            Urbaxio::Engine::Scene* scene, // Scene pointer to get line segments
+            Urbaxio::Engine::Scene* scene,
             const glm::vec3& defaultObjectColor,
             const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
             bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth,
             const glm::vec4& splatColor, float splatBlurStrength,
+            // Selections
             uint64_t selectedObjId,
             const std::vector<size_t>& selectedTriangleIndices,
             const std::vector<size_t>& selectedLineIndices,
             const glm::vec3& selectionHighlightColor,
+            // Hovers
+            uint64_t hoveredObjId,
+            const std::vector<size_t>& hoveredFaceTriangleIndices,
+            const glm::vec3& hoverHighlightColor,
+            // Tools
             bool isDrawingActive, const glm::vec3& rubberBandStart, const glm::vec3& rubberBandEnd,
             const SnapResult& currentSnap,
             ImDrawData* imguiDrawData

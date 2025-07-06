@@ -150,6 +150,9 @@ namespace Urbaxio {
         const std::vector<size_t>& selectedTriangleIndices,
         const std::vector<size_t>& selectedLineIndices,
         const glm::vec3& selectionHighlightColor,
+        uint64_t hoveredObjId,
+        const std::vector<size_t>& hoveredFaceTriangleIndices,
+        const glm::vec3& hoverHighlightColor,
         bool isDrawingActive, const glm::vec3& rubberBandStart, const glm::vec3& rubberBandEnd,
         const SnapResult& currentSnap,
         ImDrawData* imguiDrawData
@@ -159,6 +162,7 @@ namespace Urbaxio {
         if (userLinesVAO != 0 && lineShaderProgram != 0 && userLinesVertexCount > 0) { glLineWidth(2.0f); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(userLinesVAO); glDrawArrays(GL_LINES, 0, userLinesVertexCount); glBindVertexArray(0); glLineWidth(1.0f); }
         if (isDrawingActive && lineShaderProgram != 0) { glLineWidth(1.0f); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); GLuint tempVBO, tempVAO; float lineData[] = { rubberBandStart.x, rubberBandStart.y, rubberBandStart.z, userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a, rubberBandEnd.x,   rubberBandEnd.y,   rubberBandEnd.z,   userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a }; glGenVertexArrays(1, &tempVAO); glGenBuffers(1, &tempVBO); glBindVertexArray(tempVAO); glBindBuffer(GL_ARRAY_BUFFER, tempVBO); glBufferData(GL_ARRAY_BUFFER, sizeof(lineData), lineData, GL_DYNAMIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindVertexArray(tempVAO); glDrawArrays(GL_LINES, 0, 2); glBindVertexArray(0); glDeleteBuffers(1, &tempVBO); glDeleteVertexArrays(1, &tempVAO); }
         if (objectShaderProgram != 0 && scene) { glLineWidth(1.0f); glUseProgram(objectShaderProgram); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor)); glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength); glUniform3fv(glGetUniformLocation(objectShaderProgram, "viewPos"), 1, glm::value_ptr(camera.Position)); std::vector<Urbaxio::Engine::SceneObject*> objects = scene->get_all_objects();
+            // 1. Draw all objects
             for (const auto* obj : objects) {
                 if (obj && obj->vao != 0 && obj->index_count > 0) {
                     glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
@@ -168,6 +172,29 @@ namespace Urbaxio {
                     glBindVertexArray(0);
                 }
             }
+
+            // 2. Draw hover highlight (if any, and not the same as selected)
+            if (hoveredObjId != 0 && !hoveredFaceTriangleIndices.empty()) {
+                bool isSameAsSelected = (hoveredObjId == selectedObjId) && (hoveredFaceTriangleIndices == selectedTriangleIndices);
+                if (!isSameAsSelected) {
+                    Urbaxio::Engine::SceneObject* hoveredObj = scene->get_object_by_id(hoveredObjId);
+                     if (hoveredObj && hoveredObj->vao != 0) {
+                        glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(hoverHighlightColor));
+                        glEnable(GL_POLYGON_OFFSET_FILL);
+                        glPolygonOffset(-2.0f, -2.0f); // Use a different offset
+                        glBindVertexArray(hoveredObj->vao);
+                        for (size_t baseIndex : hoveredFaceTriangleIndices) {
+                             if (baseIndex + 2 < hoveredObj->get_mesh_buffers().indices.size()) {
+                                 glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, (void*)(baseIndex * sizeof(unsigned int)));
+                             }
+                        }
+                        glBindVertexArray(0);
+                        glDisable(GL_POLYGON_OFFSET_FILL);
+                     }
+                }
+            }
+            
+            // 3. Draw selection highlight (on top of everything)
             if (selectedObjId != 0 && !selectedTriangleIndices.empty()) {
                 Urbaxio::Engine::SceneObject* selectedObj = scene->get_object_by_id(selectedObjId);
                 if (selectedObj && selectedObj->vao != 0) {
