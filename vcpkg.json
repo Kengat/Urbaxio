@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "urbaxio",
+  "version-string": "0.0.1",
+  "dependencies": [
+    "fmt",
+    "sdl2",
+    "glad",
+    "imgui",
+    "glm",
+    "opencascade"
+  ]
+} 

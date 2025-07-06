@@ -1,0 +1,27 @@
+# Папка сборки CMake
+build/
+
+# Файлы Visual Studio
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+**/Debug/
+**/Release/
+**/x64/
+*.VC.db
+*.suo
+.vs/
+
+# Локальные файлы Vcpkg (в режиме манифеста)
+vcpkg_installed/
+
+# Другие временные файлы
+*.log
+*.tmp
+*~
+# ... (все предыдущие строки) ...
+
+# Файл со снапшотом кода
+project_snapshot.txt
+pixdetz.txt 
