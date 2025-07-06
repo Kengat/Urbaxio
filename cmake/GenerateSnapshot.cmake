@@ -12,7 +12,8 @@ IMPORTANT:
 1. ALWAYS write complete files. Do NOT use '...' or '// ... (rest of the code)' or similar abbreviations. Check ALL files you were asked to modify.
 2. Use ONLY English comments in the code (// English comment). Do NOT use Russian comments.
 3. Adhere to the existing coding style and structure.
-4. At the end of your response, ALWAYS include the standard command sequence for the user (see USER COMMANDS section below for format).
+4. After every successful change that compiles and works, create a Git commit by providing the user with the necessary commands.
+5. At the end of your response, ALWAYS include the standard command sequence for the user (see USER COMMANDS section below for format).
 
 --- END AI INSTRUCTIONS ---")
 
@@ -20,8 +21,8 @@ IMPORTANT:
 set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 # 1. Clean Build (if CMakeLists.txt or dependencies changed, or if problems occur)
-#    Run these in Developer Command Prompt for VS
-# C: && cd C:\\Users\\illia\\OneDrive\\Документы\\programming\\Urbaxio
+#    Run these in Developer CommandPrompt for VS
+# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio
 # rmdir /s /q build
 # mkdir build
 # cd build
@@ -29,20 +30,27 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 # cmake --build . --config Debug -- /p:VcpkgEnableManifest=true
 
 # 2. Incremental Build (if only .cpp/.h files changed)
-#    Run these in Developer CommandPrompt for VS (inside the existing 'build' directory)
-# cd /d C:\\Users\\illia\\OneDrive\\Документы\\programming\\Urbaxio\\build
+#    Run these in Developer Command Prompt for VS (inside the existing 'build' directory)
+# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build
 # cmake --build . --config Debug -- /p:VcpkgEnableManifest=true
 
 # 3. Run Application (after successful build)
 #    Run in Developer Command Prompt for VS
-# cd /d C:\\Users\\illia\\OneDrive\\Документы\\programming\\Urbaxio\\build\\shell\\Debug
+# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build/shell/Debug
 # .\\Urbaxio.exe
 #    (Or find Urbaxio.exe in build\\bin\\Debug or build\\shell\\Debug and double-click)
 
 # 4. Generate Code Snapshot (run when needed for AI)
 #    Run in Developer Command Prompt for VS (inside the 'build' directory)
-# cd /d C:\\Users\\illia\\OneDrive\\Документы\\programming\\Urbaxio\\build
+# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build
 # cmake --build . --target generate_snapshot
+
+# 5. Git Commit & Push (after successful changes)
+#    Run in Developer Command Prompt for VS (from project root)
+# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio
+# git add .
+# git commit -m \"A descriptive commit message\"
+# git push origin main
 
 --- END USER COMMANDS ---")
 
