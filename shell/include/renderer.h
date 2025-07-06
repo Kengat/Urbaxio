@@ -49,6 +49,7 @@ namespace Urbaxio {
         float GetMaxLineWidth() const { return maxLineWidth; }
 
         void UpdateUserLinesBuffer(const std::vector<std::pair<glm::vec3, glm::vec3>>& lineSegments, const std::vector<size_t>& selectedLineIndices);
+        void UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance);
 
     private:
         GLuint objectShaderProgram = 0;
@@ -60,6 +61,10 @@ namespace Urbaxio {
         GLuint axesVAO = 0, axesVBO = 0; int axesVertexCount = 0;
         GLuint splatVAO = 0, splatVBO = 0, splatEBO = 0;
         GLuint userLinesVAO = 0, userLinesVBO = 0; int userLinesVertexCount = 0;
+        
+        // --- Preview Resources ---
+        GLuint previewVAO = 0, previewVBO = 0;
+        GLsizei previewVertexCount = 0;
 
         std::map<MarkerShape, GLuint> markerVAOs;
         std::map<MarkerShape, GLuint> markerVBOs;
@@ -92,6 +97,7 @@ namespace Urbaxio {
         bool CreateSplatResources();
         bool CreateUserLinesResources();
         bool CreateMarkerResources();
+        bool CreatePreviewResources();
         void Cleanup();
         void DrawSnapMarker(const SnapResult& snap, const Camera& camera, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight);
 

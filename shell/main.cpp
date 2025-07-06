@@ -69,6 +69,7 @@ int main(int argc, char* argv[]) {
     uint64_t hoveredObjId = 0;
     std::vector<size_t> hoveredFaceTriangleIndices;
     glm::vec3 hoverHighlightColor = glm::vec3(0.4f, 0.9f, 1.0f); // Light cyan
+    float pushPullCurrentDistance = 0.0f; // This will be updated by InputHandler
 
     // --- Drawing State ---
     bool isPlacingFirstPoint = false;
@@ -84,8 +85,18 @@ int main(int argc, char* argv[]) {
         int display_w, display_h; SDL_GetWindowSize(window, &display_w, &display_h);
         if (isDrawingLineMode && !isPlacingFirstPoint && !isPlacingSecondPoint) { isPlacingFirstPoint = true; } else if (!isDrawingLineMode && (isPlacingFirstPoint || isPlacingSecondPoint)) { isPlacingFirstPoint = false; isPlacingSecondPoint = false; lineLengthInputBuf[0] = '\0'; lineLengthValue = 0.0f; }
         
-        inputHandler.ProcessEvents(camera, should_quit, window, display_w, display_h, selectedObjId, selectedTriangleIndices, selectedLineIndices, isDrawingLineMode, isPushPullMode, isPushPullActive, hoveredObjId, hoveredFaceTriangleIndices, isPlacingFirstPoint, isPlacingSecondPoint, currentLineStartPoint, scene_ptr, currentRubberBandEnd, currentSnap, lineLengthInputBuf, lineLengthValue);
+        inputHandler.ProcessEvents(camera, should_quit, window, display_w, display_h, selectedObjId, selectedTriangleIndices, selectedLineIndices, isDrawingLineMode, isPushPullMode, isPushPullActive, hoveredObjId, hoveredFaceTriangleIndices, pushPullCurrentDistance, isPlacingFirstPoint, isPlacingSecondPoint, currentLineStartPoint, scene_ptr, currentRubberBandEnd, currentSnap, lineLengthInputBuf, lineLengthValue);
         
+        if (isPushPullActive) {
+            Urbaxio::Engine::SceneObject* obj = scene_ptr->get_object_by_id(inputHandler.GetPushPullObjectId());
+            if (obj) {
+                renderer.UpdatePushPullPreview(*obj, inputHandler.GetPushPullFaceIndices(), inputHandler.GetPushPullNormal(), pushPullCurrentDistance);
+            }
+        } else {
+            // Clear preview when not active
+            renderer.UpdatePushPullPreview(Urbaxio::Engine::SceneObject(0, ""), {}, {}, 0.0f);
+        }
+
         static bool wasPlacingSecondPoint = false; if (wasPlacingSecondPoint && !isPlacingSecondPoint) { /* ... */ } wasPlacingSecondPoint = isPlacingSecondPoint;
         if (should_quit) break;
         if (scene_ptr) { renderer.UpdateUserLinesBuffer(scene_ptr->GetLineSegments(), selectedLineIndices); }
@@ -100,7 +111,6 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-            renderer.UpdateUserLinesBuffer(scene_ptr->GetLineSegments(), selectedLineIndices);
         }
 
         ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplSDL2_NewFrame(); ImGui::NewFrame();

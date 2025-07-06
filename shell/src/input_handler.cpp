@@ -117,7 +117,7 @@ namespace { // Anonymous namespace for utility functions
 
 namespace Urbaxio {
 
-    InputHandler::InputHandler() : middleMouseButtonDown(false), shiftDown(false), shiftWasPressed(false), lastMouseX(0), lastMouseY(0), isMouseFocused(true), firstMouse(true), lastClickTimestamp(0), lastClickedObjId(0), lastClickedTriangleIndex(0), pushPull_objId(0), isAxisLocked(false), lockedAxisType(SnapType::NONE), lockedAxisOrigin(0.0f), lockedAxisDir(0.0f), snappingSystem() {}
+    InputHandler::InputHandler() : middleMouseButtonDown(false), shiftDown(false), shiftWasPressed(false), lastMouseX(0), lastMouseY(0), isMouseFocused(true), firstMouse(true), lastClickTimestamp(0), lastClickedObjId(0), lastClickedTriangleIndex(0), pushPull_objId(0), pushPull_startMouseX(0), pushPull_startMouseY(0), pushPull_currentDistance(0.0f), isAxisLocked(false), lockedAxisType(SnapType::NONE), lockedAxisOrigin(0.0f), lockedAxisDir(0.0f), snappingSystem() {}
     glm::vec3 InputHandler::GetCursorPointInWorld(const Camera& camera, int mouseX, int mouseY, int screenWidth, int screenHeight, const glm::vec3& fallbackPlanePoint) { glm::vec3 point; if (SnappingSystem::RaycastToZPlane(mouseX, mouseY, screenWidth, screenHeight, camera, point)) { return point; } else { glm::vec3 rayOrigin, rayDirection; glm::mat4 view = camera.GetViewMatrix(); glm::mat4 projection = camera.GetProjectionMatrix((screenHeight > 0) ? ((float)screenWidth / (float)screenHeight) : 1.0f); Camera::ScreenToWorldRay(mouseX, mouseY, screenWidth, screenHeight, view, projection, rayOrigin, rayDirection); glm::vec3 planeNormal = -camera.Front; glm::vec3 pointOnPlane = fallbackPlanePoint; float denom = glm::dot(rayDirection, planeNormal); if (std::abs(denom) > 1e-6f) { float t = glm::dot(pointOnPlane - rayOrigin, planeNormal) / denom; if (t > 1e-4f && t < 10000.0f) return rayOrigin + rayDirection * t; } return rayOrigin + rayDirection * 10.0f; } }
     bool InputHandler::RayLineSegmentIntersection( const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::vec3& p1, const glm::vec3& p2, float pickThresholdRadius, float& outDistanceAlongRay, glm::vec3& outClosestPointOnSegment ) { /* ... same implementation ... */ glm::vec3 segDir = p2 - p1; float segLenSq = glm::length2(segDir); if (segLenSq < LINE_RAY_EPSILON * LINE_RAY_EPSILON) { outDistanceAlongRay = glm::dot(p1 - rayOrigin, rayDir); if (outDistanceAlongRay < 0) return false; glm::vec3 pointOnRay = rayOrigin + rayDir * outDistanceAlongRay; if (glm::distance2(pointOnRay, p1) < pickThresholdRadius * pickThresholdRadius) { outClosestPointOnSegment = p1; return true; } return false; } glm::vec3 segDirNormalized = glm::normalize(segDir); glm::vec3 w0 = rayOrigin - p1; float a = 1.0f; float b = glm::dot(rayDir, segDirNormalized); float c = 1.0f; float d = glm::dot(rayDir, w0); float e = glm::dot(segDirNormalized, w0); float denom = a * c - b * b; float t_ray, t_seg_param; if (std::abs(denom) < LINE_RAY_EPSILON) { glm::vec3 closest_on_ray_to_p1 = rayOrigin + rayDir * glm::dot(p1 - rayOrigin, rayDir); if (glm::distance2(closest_on_ray_to_p1, p1) < pickThresholdRadius * pickThresholdRadius) { outDistanceAlongRay = glm::dot(p1 - rayOrigin, rayDir); outClosestPointOnSegment = p1; return outDistanceAlongRay >=0; } glm::vec3 closest_on_ray_to_p2 = rayOrigin + rayDir * glm::dot(p2 - rayOrigin, rayDir); if (glm::distance2(closest_on_ray_to_p2, p2) < pickThresholdRadius * pickThresholdRadius) { outDistanceAlongRay = glm::dot(p2 - rayOrigin, rayDir); outClosestPointOnSegment = p2; return outDistanceAlongRay >=0; } return false; } t_ray = (b * e - c * d) / denom; t_seg_param = (a * e - b * d) / denom; float segActualLength = glm::sqrt(segLenSq); t_seg_param = glm::clamp(t_seg_param, 0.0f, segActualLength); outClosestPointOnSegment = p1 + segDirNormalized * t_seg_param; float actual_t_ray = glm::dot(outClosestPointOnSegment - rayOrigin, rayDir); if (actual_t_ray < 0) return false; glm::vec3 closestPointOnRayToClampedSegPoint = rayOrigin + actual_t_ray * rayDir; float distSq = glm::distance2(closestPointOnRayToClampedSegPoint, outClosestPointOnSegment); if (distSq < pickThresholdRadius * pickThresholdRadius) { outDistanceAlongRay = actual_t_ray; return true; } return false; }
 
@@ -135,6 +135,7 @@ namespace Urbaxio {
         bool& isPushPullActive,
         uint64_t& hoveredObjId,
         std::vector<size_t>& hoveredFaceTriangleIndices,
+        float& pushPullCurrentDistance,
         bool& isPlacingFirstPoint,
         bool& isPlacingSecondPoint,
         glm::vec3& currentLineStartPoint,
@@ -155,21 +156,10 @@ namespace Urbaxio {
                     if (isDrawingLineMode && scene) { glm::vec3 clickPoint = currentSnap.worldPoint; if (isPlacingFirstPoint) { currentLineStartPoint = clickPoint; isPlacingFirstPoint = false; isPlacingSecondPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } else if (isPlacingSecondPoint) { glm::vec3 endPoint = clickPoint; if (glm::distance(currentLineStartPoint, endPoint) > 1e-3f) { scene->AddUserLine(currentLineStartPoint, endPoint); } isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } }
                     else if (isPushPullMode && scene) {
                         if (isPushPullActive) {
-                            glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
-                            
-                            // More robust distance calculation
-                            glm::vec3 pointOnMouseRay = rayOrigin + rayDir; // A point on the mouse ray
-                            glm::vec3 pointOnExtrusionAxis = ClosestPointOnLine(pushPull_startPoint, pushPull_faceNormal, pointOnMouseRay);
-                            glm::vec3 offsetVector = pointOnExtrusionAxis - pushPull_startPoint;
-                            float distance = glm::length(offsetVector);
-                            if (glm::dot(offsetVector, pushPull_faceNormal) < 0) {
-                                distance = -distance;
-                            }
-
-                            distance = std::clamp(distance, -MAX_EXTRUDE_DISTANCE, MAX_EXTRUDE_DISTANCE);
-                            scene->ExtrudeFace(pushPull_objId, pushPull_faceIndices, pushPull_faceNormal, distance);
-                            std::cout << "DEBUG: Push/Pull operation finalized with distance: " << distance << std::endl;
+                            scene->ExtrudeFace(pushPull_objId, pushPull_faceIndices, pushPull_faceNormal, pushPullCurrentDistance);
+                            std::cout << "DEBUG: Push/Pull operation finalized with distance: " << pushPullCurrentDistance << std::endl;
                             isPushPullActive = false;
+                            pushPullCurrentDistance = 0.0f;
 
                         } else { // Start a new Push/Pull operation
                             if (hoveredObjId != 0 && !hoveredFaceTriangleIndices.empty()) {
@@ -185,6 +175,8 @@ namespace Urbaxio {
                                 float closestHitDist;
                                 glm::intersectRayPlane(rayOrigin, rayDir, glm::vec3(mesh.vertices[firstTriFirstVertIdx*3], mesh.vertices[firstTriFirstVertIdx*3+1], mesh.vertices[firstTriFirstVertIdx*3+2]), pushPull_faceNormal, closestHitDist);
                                 pushPull_startPoint = rayOrigin + rayDir * closestHitDist;
+                                pushPullCurrentDistance = 0.0f;
+                                SDL_GetMouseState(&pushPull_startMouseX, &pushPull_startMouseY);
 
                                 selectedObjId = 0; selectedTriangleIndices.clear();
                                 std::cout << "DEBUG: Push/Pull operation started on Obj " << pushPull_objId << ", Normal (" << pushPull_faceNormal.x << ", " << pushPull_faceNormal.y << ", " << pushPull_faceNormal.z << ")" << std::endl;
@@ -203,9 +195,9 @@ namespace Urbaxio {
                                     const auto& mesh = obj_ptr->get_mesh_buffers();
                                     for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                                         glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]); glm::vec3 v1(mesh.vertices[mesh.indices[i+1]*3], mesh.vertices[mesh.indices[i+1]*3+1], mesh.vertices[mesh.indices[i+1]*3+2]); glm::vec3 v2(mesh.vertices[mesh.indices[i+2]*3], mesh.vertices[mesh.indices[i+2]*3+1], mesh.vertices[mesh.indices[i+2]*3+2]); float t; if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDistance) { closestHitDistance = t; hitObjectId = obj_ptr->get_id(); hitTriangleBaseIndex = i; }
+                                        }
                                     }
                                 }
-                            }
                             if (hitObjectId != 0) {
                                 uint32_t currentTime = SDL_GetTicks(); const uint32_t DOUBLE_CLICK_TIME = 300;
                                 if (currentTime - lastClickTimestamp < DOUBLE_CLICK_TIME && hitObjectId == lastClickedObjId && hitTriangleBaseIndex == lastClickedTriangleIndex) { selectedTriangleIndices.assign(1, hitTriangleBaseIndex); selectedObjId = hitObjectId; lastClickTimestamp = 0;
@@ -228,7 +220,31 @@ namespace Urbaxio {
         currentRubberBandEnd = glm::vec3(0.0f); currentSnap.snapped = false;
         
         if (!io.WantCaptureMouse && scene) {
-            if (isPushPullMode && !isPushPullActive) {
+            if (isPushPullActive) {
+                hoveredObjId = pushPull_objId;
+                hoveredFaceTriangleIndices = pushPull_faceIndices;
+
+                // New screen-space based distance calculation
+                glm::mat4 view = camera.GetViewMatrix(); glm::mat4 proj = camera.GetProjectionMatrix((float)display_w/(float)display_h);
+                glm::vec2 screenStart, screenEnd;
+                bool p1_visible = SnappingSystem::WorldToScreen(pushPull_startPoint, view, proj, display_w, display_h, screenStart);
+                bool p2_visible = SnappingSystem::WorldToScreen(pushPull_startPoint + pushPull_faceNormal, view, proj, display_w, display_h, screenEnd);
+                
+                if (p1_visible && p2_visible) {
+                    glm::vec2 screenAxisDir = screenEnd - screenStart;
+                    if (glm::length2(screenAxisDir) > SCREEN_EPSILON * SCREEN_EPSILON) {
+                        screenAxisDir = glm::normalize(screenAxisDir);
+                        glm::vec2 mouseDelta(mouseX - pushPull_startMouseX, mouseY - pushPull_startMouseY);
+                        float pixel_dist = glm::dot(mouseDelta, screenAxisDir);
+
+                        // Scale pixel distance to world units. This is a heuristic that feels good.
+                        float sensitivity = glm::distance(camera.Position, pushPull_startPoint) * 0.005f;
+                        pushPullCurrentDistance = pixel_dist * sensitivity;
+                    }
+                }
+
+            } else if (isPushPullMode) {
+                // Hover logic only when not actively pushing/pulling
                 glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
                 uint64_t currentHoveredObjId = 0; size_t currentHoveredTriangleIdx = 0; float closestHitDist = std::numeric_limits<float>::max();
                 for (Urbaxio::Engine::SceneObject* obj_ptr : scene->get_all_objects()) {
@@ -246,9 +262,6 @@ namespace Urbaxio {
                         hoveredObjId = currentHoveredObjId;
                     }
                 }
-            } else if (isPushPullActive) {
-                hoveredObjId = pushPull_objId;
-                hoveredFaceTriangleIndices = pushPull_faceIndices;
             }
             else if (isDrawingLineMode) {
                 glm::vec3 cursorWorldPoint = GetCursorPointInWorld(camera, mouseX, mouseY, display_w, display_h, isPlacingSecondPoint ? currentLineStartPoint : glm::vec3(0.0f));

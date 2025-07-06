@@ -34,6 +34,7 @@ namespace Urbaxio {
             bool& isPushPullActive,
             uint64_t& hoveredObjId,
             std::vector<size_t>& hoveredFaceTriangleIndices,
+            float& pushPullCurrentDistance,
             // Drawing mode & state (Input/Output)
             bool& isPlacingFirstPoint,
             bool& isPlacingSecondPoint,
@@ -46,6 +47,11 @@ namespace Urbaxio {
             char* lineLengthInputBuf,
             float& lineLengthValue
         );
+        
+        // --- Getters for Push/Pull state (needed by main loop for preview) ---
+        uint64_t GetPushPullObjectId() const { return pushPull_objId; }
+        const std::vector<size_t>& GetPushPullFaceIndices() const { return pushPull_faceIndices; }
+        const glm::vec3& GetPushPullNormal() const { return pushPull_faceNormal; }
 
     private:
         // Input states
@@ -67,6 +73,9 @@ namespace Urbaxio {
         std::vector<size_t> pushPull_faceIndices;
         glm::vec3 pushPull_faceNormal;
         glm::vec3 pushPull_startPoint;
+        int pushPull_startMouseX;
+        int pushPull_startMouseY;
+        float pushPull_currentDistance;
 
         // Axis Locking State
         bool isAxisLocked;
