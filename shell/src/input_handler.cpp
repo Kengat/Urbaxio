@@ -238,7 +238,7 @@ namespace Urbaxio {
                         float pixel_dist = glm::dot(mouseDelta, screenAxisDir);
 
                         // Scale pixel distance to world units. This is a heuristic that feels good.
-                        float sensitivity = glm::distance(camera.Position, pushPull_startPoint) * 0.005f;
+                        float sensitivity = glm::distance(camera.Position, pushPull_startPoint) * 0.001f;
                         pushPullCurrentDistance = pixel_dist * sensitivity;
                     }
                 }
