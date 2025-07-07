@@ -285,36 +285,111 @@ namespace Urbaxio::Engine {
     TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal) {
         if (faceVertices.empty()) return TopoDS_Face();
         
+        std::cout << "DEBUG: FindOriginalFace - Shape type: " << shape.ShapeType() << ", Target normal: (" << faceNormal.x << ", " << faceNormal.y << ", " << faceNormal.z << ")" << std::endl;
+        
+        // Calculate center of selected face vertices for proximity scoring
+        glm::vec3 selectedFaceCenter(0.0f);
+        for (const auto& v : faceVertices) {
+            selectedFaceCenter += v;
+        }
+        selectedFaceCenter /= float(faceVertices.size());
+        std::cout << "DEBUG: Selected face center: (" << selectedFaceCenter.x << ", " << selectedFaceCenter.y << ", " << selectedFaceCenter.z << ")" << std::endl;
+        
         gp_Dir targetNormal(faceNormal.x, faceNormal.y, faceNormal.z);
-        TopoDS_Face best_face;
+        
+        struct FaceCandidate {
+            TopoDS_Face face;
+            float score;
+            int matchingVertices;
+            bool normalMatches;
+            float centerDistance;
+        };
+        
+        std::vector<FaceCandidate> candidates;
 
         TopExp_Explorer faceExplorer(shape, TopAbs_FACE);
+        int face_count = 0;
         for (; faceExplorer.More(); faceExplorer.Next()) {
+            face_count++;
             TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
-            BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_False);
             
-            // 1. Check Normal
-            gp_Pln plane = surfaceAdaptor.Plane();
-            gp_Dir occtNormal = plane.Axis().Direction();
-            if (candidateFace.Orientation() == TopAbs_REVERSED) {
-                occtNormal.Reverse();
-            }
-
-            if (occtNormal.IsParallel(targetNormal, 0.1)) {
-                // 2. Check if a vertex is shared
-                TopExp_Explorer vertexExplorer(candidateFace, TopAbs_VERTEX);
-                if (!vertexExplorer.More()) continue;
-                gp_Pnt occt_p = BRep_Tool::Pnt(TopoDS::Vertex(vertexExplorer.Current()));
+            try {
+                BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_False);
                 
-                for(const auto& v : faceVertices) {
-                    if (occt_p.IsEqual(gp_Pnt(v.x, v.y, v.z), SCENE_POINT_EQUALITY_TOLERANCE)) {
-                        // This is a very strong candidate, likely the correct one.
-                        return candidateFace;
-                    }
+                // 1. Check Normal
+                gp_Pln plane = surfaceAdaptor.Plane();
+                gp_Dir occtNormal = plane.Axis().Direction();
+                if (candidateFace.Orientation() == TopAbs_REVERSED) {
+                    occtNormal.Reverse();
                 }
+                
+                bool normalMatches = occtNormal.IsParallel(targetNormal, 0.3);
+                
+                // 2. Count matching vertices
+                TopExp_Explorer vertexExplorer(candidateFace, TopAbs_VERTEX);
+                int matchingVertices = 0;
+                glm::vec3 faceCenterSum(0.0f);
+                int vertexCount = 0;
+                
+                while (vertexExplorer.More()) {
+                    gp_Pnt occt_p = BRep_Tool::Pnt(TopoDS::Vertex(vertexExplorer.Current()));
+                    glm::vec3 candidateVertex(occt_p.X(), occt_p.Y(), occt_p.Z());
+                    faceCenterSum += candidateVertex;
+                    vertexCount++;
+                    
+                    for(const auto& v : faceVertices) {
+                        if (occt_p.IsEqual(gp_Pnt(v.x, v.y, v.z), SCENE_POINT_EQUALITY_TOLERANCE)) {
+                            matchingVertices++;
+                            break;
+                        }
+                    }
+                    vertexExplorer.Next();
+                }
+                
+                // 3. Calculate face center and distance to selected center
+                glm::vec3 candidateFaceCenter = (vertexCount > 0) ? faceCenterSum / float(vertexCount) : glm::vec3(0.0f);
+                float centerDistance = glm::distance(selectedFaceCenter, candidateFaceCenter);
+                
+                // 4. Calculate composite score
+                float score = 0.0f;
+                if (matchingVertices > 0) {
+                    score += matchingVertices * 100.0f; // High weight for vertex matches
+                    if (normalMatches) score += 50.0f; // Bonus for normal match
+                    score -= centerDistance; // Penalty for distance from selected center
+                }
+                
+                std::cout << "DEBUG: Face " << face_count << " normal: (" << occtNormal.X() << ", " << occtNormal.Y() << ", " << occtNormal.Z() 
+                         << "), vertices: " << matchingVertices << "/" << faceVertices.size() 
+                         << ", center dist: " << centerDistance << ", score: " << score << std::endl;
+                
+                if (matchingVertices > 0) {
+                    candidates.push_back({candidateFace, score, matchingVertices, normalMatches, centerDistance});
+                }
+                
+            } catch (const Standard_Failure& e) {
+                std::cout << "DEBUG: Failed to process face " << face_count << ": " << e.GetMessageString() << std::endl;
+                continue;
             }
         }
-        return best_face; // Might be null if no perfect match found
+        
+        std::cout << "DEBUG: Total faces found: " << face_count << ", Candidates: " << candidates.size() << std::endl;
+        
+        if (candidates.empty()) {
+            std::cout << "DEBUG: No matching faces found!" << std::endl;
+            return TopoDS_Face();
+        }
+        
+        // Sort by score (highest first)
+        std::sort(candidates.begin(), candidates.end(), [](const FaceCandidate& a, const FaceCandidate& b) {
+            return a.score > b.score;
+        });
+        
+        const auto& best = candidates[0];
+        std::cout << "DEBUG: Selected best face with score: " << best.score 
+                  << ", matching vertices: " << best.matchingVertices 
+                  << ", normal match: " << best.normalMatches << std::endl;
+        
+        return best.face;
     }
 
     bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance) {
@@ -327,8 +402,7 @@ namespace Urbaxio::Engine {
         const TopoDS_Shape* originalShape = obj->get_shape();
 
         std::set<unsigned int> faceVertexIndicesSet;
-        for (size_t i = 0; i < faceTriangleIndices.size(); ++i) {
-            size_t baseIdx = faceTriangleIndices[i];
+        for (size_t baseIdx : faceTriangleIndices) {
             faceVertexIndicesSet.insert(mesh.indices[baseIdx]);
             faceVertexIndicesSet.insert(mesh.indices[baseIdx + 1]);
             faceVertexIndicesSet.insert(mesh.indices[baseIdx + 2]);
@@ -345,40 +419,61 @@ namespace Urbaxio::Engine {
         }
 
         try {
-            // The extrusion vector is always positive length, away from the face.
-            gp_Vec extrudeVector(direction.x * std::abs(distance), direction.y * std::abs(distance), direction.z * std::abs(distance));
-            BRepPrimAPI_MakePrism prismMaker(faceToExtrude, extrudeVector, Standard_False, Standard_True);
+            // --- UNIVERSAL Push/Pull Logic: Works for ALL face types ---
+            
+            // Step 1: Create extrusion vector exactly as in preview (direction * distance)
+            gp_Vec extrudeVector(direction.x * distance, direction.y * distance, direction.z * distance);
+            BRepPrimAPI_MakePrism prismMaker(faceToExtrude, extrudeVector);
+            
             if (!prismMaker.IsDone()) {
-                std::cerr << "OCCT Error: BRepPrimAPI_MakePrism failed." << std::endl;
+                std::cerr << "OCCT Error: Failed to create prism from face." << std::endl;
                 return false;
             }
+            
             TopoDS_Shape prismShape = prismMaker.Shape();
             TopoDS_Shape newFinalShape;
-
-            if (originalShape->ShapeType() <= TopAbs_FACE) {
+            
+            // Step 2: Handle different object types consistently
+            if (originalShape->ShapeType() == TopAbs_FACE) {
+                // Standalone face: Always replace with prism (becomes solid)
                 newFinalShape = prismShape;
+                std::cout << "Scene: Push/Pull - Standalone face converted to solid." << std::endl;
             } else {
+                // Solid object: Use boolean operations based on distance direction
                 if (distance >= 0) {
-                    BRepAlgoAPI_Fuse anAlgo(*originalShape, prismShape);
-                    if (!anAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl; return false; }
-                    newFinalShape = anAlgo.Shape();
+                    // Positive distance: Add material (Fuse)
+                    BRepAlgoAPI_Fuse fuseAlgo(*originalShape, prismShape);
+                    if (!fuseAlgo.IsDone()) {
+                        std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl;
+                        return false;
+                    }
+                    newFinalShape = fuseAlgo.Shape();
+                    std::cout << "Scene: Push/Pull - Added material (Fuse operation)." << std::endl;
                 } else {
-                    BRepAlgoAPI_Cut anAlgo(*originalShape, prismShape);
-                    if (!anAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl; return false; }
-                    newFinalShape = anAlgo.Shape();
+                    // Negative distance: Remove material (Cut)
+                    BRepAlgoAPI_Cut cutAlgo(*originalShape, prismShape);
+                    if (!cutAlgo.IsDone()) {
+                        std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl;
+                        return false;
+                    }
+                    newFinalShape = cutAlgo.Shape();
+                    std::cout << "Scene: Push/Pull - Removed material (Cut operation)." << std::endl;
                 }
             }
 
+            // Step 3: Validate the result
             BRepCheck_Analyzer analyzer(newFinalShape);
             if (!analyzer.IsValid()) {
                 std::cerr << "OCCT Warning: Result of operation is not a valid shape." << std::endl;
+                // Don't return false here - sometimes OCCT is overly strict
             }
             
+            // Step 4: Update the object
             obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(newFinalShape)));
             obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(newFinalShape));
             obj->vao = 0; 
             
-            std::cout << "Scene: Push/Pull successful. Object " << objectId << " updated." << std::endl;
+            std::cout << "Scene: Push/Pull successful. Object " << objectId << " updated with distance " << distance << " in direction (" << direction.x << ", " << direction.y << ", " << direction.z << ")" << std::endl;
 
         } catch (const Standard_Failure& e) {
             std::cerr << "OCCT Exception during ExtrudeFace: " << e.GetMessageString() << std::endl;
