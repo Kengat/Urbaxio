@@ -71,20 +71,20 @@ namespace Urbaxio::Engine {
         // --- Face Creation Logic ---
         void FindAndCreateFaces(size_t newSegmentIndex);
         bool PerformDFS(
-            const glm::vec3& startNode,         // The ultimate start of the entire path (e.g., pA of the new line)
-            const glm::vec3& currentNode,       // Current vertex in DFS
-            const glm::vec3& targetNode,        // The node we are trying to reach (e.g., pA of the new line)
-            std::vector<glm::vec3>& currentPathVertices, // Vertices in the current path (excluding startNode initially)
-            std::vector<size_t>& currentPathSegmentIndices, // Indices of segments in the path
-            std::set<size_t>& visitedSegmentsDFS, // Segments visited in *this specific DFS call*
-            size_t originatingSegmentIndex,     // Index of the new segment that triggered this DFS
-            int& recursionDepth                 // To prevent infinite loops in complex graphs
+            const glm::vec3& startNode,
+            const glm::vec3& currentNode,
+            const glm::vec3& targetNode,
+            std::vector<glm::vec3>& currentPathVertices,
+            std::vector<size_t>& currentPathSegmentIndices,
+            std::set<size_t>& visitedSegmentsDFS,
+            size_t originatingSegmentIndex,
+            int& recursionDepth
         );
         bool ArePointsCoplanar(const std::vector<glm::vec3>& points, gp_Pln& outPlane);
         void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
         
         // --- Push/Pull Helpers ---
-        TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices);
+        TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal);
     };
 
 }

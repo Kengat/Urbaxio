@@ -28,12 +28,15 @@
 #include <TopoDS_Face.hxx>
 #include <TopExp_Explorer.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepLProp_SLProps.hxx> // For getting face properties like normal
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Cut.hxx> // For subtraction
 #include <BRepCheck_Analyzer.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <Standard_Failure.hxx>
@@ -277,37 +280,46 @@ namespace Urbaxio::Engine {
         }
     }
 
-    // --- New Push/Pull Implementation ---
+    // --- Push/Pull Implementation ---
 
-    TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices) {
+    TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal) {
+        if (faceVertices.empty()) return TopoDS_Face();
+        
+        gp_Dir targetNormal(faceNormal.x, faceNormal.y, faceNormal.z);
+        TopoDS_Face best_face;
+
         TopExp_Explorer faceExplorer(shape, TopAbs_FACE);
         for (; faceExplorer.More(); faceExplorer.Next()) {
             TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
-            int matches = 0;
-            TopExp_Explorer vertexExplorer(candidateFace, TopAbs_VERTEX);
-            if (!vertexExplorer.More()) continue; // Skip faces with no vertices
+            BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_False);
             
-            for (; vertexExplorer.More(); vertexExplorer.Next()) {
-                TopoDS_Vertex v = TopoDS::Vertex(vertexExplorer.Current());
-                gp_Pnt p = BRep_Tool::Pnt(v);
-                for (const auto& meshVert : faceVertices) {
-                    if (p.IsEqual(gp_Pnt(meshVert.x, meshVert.y, meshVert.z), SCENE_POINT_EQUALITY_TOLERANCE)) {
-                        matches++;
-                        break;
+            // 1. Check Normal
+            gp_Pln plane = surfaceAdaptor.Plane();
+            gp_Dir occtNormal = plane.Axis().Direction();
+            if (candidateFace.Orientation() == TopAbs_REVERSED) {
+                occtNormal.Reverse();
+            }
+
+            if (occtNormal.IsParallel(targetNormal, 0.1)) {
+                // 2. Check if a vertex is shared
+                TopExp_Explorer vertexExplorer(candidateFace, TopAbs_VERTEX);
+                if (!vertexExplorer.More()) continue;
+                gp_Pnt occt_p = BRep_Tool::Pnt(TopoDS::Vertex(vertexExplorer.Current()));
+                
+                for(const auto& v : faceVertices) {
+                    if (occt_p.IsEqual(gp_Pnt(v.x, v.y, v.z), SCENE_POINT_EQUALITY_TOLERANCE)) {
+                        // This is a very strong candidate, likely the correct one.
+                        return candidateFace;
                     }
                 }
             }
-            if (matches > 0 && matches >= faceVertices.size() * 0.5) { 
-                return candidateFace;
-            }
         }
-        return TopoDS_Face();
+        return best_face; // Might be null if no perfect match found
     }
 
     bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance) {
         SceneObject* obj = get_object_by_id(objectId);
         if (!obj || !obj->has_shape() || faceTriangleIndices.empty() || std::abs(distance) < 1e-4) {
-            std::cerr << "ExtrudeFace Error: Invalid input (obj, shape, indices, or zero distance)." << std::endl;
             return false;
         }
 
@@ -326,14 +338,15 @@ namespace Urbaxio::Engine {
             faceVertices.push_back({mesh.vertices[idx * 3], mesh.vertices[idx * 3 + 1], mesh.vertices[idx * 3 + 2]});
         }
         
-        TopoDS_Face faceToExtrude = FindOriginalFace(*originalShape, faceVertices);
+        TopoDS_Face faceToExtrude = FindOriginalFace(*originalShape, faceVertices, direction);
         if (faceToExtrude.IsNull()) {
             std::cerr << "ExtrudeFace Error: Could not find corresponding B-Rep face." << std::endl;
             return false;
         }
 
         try {
-            gp_Vec extrudeVector(direction.x * distance, direction.y * distance, direction.z * distance);
+            // The extrusion vector is always positive length, away from the face.
+            gp_Vec extrudeVector(direction.x * std::abs(distance), direction.y * std::abs(distance), direction.z * std::abs(distance));
             BRepPrimAPI_MakePrism prismMaker(faceToExtrude, extrudeVector, Standard_False, Standard_True);
             if (!prismMaker.IsDone()) {
                 std::cerr << "OCCT Error: BRepPrimAPI_MakePrism failed." << std::endl;
@@ -342,20 +355,18 @@ namespace Urbaxio::Engine {
             TopoDS_Shape prismShape = prismMaker.Shape();
             TopoDS_Shape newFinalShape;
 
-            // --- REVISED LOGIC ---
-            // If the original shape is just a face, the new shape is the prism itself.
-            // If the original shape is a solid, fuse the prism with it.
             if (originalShape->ShapeType() <= TopAbs_FACE) {
-                std::cout << "Scene Info: Original shape is a Face. Replacing with new solid." << std::endl;
                 newFinalShape = prismShape;
             } else {
-                std::cout << "Scene Info: Original shape is a Solid. Fusing with new prism." << std::endl;
-                BRepAlgoAPI_Fuse anAlgo(*originalShape, prismShape);
-                if (!anAlgo.IsDone()) {
-                    std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl;
-                    return false;
+                if (distance >= 0) {
+                    BRepAlgoAPI_Fuse anAlgo(*originalShape, prismShape);
+                    if (!anAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl; return false; }
+                    newFinalShape = anAlgo.Shape();
+                } else {
+                    BRepAlgoAPI_Cut anAlgo(*originalShape, prismShape);
+                    if (!anAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl; return false; }
+                    newFinalShape = anAlgo.Shape();
                 }
-                newFinalShape = anAlgo.Shape();
             }
 
             BRepCheck_Analyzer analyzer(newFinalShape);
