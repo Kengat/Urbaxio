@@ -1,0 +1,15 @@
+# Ignore temporary files
+*.tmp
+*.bak
+~*
+
+# Ignore build artifacts
+*.obj
+*.res
+
+# Keep essential files
+!urbaxio_logo.ico
+!urbaxio_logo.png
+!urbaxio.rc
+!README.md
+!.gitignore 

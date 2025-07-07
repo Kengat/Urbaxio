@@ -1,6 +1,14 @@
 # Set the project name
 project(UrbaxioShell)
 
+# Enable RC language for Windows resources
+if(WIN32)
+    enable_language(RC)
+    set(RESOURCE_FILES "${CMAKE_SOURCE_DIR}/resources/urbaxio.rc")
+else()
+    set(RESOURCE_FILES "")
+endif()
+
 # Define the executable target FIRST
 add_executable(Urbaxio
     main.cpp
@@ -11,6 +19,8 @@ add_executable(Urbaxio
     # Add ImGui backend implementation files directly to the compilation
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_sdl2.cpp"
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_opengl3.cpp"
+    # Add Windows resources
+    ${RESOURCE_FILES}
 )
 
 # NOW specify include directories for the defined target "Urbaxio"
@@ -51,6 +61,15 @@ add_custom_command(TARGET Urbaxio POST_BUILD
 )
 message(STATUS "Added post-build command to copy OCCT DLLs.")
 
+# --- Resources configuration ---
+if(WIN32 AND RESOURCE_FILES)
+    message(STATUS "Windows resources enabled. Logo will be embedded in executable.")
+    message(STATUS "Resource file: ${RESOURCE_FILES}")
+    # Set working directory for resource compiler to find the ICO file
+    set_property(SOURCE ${RESOURCE_FILES} PROPERTY COMPILE_FLAGS "/I\"${CMAKE_SOURCE_DIR}/resources\"")
+else()
+    message(STATUS "No Windows resources configured.")
+endif()
 
 message(STATUS "Configuring Urbaxio executable...")
 # --- Check found libraries (Corrected multi-line format) ---
