@@ -16,8 +16,8 @@ message(STATUS "Manually set OpenCASCADE include dir: ${OpenCASCADE_INCLUDE_DIR}
 # 3. Create a list of the full paths to the required OCCT library files
 set(OCCT_LIB_DIR_RELEASE "${VCPKG_INSTALLED_DIR}/lib")
 set(OCCT_LIB_DIR_DEBUG "${VCPKG_INSTALLED_DIR}/debug/lib")
-# ADDED TKBO (for BRepAlgoAPI_Fuse) and TKService (for BRepCheck_Analyzer)
-set(OCCT_MODULES TKernel TKMath TKPrim TKBRep TKTopAlgo TKG2d TKG3d TKMesh TKBO TKService)
+# ADDED TKBO (for BRepAlgoAPI_Fuse), TKService (for BRepCheck_Analyzer) and TKShHealing (for ShapeFix_Shape)
+set(OCCT_MODULES TKernel TKMath TKPrim TKBRep TKTopAlgo TKG2d TKG3d TKMesh TKBO TKService TKShHealing)
 set(OpenCASCADE_LIBRARIES "") # Initialize an empty list
 foreach(module ${OCCT_MODULES})
     # Add both the release and debug versions of the library using generator expressions

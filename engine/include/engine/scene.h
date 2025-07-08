@@ -85,6 +85,7 @@ namespace Urbaxio::Engine {
         
         // --- Push/Pull Helpers ---
         TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal);
+        void AnalyzeShape(const TopoDS_Shape& shape, const std::string& label);
     };
 
 }

@@ -38,8 +38,13 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx> // For subtraction
 #include <BRepCheck_Analyzer.hxx>
+#include <ShapeFix_Shape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <Standard_Failure.hxx>
+#include <Bnd_Box.hxx>
+#include <BRepBndLib.hxx>
+#include <GProp_GProps.hxx>
+#include <BRepGProp.hxx>
 
 namespace Urbaxio::Engine {
 
@@ -392,6 +397,63 @@ namespace Urbaxio::Engine {
         return best.face;
     }
 
+    void Scene::AnalyzeShape(const TopoDS_Shape& shape, const std::string& label) {
+        std::cout << "=== SHAPE ANALYSIS: " << label << " ===" << std::endl;
+        
+        // Basic info
+        std::cout << "Shape Type: " << shape.ShapeType() << " (0=Compound, 1=CompSolid, 2=Solid, 3=Shell, 4=Face, 5=Wire, 6=Edge, 7=Vertex)" << std::endl;
+        
+        // Count components
+        TopExp_Explorer solidExp(shape, TopAbs_SOLID);
+        int solidCount = 0;
+        for (; solidExp.More(); solidExp.Next()) solidCount++;
+        
+        TopExp_Explorer faceExp(shape, TopAbs_FACE);
+        int faceCount = 0;
+        for (; faceExp.More(); faceExp.Next()) faceCount++;
+        
+        std::cout << "Contains: " << solidCount << " solids, " << faceCount << " faces" << std::endl;
+        
+        // Bounding box
+        try {
+            Bnd_Box boundingBox;
+            BRepBndLib::Add(shape, boundingBox);
+            if (!boundingBox.IsVoid()) {
+                Standard_Real xmin, ymin, zmin, xmax, ymax, zmax;
+                boundingBox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+                std::cout << "Bounding Box: (" << xmin << ", " << ymin << ", " << zmin << ") to (" 
+                         << xmax << ", " << ymax << ", " << zmax << ")" << std::endl;
+                std::cout << "Dimensions: " << (xmax-xmin) << " x " << (ymax-ymin) << " x " << (zmax-zmin) << std::endl;
+            } else {
+                std::cout << "Bounding Box: VOID" << std::endl;
+            }
+        } catch (const Standard_Failure& e) {
+            std::cout << "Bounding Box: ERROR - " << e.GetMessageString() << std::endl;
+        }
+        
+        // Volume/properties
+        try {
+            GProp_GProps props;
+            BRepGProp::VolumeProperties(shape, props);
+            Standard_Real volume = props.Mass();
+            gp_Pnt center = props.CentreOfMass();
+            std::cout << "Volume: " << volume << std::endl;
+            std::cout << "Center of Mass: (" << center.X() << ", " << center.Y() << ", " << center.Z() << ")" << std::endl;
+        } catch (const Standard_Failure& e) {
+            std::cout << "Volume Properties: ERROR - " << e.GetMessageString() << std::endl;
+        }
+        
+        // Validity
+        try {
+            BRepCheck_Analyzer analyzer(shape);
+            std::cout << "Shape Valid: " << (analyzer.IsValid() ? "YES" : "NO") << std::endl;
+        } catch (const Standard_Failure& e) {
+            std::cout << "Validity Check: ERROR - " << e.GetMessageString() << std::endl;
+        }
+        
+        std::cout << "=== END ANALYSIS ===" << std::endl << std::endl;
+    }
+
     bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance) {
         SceneObject* obj = get_object_by_id(objectId);
         if (!obj || !obj->has_shape() || faceTriangleIndices.empty() || std::abs(distance) < 1e-4) {
@@ -400,6 +462,9 @@ namespace Urbaxio::Engine {
 
         const auto& mesh = obj->get_mesh_buffers();
         const TopoDS_Shape* originalShape = obj->get_shape();
+
+        // Analyze original shape
+        AnalyzeShape(*originalShape, "ORIGINAL SHAPE");
 
         std::set<unsigned int> faceVertexIndicesSet;
         for (size_t baseIdx : faceTriangleIndices) {
@@ -433,12 +498,28 @@ namespace Urbaxio::Engine {
             TopoDS_Shape prismShape = prismMaker.Shape();
             TopoDS_Shape newFinalShape;
             
+            // Analyze prism shape
+            AnalyzeShape(prismShape, "CREATED PRISM");
+            
+            // DEBUG: Analyze prism shape
+            std::cout << "DEBUG: Prism shape type: " << prismShape.ShapeType() << std::endl;
+            TopExp_Explorer prismExplorer(prismShape, TopAbs_SOLID);
+            int prismSolids = 0;
+            for (; prismExplorer.More(); prismExplorer.Next()) prismSolids++;
+            std::cout << "DEBUG: Prism contains " << prismSolids << " solids" << std::endl;
+            
             // Step 2: Handle different object types consistently
             if (originalShape->ShapeType() == TopAbs_FACE) {
                 // Standalone face: Always replace with prism (becomes solid)
                 newFinalShape = prismShape;
                 std::cout << "Scene: Push/Pull - Standalone face converted to solid." << std::endl;
             } else {
+                // DEBUG: Analyze original shape
+                TopExp_Explorer origExplorer(*originalShape, TopAbs_SOLID);
+                int origSolids = 0;
+                for (; origExplorer.More(); origExplorer.Next()) origSolids++;
+                std::cout << "DEBUG: Original shape contains " << origSolids << " solids" << std::endl;
+                
                 // Solid object: Use boolean operations based on distance direction
                 if (distance >= 0) {
                     // Positive distance: Add material (Fuse)
@@ -449,6 +530,15 @@ namespace Urbaxio::Engine {
                     }
                     newFinalShape = fuseAlgo.Shape();
                     std::cout << "Scene: Push/Pull - Added material (Fuse operation)." << std::endl;
+                    
+                    // Check for healing errors
+                    if (fuseAlgo.HasErrors()) {
+                        std::cerr << "OCCT Warning: Fuse operation has errors." << std::endl;
+                    }
+                    if (fuseAlgo.HasWarnings()) {
+                        std::cout << "OCCT Info: Fuse operation has warnings." << std::endl;
+                    }
+                    
                 } else {
                     // Negative distance: Remove material (Cut)
                     BRepAlgoAPI_Cut cutAlgo(*originalShape, prismShape);
@@ -458,14 +548,59 @@ namespace Urbaxio::Engine {
                     }
                     newFinalShape = cutAlgo.Shape();
                     std::cout << "Scene: Push/Pull - Removed material (Cut operation)." << std::endl;
+                    
+                    // Check for healing errors
+                    if (cutAlgo.HasErrors()) {
+                        std::cerr << "OCCT Warning: Cut operation has errors." << std::endl;
+                    }
+                    if (cutAlgo.HasWarnings()) {
+                        std::cout << "OCCT Info: Cut operation has warnings." << std::endl;
+                    }
                 }
             }
 
-            // Step 3: Validate the result
+            // Step 3: Analyze result shape
+            TopExp_Explorer resultExplorer(newFinalShape, TopAbs_SOLID);
+            int resultSolids = 0;
+            for (; resultExplorer.More(); resultExplorer.Next()) resultSolids++;
+            std::cout << "DEBUG: Result shape contains " << resultSolids << " solids" << std::endl;
+            
+            // Check if result is empty or null
+            if (newFinalShape.IsNull()) {
+                std::cerr << "OCCT Error: Result shape is null!" << std::endl;
+                return false;
+            }
+            
+            // Check result shape type
+            std::cout << "DEBUG: Result shape type: " << newFinalShape.ShapeType() << std::endl;
+            
+            // Analyze final result shape
+            AnalyzeShape(newFinalShape, "FINAL RESULT");
+            
+            // Step 4: Validate the result
             BRepCheck_Analyzer analyzer(newFinalShape);
             if (!analyzer.IsValid()) {
-                std::cerr << "OCCT Warning: Result of operation is not a valid shape." << std::endl;
-                // Don't return false here - sometimes OCCT is overly strict
+                std::cerr << "OCCT Warning: Result shape is not valid - may cause display issues." << std::endl;
+                
+                // Try to heal the shape
+                try {
+                    ShapeFix_Shape shapeFixer;
+                    shapeFixer.Init(newFinalShape);
+                    shapeFixer.Perform();
+                    TopoDS_Shape healedShape = shapeFixer.Shape();
+                    
+                    BRepCheck_Analyzer healedAnalyzer(healedShape);
+                    if (healedAnalyzer.IsValid()) {
+                        std::cout << "DEBUG: Shape healing successful." << std::endl;
+                        newFinalShape = healedShape;
+                    } else {
+                        std::cout << "DEBUG: Shape healing failed, using original result." << std::endl;
+                    }
+                } catch (const Standard_Failure& e) {
+                    std::cout << "DEBUG: Shape healing threw exception: " << e.GetMessageString() << std::endl;
+                }
+            } else {
+                std::cout << "DEBUG: Result shape is valid." << std::endl;
             }
             
             // Step 4: Update the object
