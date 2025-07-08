@@ -66,50 +66,104 @@ namespace Urbaxio::Engine {
     std::vector<const SceneObject*> Scene::get_all_objects() const { std::vector<const SceneObject*> result; result.reserve(objects_.size()); for (auto const& [id, obj_ptr] : objects_) { result.push_back(obj_ptr.get()); } return result; }
 
 
-    glm::vec3 Scene::MergeVertex(const glm::vec3& p, bool& foundExisting) {
-        foundExisting = false;
+    // Finds an existing vertex within tolerance or returns the input point.
+    // This is the core of vertex merging.
+    glm::vec3 Scene::MergeOrAddVertex(const glm::vec3& p) {
         auto it = vertexAdjacency_.find(p);
         if (it != vertexAdjacency_.end()) {
-            foundExisting = true;
-            return it->first;
+            return it->first; // Return the canonical vertex
         }
+        // If not found, it implies a new vertex. The map will be updated when a line is added.
         return p;
     }
 
-    void Scene::AddUserLine(const glm::vec3& start, const glm::vec3& end) {
-        bool foundExistingStart, foundExistingEnd;
-        glm::vec3 canonicalStart = MergeVertex(start, foundExistingStart);
-        glm::vec3 canonicalEnd = MergeVertex(end, foundExistingEnd);
+    uint64_t Scene::AddUserLine(const glm::vec3& start, const glm::vec3& end) {
+        glm::vec3 canonicalStart = MergeOrAddVertex(start);
+        glm::vec3 canonicalEnd = MergeOrAddVertex(end);
 
         if (AreVec3Equal(canonicalStart, canonicalEnd)) {
-            return;
+            return 0; // Invalid line
         }
-        for(const auto& segment : lineSegments_) {
-            if ((AreVec3Equal(segment.first, canonicalStart) && AreVec3Equal(segment.second, canonicalEnd)) ||
-                (AreVec3Equal(segment.first, canonicalEnd) && AreVec3Equal(segment.second, canonicalStart))) {
-                return;
+
+        // Check for duplicate lines
+        for(const auto& [id, line] : lines_) {
+            if ((AreVec3Equal(line.start, canonicalStart) && AreVec3Equal(line.end, canonicalEnd)) ||
+                (AreVec3Equal(line.start, canonicalEnd) && AreVec3Equal(line.end, canonicalStart))) {
+                return 0; // Duplicate line
             }
         }
-
-        lineSegments_.emplace_back(canonicalStart, canonicalEnd);
-        segmentUsedInFace_.push_back(false);
-        size_t newSegmentIndex = lineSegments_.size() - 1;
-
-        vertexAdjacency_[canonicalStart].push_back(newSegmentIndex);
-        vertexAdjacency_[canonicalEnd].push_back(newSegmentIndex);
         
-        FindAndCreateFaces(newSegmentIndex);
+        uint64_t newLineId = next_line_id_++;
+        lines_[newLineId] = {canonicalStart, canonicalEnd, false};
+
+        vertexAdjacency_[canonicalStart].push_back(newLineId);
+        vertexAdjacency_[canonicalEnd].push_back(newLineId);
+        
+        FindAndCreateFaces(newLineId);
+        return newLineId;
     }
 
-    const std::vector<std::pair<glm::vec3, glm::vec3>>& Scene::GetLineSegments() const {
-        return lineSegments_;
+    const std::map<uint64_t, Line>& Scene::GetAllLines() const {
+        return lines_;
     }
 
     void Scene::ClearUserLines() {
-        lineSegments_.clear();
-        segmentUsedInFace_.clear();
+        lines_.clear();
         vertexAdjacency_.clear();
+        next_line_id_ = 1;
         std::cout << "Scene: Cleared user lines and adjacency data." << std::endl;
+    }
+
+    void Scene::RemoveLine(uint64_t lineId) {
+        auto it = lines_.find(lineId);
+        if (it == lines_.end()) return;
+
+        const Line& line = it->second;
+
+        // Remove from start vertex adjacency
+        auto& startAdj = vertexAdjacency_[line.start];
+        startAdj.erase(std::remove(startAdj.begin(), startAdj.end(), lineId), startAdj.end());
+        if (startAdj.empty()) {
+            vertexAdjacency_.erase(line.start);
+        }
+
+        // Remove from end vertex adjacency
+        auto& endAdj = vertexAdjacency_[line.end];
+        endAdj.erase(std::remove(endAdj.begin(), endAdj.end(), lineId), endAdj.end());
+        if (endAdj.empty()) {
+            vertexAdjacency_.erase(line.end);
+        }
+
+        // Remove from the main map
+        lines_.erase(it);
+    }
+
+    glm::vec3 Scene::SplitLineAtPoint(uint64_t lineId, const glm::vec3& splitPoint) {
+        auto it = lines_.find(lineId);
+        if (it == lines_.end()) {
+            return splitPoint; // Should not happen
+        }
+
+        Line originalLine = it->second;
+        glm::vec3 canonicalSplitPoint = MergeOrAddVertex(splitPoint);
+
+        // Check if split point is one of the endpoints
+        if (AreVec3Equal(originalLine.start, canonicalSplitPoint) || AreVec3Equal(originalLine.end, canonicalSplitPoint)) {
+            return canonicalSplitPoint; // No split needed, just return the merged vertex.
+        }
+
+        std::cout << "Scene: Splitting line " << lineId << " at (" << splitPoint.x << ", " << splitPoint.y << ", " << splitPoint.z << ")" << std::endl;
+
+        // 1. Remove the old line from existence
+        RemoveLine(lineId);
+
+        // 2. Add two new lines
+        // These calls will automatically handle vertex adjacency updates for the new lines and the new split point.
+        AddUserLine(originalLine.start, canonicalSplitPoint);
+        AddUserLine(canonicalSplitPoint, originalLine.end);
+        
+        // Return the canonical merged vertex for the split point
+        return canonicalSplitPoint;
     }
 
     bool Scene::ArePointsCoplanar(const std::vector<glm::vec3>& points, gp_Pln& outPlane) {
@@ -164,7 +218,7 @@ namespace Urbaxio::Engine {
     }
 
 
-    bool Scene::PerformDFS(const glm::vec3& pathStartNode, const glm::vec3& currentNode, const glm::vec3& ultimateTargetNode, std::vector<glm::vec3>& currentPathVertices, std::vector<size_t>& currentPathSegmentIndices, std::set<size_t>& visitedSegmentsDFS, size_t originatingSegmentIndex, int& recursionDepth) {
+    bool Scene::PerformDFS(const glm::vec3& pathStartNode, const glm::vec3& currentNode, const glm::vec3& ultimateTargetNode, std::vector<glm::vec3>& currentPathVertices, std::vector<uint64_t>& currentPathLineIDs, std::set<uint64_t>& visitedLinesDFS, uint64_t originatingLineId, int& recursionDepth) {
         if (recursionDepth++ > MAX_DFS_DEPTH) { recursionDepth--; return false; }
 
         if (AreVec3Equal(currentNode, ultimateTargetNode)) {
@@ -174,19 +228,22 @@ namespace Urbaxio::Engine {
         auto it = vertexAdjacency_.find(currentNode);
         if (it == vertexAdjacency_.end()) { recursionDepth--; return false; }
 
-        const std::vector<size_t>& incidentSegments = it->second;
+        const std::vector<uint64_t>& incidentLines = it->second;
 
-        for (size_t segmentIdx : incidentSegments) {
-            if (segmentIdx == originatingSegmentIndex || segmentUsedInFace_[segmentIdx] || visitedSegmentsDFS.count(segmentIdx)) {
+        for (uint64_t lineId : incidentLines) {
+            auto line_it = lines_.find(lineId);
+            if (line_it == lines_.end()) continue; // Should not happen
+
+            if (lineId == originatingLineId || line_it->second.usedInFace || visitedLinesDFS.count(lineId)) {
                 continue;
             }
 
-            const auto& segment = lineSegments_[segmentIdx];
-            glm::vec3 nextNode = AreVec3Equal(segment.first, currentNode) ? segment.second : segment.first;
+            const auto& line = line_it->second;
+            glm::vec3 nextNode = AreVec3Equal(line.start, currentNode) ? line.end : line.start;
 
             currentPathVertices.push_back(nextNode);
-            currentPathSegmentIndices.push_back(segmentIdx);
-            visitedSegmentsDFS.insert(segmentIdx);
+            currentPathLineIDs.push_back(lineId);
+            visitedLinesDFS.insert(lineId);
 
             bool coplanarCheck = true;
             if (currentPathVertices.size() >= 2) {
@@ -197,14 +254,14 @@ namespace Urbaxio::Engine {
             }
 
             if (coplanarCheck) {
-                if (PerformDFS(pathStartNode, nextNode, ultimateTargetNode, currentPathVertices, currentPathSegmentIndices, visitedSegmentsDFS, originatingSegmentIndex, recursionDepth)) {
+                if (PerformDFS(pathStartNode, nextNode, ultimateTargetNode, currentPathVertices, currentPathLineIDs, visitedLinesDFS, originatingLineId, recursionDepth)) {
                     recursionDepth--;
                     return true;
                 }
             }
             
-            visitedSegmentsDFS.erase(segmentIdx);
-            currentPathSegmentIndices.pop_back();
+            visitedLinesDFS.erase(lineId);
+            currentPathLineIDs.pop_back();
             currentPathVertices.pop_back();
         }
         recursionDepth--;
@@ -251,35 +308,40 @@ namespace Urbaxio::Engine {
     }
 
 
-    void Scene::FindAndCreateFaces(size_t newSegmentIndex) {
-        if (newSegmentIndex >= lineSegments_.size() || segmentUsedInFace_[newSegmentIndex]) return;
-        const auto& newSeg = lineSegments_[newSegmentIndex];
-        const glm::vec3& pA = newSeg.first;
-        const glm::vec3& pB = newSeg.second;
+    void Scene::FindAndCreateFaces(uint64_t newLineId) {
+        auto line_it = lines_.find(newLineId);
+        if (line_it == lines_.end() || line_it->second.usedInFace) return;
+        
+        const Line& newLine = line_it->second;
+        const glm::vec3& pA = newLine.start;
+        const glm::vec3& pB = newLine.end;
+        
         std::vector<glm::vec3> pathVerticesCollector;
-        std::vector<size_t> pathSegmentIndicesCollector;
-        std::set<size_t> visitedSegmentsInCurrentDFS;
-        visitedSegmentsInCurrentDFS.insert(newSegmentIndex);
+        std::vector<uint64_t> pathLineIDsCollector;
+        std::set<uint64_t> visitedLinesInCurrentDFS;
+        visitedLinesInCurrentDFS.insert(newLineId);
         int recursionDepth = 0;
 
-        if (PerformDFS(pA, pB, pA, pathVerticesCollector, pathSegmentIndicesCollector, visitedSegmentsInCurrentDFS, newSegmentIndex, recursionDepth)) {
+        if (PerformDFS(pA, pB, pA, pathVerticesCollector, pathLineIDsCollector, visitedLinesInCurrentDFS, newLineId, recursionDepth)) {
             std::vector<glm::vec3> finalOrderedVertices;
             finalOrderedVertices.push_back(pA);
             finalOrderedVertices.push_back(pB);
             if (!pathVerticesCollector.empty()) {
+                // The last vertex in the path collector is the same as pA, so we skip it.
                 for (size_t i = 0; i < pathVerticesCollector.size() - 1; ++i) {
                     finalOrderedVertices.push_back(pathVerticesCollector[i]);
                 }
-                if (!AreVec3Equal(pathVerticesCollector.back(), pA)) { return; }
             } else { return; }
             if (finalOrderedVertices.size() < 3) return;
 
             gp_Pln cyclePlane;
             if (ArePointsCoplanar(finalOrderedVertices, cyclePlane)) {
                 CreateOCCTFace(finalOrderedVertices, cyclePlane);
-                segmentUsedInFace_[newSegmentIndex] = true;
-                for (size_t segIdx : pathSegmentIndicesCollector) {
-                    segmentUsedInFace_[segIdx] = true;
+                
+                // Mark all lines in the loop as used
+                lines_.at(newLineId).usedInFace = true;
+                for (uint64_t lineId : pathLineIDsCollector) {
+                    lines_.at(lineId).usedInFace = true;
                 }
             }
         }

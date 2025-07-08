@@ -76,96 +76,95 @@ namespace Urbaxio {
     }
 
 
-    SnapResult SnappingSystem::FindSnapPoint(
-        int mouseX, int mouseY,
-        int screenWidth, int screenHeight,
-        const Camera& camera,
-        const Engine::Scene& scene,
-        float snapThresholdPixels)
-    {
-        SnapResult finalSnap; finalSnap.snapped = false; finalSnap.type = SnapType::NONE;
-        float pointThresholdSq = snapThresholdPixels * snapThresholdPixels;
-        float lineSnapThresholdSq = (snapThresholdPixels * 0.8f) * (snapThresholdPixels * 0.8f);
-        if (lineSnapThresholdSq < 1.0f) lineSnapThresholdSq = 1.0f;
+SnapResult SnappingSystem::FindSnapPoint(
+    int mouseX, int mouseY,
+    int screenWidth, int screenHeight,
+    const Camera& camera,
+    const Engine::Scene& scene,
+    float snapThresholdPixels)
+{
+    SnapResult finalSnap; finalSnap.snapped = false; finalSnap.type = SnapType::NONE;
+    float pointThresholdSq = snapThresholdPixels * snapThresholdPixels;
+    float lineSnapThresholdSq = (snapThresholdPixels * 0.8f) * (snapThresholdPixels * 0.8f);
+    if (lineSnapThresholdSq < 1.0f) lineSnapThresholdSq = 1.0f;
 
-        glm::mat4 view = camera.GetViewMatrix(); glm::mat4 proj = camera.GetProjectionMatrix((screenHeight > 0) ? ((float)screenWidth / (float)screenHeight) : 1.0f);
-        glm::vec2 mousePosScreen(static_cast<float>(mouseX), static_cast<float>(mouseY));
+    glm::mat4 view = camera.GetViewMatrix(); glm::mat4 proj = camera.GetProjectionMatrix((screenHeight > 0) ? ((float)screenWidth / (float)screenHeight) : 1.0f);
+    glm::vec2 mousePosScreen(static_cast<float>(mouseX), static_cast<float>(mouseY));
+    
+    glm::vec3 rayOrigin, rayDirection; 
+    Camera::ScreenToWorldRay(mouseX, mouseY, screenWidth, screenHeight, view, proj, rayOrigin, rayDirection);
+    
+    glm::vec3 pointOnPlane; bool planeHit = RaycastToZPlane(mouseX, mouseY, screenWidth, screenHeight, camera, pointOnPlane);
+    finalSnap.worldPoint = planeHit ? pointOnPlane : camera.Position + rayDirection * 10.0f;
+
+    std::vector<SnapCandidate> candidates;
+
+    // 1. Origin
+    glm::vec2 originScreenPos; if (WorldToScreen(glm::vec3(0.0f), view, proj, screenWidth, screenHeight, originScreenPos)) { float distSq = glm::length2(mousePosScreen - originScreenPos); if (distSq < pointThresholdSq) { candidates.push_back({ {true, glm::vec3(0.0f), SnapType::ORIGIN, 0}, distSq }); } }
+
+    // 2. User Line Endpoints, Midpoints, On Edge
+    const auto& lines = scene.GetAllLines();
+    for (const auto& [lineId, line] : lines) {
+        const glm::vec3 endpoints[] = {line.start, line.end};
+        for (const auto& endpoint : endpoints) { glm::vec2 scrPos; if (WorldToScreen(endpoint, view, proj, screenWidth, screenHeight, scrPos)) { float dSq = glm::length2(mousePosScreen - scrPos); if (dSq < pointThresholdSq) { bool add = true; for(const auto&c:candidates){if((c.type==SnapType::ENDPOINT||c.type==SnapType::ORIGIN||c.type==SnapType::MIDPOINT)&&glm::distance2(c.worldPoint,endpoint)<LINE_RAY_EPSILON*LINE_RAY_EPSILON){add=false;break;}} if(add) candidates.push_back({{true,endpoint,SnapType::ENDPOINT, lineId}, dSq}); } } }
         
-        // Calculate ray once for all checks that might need it (Axes, OnFace)
-        glm::vec3 rayOrigin, rayDirection; 
-        Camera::ScreenToWorldRay(mouseX, mouseY, screenWidth, screenHeight, view, proj, rayOrigin, rayDirection);
+        glm::vec3 midpoint = (line.start + line.end) * 0.5f; glm::vec2 scrPosMid; if (WorldToScreen(midpoint, view, proj, screenWidth, screenHeight, scrPosMid)) { float dSq = glm::length2(mousePosScreen - scrPosMid); if (dSq < pointThresholdSq) { bool add = true; for(const auto&c:candidates){if((c.type==SnapType::ENDPOINT||c.type==SnapType::ORIGIN||c.type==SnapType::MIDPOINT)&&glm::distance2(c.worldPoint,midpoint)<LINE_RAY_EPSILON*LINE_RAY_EPSILON){add=false;break;}} if(add) { candidates.push_back({{true,midpoint,SnapType::MIDPOINT, lineId},dSq}); }} }
         
-        glm::vec3 pointOnPlane; bool planeHit = RaycastToZPlane(mouseX, mouseY, screenWidth, screenHeight, camera, pointOnPlane);
-        finalSnap.worldPoint = planeHit ? pointOnPlane : camera.Position + rayDirection * 10.0f;
+        glm::vec2 screenP1, screenP2; bool p1Visible = WorldToScreen(line.start, view, proj, screenWidth, screenHeight, screenP1); bool p2Visible = WorldToScreen(line.end, view, proj, screenWidth, screenHeight, screenP2);
+        if (p1Visible && p2Visible) { glm::vec2 closestPtOnScreenSeg; float t_2d; float distSqToScreenSeg = ClosestPointOnScreenSegmentSq(mousePosScreen, screenP1, screenP2, closestPtOnScreenSeg, t_2d); if (distSqToScreenSeg < lineSnapThresholdSq) { glm::vec3 worldPointOnEdge = glm::mix(line.start, line.end, t_2d); candidates.push_back({ {true, worldPointOnEdge, SnapType::ON_EDGE, lineId}, distSqToScreenSeg }); } }
+    }
 
-        std::vector<SnapCandidate> candidates;
+    // 3. Scene Object Vertices and Faces
+    std::vector<const Engine::SceneObject*> objects = scene.get_all_objects();
+    for (const auto* obj : objects) {
+        if (obj && obj->has_mesh()) {
+            const auto& mesh = obj->get_mesh_buffers();
+            const auto& vertices_obj = mesh.vertices;
+            // Vertex Snapping
+            for (size_t i = 0; i < vertices_obj.size(); i += 3) { glm::vec3 vertexPos(vertices_obj[i], vertices_obj[i+1], vertices_obj[i+2]); glm::vec2 scrPos; if (WorldToScreen(vertexPos, view, proj, screenWidth, screenHeight, scrPos)) { float dSq = glm::length2(mousePosScreen - scrPos); if (dSq < pointThresholdSq) { bool add = true; for(const auto&c:candidates){if((c.type==SnapType::ENDPOINT||c.type==SnapType::ORIGIN||c.type==SnapType::MIDPOINT)&&glm::distance2(c.worldPoint,vertexPos)<LINE_RAY_EPSILON*LINE_RAY_EPSILON){add=false;break;}} if(add) candidates.push_back({{true,vertexPos,SnapType::ENDPOINT, obj->get_id()},dSq}); } } }
 
-        // 1. Origin (same)
-        glm::vec2 originScreenPos; if (WorldToScreen(glm::vec3(0.0f), view, proj, screenWidth, screenHeight, originScreenPos)) { float distSq = glm::length2(mousePosScreen - originScreenPos); if (distSq < pointThresholdSq) { candidates.push_back({ {true, glm::vec3(0.0f), SnapType::ORIGIN}, distSq }); } }
+            // On Face Snapping
+            const auto& indices = mesh.indices;
+            float closest_t_face = std::numeric_limits<float>::max();
+            glm::vec3 hitPointFace_obj;
+            bool faceHit_obj = false;
 
-        // 2. User Line Endpoints, Midpoints, On Edge (same)
-        const auto& lineSegments = scene.GetLineSegments();
-        for (size_t segIdx = 0; segIdx < lineSegments.size(); ++segIdx) {
-            const auto& segment = lineSegments[segIdx];
-            const glm::vec3 endpoints[] = {segment.first, segment.second};
-            for (const auto& endpoint : endpoints) { glm::vec2 scrPos; if (WorldToScreen(endpoint, view, proj, screenWidth, screenHeight, scrPos)) { float dSq = glm::length2(mousePosScreen - scrPos); if (dSq < pointThresholdSq) { bool add = true; for(const auto&c:candidates){if((c.type==SnapType::ENDPOINT||c.type==SnapType::ORIGIN||c.type==SnapType::MIDPOINT)&&glm::distance2(c.worldPoint,endpoint)<LINE_RAY_EPSILON*LINE_RAY_EPSILON){add=false;break;}} if(add) candidates.push_back({{true,endpoint,SnapType::ENDPOINT},dSq}); } } }
-            glm::vec3 midpoint = (segment.first + segment.second) * 0.5f; glm::vec2 scrPosMid; if (WorldToScreen(midpoint, view, proj, screenWidth, screenHeight, scrPosMid)) { float dSq = glm::length2(mousePosScreen - scrPosMid); if (dSq < pointThresholdSq) { bool add = true; for(const auto&c:candidates){if((c.type==SnapType::ENDPOINT||c.type==SnapType::ORIGIN||c.type==SnapType::MIDPOINT)&&glm::distance2(c.worldPoint,midpoint)<LINE_RAY_EPSILON*LINE_RAY_EPSILON){add=false;break;}} if(add) { candidates.push_back({{true,midpoint,SnapType::MIDPOINT},dSq}); }} }
-            glm::vec2 screenP1, screenP2; bool p1Visible = WorldToScreen(segment.first, view, proj, screenWidth, screenHeight, screenP1); bool p2Visible = WorldToScreen(segment.second, view, proj, screenWidth, screenHeight, screenP2);
-            if (p1Visible && p2Visible) { glm::vec2 closestPtOnScreenSeg; float t_2d; float distSqToScreenSeg = ClosestPointOnScreenSegmentSq(mousePosScreen, screenP1, screenP2, closestPtOnScreenSeg, t_2d); if (distSqToScreenSeg < lineSnapThresholdSq) { glm::vec3 worldPointOnEdge = glm::mix(segment.first, segment.second, t_2d); candidates.push_back({ {true, worldPointOnEdge, SnapType::ON_EDGE}, distSqToScreenSeg }); } }
-        }
+            for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+                unsigned int i0 = indices[i], i1 = indices[i+1], i2 = indices[i+2];
+                size_t max_v_idx = vertices_obj.size() / 3;
+                if (i0 >= max_v_idx || i1 >= max_v_idx || i2 >= max_v_idx) continue;
 
-        // 3. Scene Object Vertices and Faces
-        std::vector<const Engine::SceneObject*> objects = scene.get_all_objects();
-        for (const auto* obj : objects) {
-            if (obj && obj->has_mesh()) {
-                const auto& mesh = obj->get_mesh_buffers();
-                const auto& vertices_obj = mesh.vertices;
-                // Vertex Snapping
-                for (size_t i = 0; i < vertices_obj.size(); i += 3) { glm::vec3 vertexPos(vertices_obj[i], vertices_obj[i+1], vertices_obj[i+2]); glm::vec2 scrPos; if (WorldToScreen(vertexPos, view, proj, screenWidth, screenHeight, scrPos)) { float dSq = glm::length2(mousePosScreen - scrPos); if (dSq < pointThresholdSq) { bool add = true; for(const auto&c:candidates){if((c.type==SnapType::ENDPOINT||c.type==SnapType::ORIGIN||c.type==SnapType::MIDPOINT)&&glm::distance2(c.worldPoint,vertexPos)<LINE_RAY_EPSILON*LINE_RAY_EPSILON){add=false;break;}} if(add) candidates.push_back({{true,vertexPos,SnapType::ENDPOINT},dSq}); } } }
-
-                // On Face Snapping
-                const auto& indices = mesh.indices;
-                float closest_t_face = std::numeric_limits<float>::max();
-                glm::vec3 hitPointFace_obj; // Changed name to avoid conflict
-                bool faceHit_obj = false;   // Changed name
-
-                for (size_t i = 0; i + 2 < indices.size(); i += 3) {
-                    unsigned int i0 = indices[i], i1 = indices[i+1], i2 = indices[i+2];
-                    size_t max_v_idx = vertices_obj.size() / 3;
-                    if (i0 >= max_v_idx || i1 >= max_v_idx || i2 >= max_v_idx) continue;
-
-                    // <<< FIX: Construct glm::vec3 from individual float components >>>
-                    glm::vec3 v0(vertices_obj[i0*3 + 0], vertices_obj[i0*3 + 1], vertices_obj[i0*3 + 2]);
-                    glm::vec3 v1(vertices_obj[i1*3 + 0], vertices_obj[i1*3 + 1], vertices_obj[i1*3 + 2]);
-                    glm::vec3 v2(vertices_obj[i2*3 + 0], vertices_obj[i2*3 + 1], vertices_obj[i2*3 + 2]);
-                    float t_intersect_val; // Renamed to avoid conflict with other 't'
-                    if (RayTriangleIntersect(rayOrigin, rayDirection, v0, v1, v2, t_intersect_val)) { // Use member function
-                        if (t_intersect_val > 0 && t_intersect_val < closest_t_face) {
-                            closest_t_face = t_intersect_val;
-                            hitPointFace_obj = rayOrigin + rayDirection * t_intersect_val; // Use correct ray
-                            faceHit_obj = true;
-                        }
+                glm::vec3 v0(vertices_obj[i0*3 + 0], vertices_obj[i0*3 + 1], vertices_obj[i0*3 + 2]);
+                glm::vec3 v1(vertices_obj[i1*3 + 0], vertices_obj[i1*3 + 1], vertices_obj[i1*3 + 2]);
+                glm::vec3 v2(vertices_obj[i2*3 + 0], vertices_obj[i2*3 + 1], vertices_obj[i2*3 + 2]);
+                float t_intersect_val;
+                if (RayTriangleIntersect(rayOrigin, rayDirection, v0, v1, v2, t_intersect_val)) {
+                    if (t_intersect_val > 0 && t_intersect_val < closest_t_face) {
+                        closest_t_face = t_intersect_val;
+                        hitPointFace_obj = rayOrigin + rayDirection * t_intersect_val;
+                        faceHit_obj = true;
                     }
                 }
-                if (faceHit_obj) {
-                    glm::vec2 screenHitPos;
-                    if (WorldToScreen(hitPointFace_obj, view, proj, screenWidth, screenHeight, screenHitPos)) {
-                        float screenDistSqForFace = glm::length2(mousePosScreen - screenHitPos);
-                        if (screenDistSqForFace < pointThresholdSq * 4.0f ) { // Allow leeway
-                           candidates.push_back({{true, hitPointFace_obj, SnapType::ON_FACE}, screenDistSqForFace });
-                        }
+            }
+            if (faceHit_obj) {
+                glm::vec2 screenHitPos;
+                if (WorldToScreen(hitPointFace_obj, view, proj, screenWidth, screenHeight, screenHitPos)) {
+                    float screenDistSqForFace = glm::length2(mousePosScreen - screenHitPos);
+                    if (screenDistSqForFace < pointThresholdSq * 4.0f ) { // Allow leeway
+                       candidates.push_back({{true, hitPointFace_obj, SnapType::ON_FACE, obj->get_id()}, screenDistSqForFace });
                     }
                 }
             }
         }
-
-        // 4. Check Axis Snaps (X, Y, Z) (same)
-        struct AxisInfo { glm::vec3 origin; glm::vec3 dir; SnapType type; }; std::vector<AxisInfo> axes = { {glm::vec3(0.0f), glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f)), SnapType::AXIS_X}, {glm::vec3(0.0f), glm::normalize(glm::vec3(0.0f, 1.0f, 0.0f)), SnapType::AXIS_Y}, {glm::vec3(0.0f), glm::normalize(glm::vec3(0.0f, 0.0f, 1.0f)), SnapType::AXIS_Z} };
-        for (const auto& axis : axes) { glm::vec3 pointOnAxis3D; if (ClosestPointLineLine(axis.origin, axis.dir, rayOrigin, rayDirection, pointOnAxis3D)) { glm::vec2 axisPointScreenPos; if (WorldToScreen(pointOnAxis3D, view, proj, screenWidth, screenHeight, axisPointScreenPos)) { float distSqScreen = glm::length2(mousePosScreen - axisPointScreenPos); if (distSqScreen < lineSnapThresholdSq) { candidates.push_back({ {true, pointOnAxis3D, axis.type}, distSqScreen }); } } } }
-
-        // Select the best candidate (same)
-        if (!candidates.empty()) { std::sort(candidates.begin(), candidates.end(), [](const SnapCandidate& a, const SnapCandidate& b) { int priorityA = GetSnapPriority(a.type); int priorityB = GetSnapPriority(b.type); if (priorityA != priorityB) { return priorityA > priorityB; } return a.screenDistSq < b.screenDistSq; }); finalSnap = candidates[0]; if (finalSnap.type == SnapType::AXIS_X || finalSnap.type == SnapType::AXIS_Y || finalSnap.type == SnapType::AXIS_Z) { for(const auto& axis : axes) { if(axis.type == finalSnap.type) { finalSnap.worldPoint = ClosestPointOnLine(axis.origin, axis.dir, finalSnap.worldPoint); break; } } } }
-        return finalSnap;
     }
+
+    // 4. Check Axis Snaps (X, Y, Z)
+    struct AxisInfo { glm::vec3 origin; glm::vec3 dir; SnapType type; }; std::vector<AxisInfo> axes = { {glm::vec3(0.0f), glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f)), SnapType::AXIS_X}, {glm::vec3(0.0f), glm::normalize(glm::vec3(0.0f, 1.0f, 0.0f)), SnapType::AXIS_Y}, {glm::vec3(0.0f), glm::normalize(glm::vec3(0.0f, 0.0f, 1.0f)), SnapType::AXIS_Z} };
+    for (const auto& axis : axes) { glm::vec3 pointOnAxis3D; if (ClosestPointLineLine(axis.origin, axis.dir, rayOrigin, rayDirection, pointOnAxis3D)) { glm::vec2 axisPointScreenPos; if (WorldToScreen(pointOnAxis3D, view, proj, screenWidth, screenHeight, axisPointScreenPos)) { float distSqScreen = glm::length2(mousePosScreen - axisPointScreenPos); if (distSqScreen < lineSnapThresholdSq) { candidates.push_back({ {true, pointOnAxis3D, axis.type, 0}, distSqScreen }); } } } }
+
+    // Select the best candidate
+    if (!candidates.empty()) { std::sort(candidates.begin(), candidates.end(), [](const SnapCandidate& a, const SnapCandidate& b) { int priorityA = GetSnapPriority(a.type); int priorityB = GetSnapPriority(b.type); if (priorityA != priorityB) { return priorityA > priorityB; } return a.screenDistSq < b.screenDistSq; }); finalSnap = candidates[0]; if (finalSnap.type == SnapType::AXIS_X || finalSnap.type == SnapType::AXIS_Y || finalSnap.type == SnapType::AXIS_Z) { for(const auto& axis : axes) { if(axis.type == finalSnap.type) { finalSnap.worldPoint = ClosestPointOnLine(axis.origin, axis.dir, finalSnap.worldPoint); break; } } } }
+    return finalSnap;
+}
 
 } // namespace Urbaxio

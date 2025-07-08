@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
     // --- Selection State ---
     uint64_t selectedObjId = 0;
     std::vector<size_t> selectedTriangleIndices;
-    std::vector<size_t> selectedLineIndices;
+    std::set<uint64_t> selectedLineIDs;
     glm::vec3 selectionHighlightColor = glm::vec3(0.6f, 0.8f, 1.0f);
 
     // --- Tool State ---
@@ -85,7 +85,7 @@ int main(int argc, char* argv[]) {
         int display_w, display_h; SDL_GetWindowSize(window, &display_w, &display_h);
         if (isDrawingLineMode && !isPlacingFirstPoint && !isPlacingSecondPoint) { isPlacingFirstPoint = true; } else if (!isDrawingLineMode && (isPlacingFirstPoint || isPlacingSecondPoint)) { isPlacingFirstPoint = false; isPlacingSecondPoint = false; lineLengthInputBuf[0] = '\0'; lineLengthValue = 0.0f; }
         
-        inputHandler.ProcessEvents(camera, should_quit, window, display_w, display_h, selectedObjId, selectedTriangleIndices, selectedLineIndices, isDrawingLineMode, isPushPullMode, isPushPullActive, hoveredObjId, hoveredFaceTriangleIndices, pushPullCurrentDistance, isPlacingFirstPoint, isPlacingSecondPoint, currentLineStartPoint, scene_ptr, currentRubberBandEnd, currentSnap, lineLengthInputBuf, lineLengthValue);
+        inputHandler.ProcessEvents(camera, should_quit, window, display_w, display_h, selectedObjId, selectedTriangleIndices, selectedLineIDs, isDrawingLineMode, isPushPullMode, isPushPullActive, hoveredObjId, hoveredFaceTriangleIndices, pushPullCurrentDistance, isPlacingFirstPoint, isPlacingSecondPoint, currentLineStartPoint, scene_ptr, currentRubberBandEnd, currentSnap, lineLengthInputBuf, lineLengthValue);
         
         if (isPushPullActive) {
             Urbaxio::Engine::SceneObject* obj = scene_ptr->get_object_by_id(inputHandler.GetPushPullObjectId());
@@ -99,7 +99,7 @@ int main(int argc, char* argv[]) {
 
         static bool wasPlacingSecondPoint = false; if (wasPlacingSecondPoint && !isPlacingSecondPoint) { /* ... */ } wasPlacingSecondPoint = isPlacingSecondPoint;
         if (should_quit) break;
-        if (scene_ptr) { renderer.UpdateUserLinesBuffer(scene_ptr->GetLineSegments(), selectedLineIndices); }
+        if (scene_ptr) { renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), selectedLineIDs); }
 
         // GPU Upload for newly created face objects
         if (scene_ptr) {
@@ -127,19 +127,23 @@ int main(int argc, char* argv[]) {
             if (ImGui::Checkbox("Push/Pull Mode", &isPushPullMode)) {
                 if (isPushPullMode) { isDrawingLineMode = false; } else { isPushPullActive = false; }
             }
-            if (ImGui::Button("Clear Lines") && scene_ptr) { scene_ptr->ClearUserLines(); renderer.UpdateUserLinesBuffer(scene_ptr->GetLineSegments(), selectedLineIndices); isPlacingFirstPoint = isDrawingLineMode; isPlacingSecondPoint = false; lineLengthInputBuf[0] = '\0'; selectedLineIndices.clear(); }
+            if (ImGui::Button("Clear Lines") && scene_ptr) { 
+                scene_ptr->ClearUserLines(); 
+                renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), selectedLineIDs); 
+                isPlacingFirstPoint = isDrawingLineMode; 
+                isPlacingSecondPoint = false; 
+                lineLengthInputBuf[0] = '\0'; 
+                selectedLineIDs.clear(); 
+            }
 
-            if (!selectedLineIndices.empty()) {
-                if (ImGui::Button("Show Selected Lines (Debug)")) {
-                    std::cout << "DEBUG: Currently selected line segment indices: ";
-                    for (size_t index : selectedLineIndices) { std::cout << index << " "; }
-                    std::cout << std::endl;
-                }
+            if (!selectedLineIDs.empty()) {
+                ImGui::Text("Selected Line IDs: %zu", selectedLineIDs.size());
             }
 
             if (isPlacingSecondPoint) { ImGui::Separator(); ImGui::Text("Length: %s", lineLengthInputBuf); ImGui::Separator(); }
             if (isPushPullActive) { ImGui::Separator(); ImGui::Text("Distance: %s", lineLengthInputBuf); ImGui::Separator(); }
             ImGui::Text("Scene Info:");
+            ImGui::Text("Lines in Scene: %zu", scene_ptr ? scene_ptr->GetAllLines().size() : 0);
             ImGui::Text("Selected Object ID: %llu", selectedObjId);
             if (selectedObjId != 0) {
                  ImGui::Text("Selected Triangles: %zu", selectedTriangleIndices.size());
@@ -154,7 +158,7 @@ int main(int argc, char* argv[]) {
         renderer.SetViewport(0, 0, display_w, display_h);
         glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightDirection, lightColor, ambientStrength, showGrid, showAxes, gridLineWidth, axisLineWidth, splatColor, splatBlurStrength, selectedObjId, selectedTriangleIndices, selectedLineIndices, selectionHighlightColor, hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor, isPlacingSecondPoint, currentLineStartPoint, currentRubberBandEnd, currentSnap, ImGui::GetDrawData());
+        renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightDirection, lightColor, ambientStrength, showGrid, showAxes, gridLineWidth, axisLineWidth, splatColor, splatBlurStrength, selectedObjId, selectedTriangleIndices, selectedLineIDs, selectionHighlightColor, hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor, isPlacingSecondPoint, currentLineStartPoint, currentRubberBandEnd, currentSnap, ImGui::GetDrawData());
         SDL_GL_SwapWindow(window);
     }
 

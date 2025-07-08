@@ -2,6 +2,7 @@
 #include "camera.h"
 #include <engine/scene.h>
 #include <engine/scene_object.h>
+#include <engine/line.h>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/constants.hpp>
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <map>
+#include <set>
 #include <utility>
 
 namespace { // Anonymous namespace for utility functions
@@ -149,7 +151,7 @@ namespace Urbaxio {
         const glm::vec4& splatColor, float splatBlurStrength,
         uint64_t selectedObjId,
         const std::vector<size_t>& selectedTriangleIndices,
-        const std::vector<size_t>& selectedLineIndices,
+        const std::set<uint64_t>& selectedLineIDs,
         const glm::vec3& selectionHighlightColor,
         uint64_t hoveredObjId,
         const std::vector<size_t>& hoveredFaceTriangleIndices,
@@ -236,7 +238,50 @@ namespace Urbaxio {
     bool Renderer::CreateAxesResources() { /* ... same ... */ std::vector<float> axesVertices = GenerateAxisVertices(axisLength); if (axesVertices.empty()) { std::cerr << "Renderer Error: Failed to generate axes vertices!" << std::endl; return false; } axesVertexCount = static_cast<int>(axesVertices.size() / 7); glGenVertexArrays(1, &axesVAO); glGenBuffers(1, &axesVBO); glBindVertexArray(axesVAO); glBindBuffer(GL_ARRAY_BUFFER, axesVBO); glBufferData(GL_ARRAY_BUFFER, axesVertices.size() * sizeof(float), axesVertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindBuffer(GL_ARRAY_BUFFER, 0); glBindVertexArray(0); std::cout << "Renderer: Axes VAO/VBO created (" << axesVertexCount << " vertices)." << std::endl; return axesVAO != 0 && axesVBO != 0; }
     bool Renderer::CreateSplatResources() { /* ... same ... */ std::vector<float> quadVertices = GenerateQuadVertices(2.0f); unsigned int quadIndices[] = { 0, 1, 2, 0, 2, 3 }; glGenVertexArrays(1, &splatVAO); glGenBuffers(1, &splatVBO); glGenBuffers(1, &splatEBO); glBindVertexArray(splatVAO); glBindBuffer(GL_ARRAY_BUFFER, splatVBO); glBufferData(GL_ARRAY_BUFFER, quadVertices.size() * sizeof(float), quadVertices.data(), GL_STATIC_DRAW); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, splatEBO); glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(quadIndices), quadIndices, GL_STATIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindVertexArray(0); std::cout << "Renderer: Splat VAO/VBO/EBO created." << std::endl; return splatVAO != 0 && splatVBO != 0 && splatEBO != 0; }
     bool Renderer::CreateUserLinesResources() { /* ... same ... */ glGenVertexArrays(1, &userLinesVAO); glGenBuffers(1, &userLinesVBO); glBindVertexArray(userLinesVAO); glBindBuffer(GL_ARRAY_BUFFER, userLinesVBO); const size_t maxLinePoints = 400; glBufferData(GL_ARRAY_BUFFER, maxLinePoints * 7 * sizeof(float), nullptr, GL_DYNAMIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindBuffer(GL_ARRAY_BUFFER, 0); glBindVertexArray(0); std::cout << "Renderer: User Lines VAO/VBO created." << std::endl; return userLinesVAO != 0 && userLinesVBO != 0; }
-    void Renderer::UpdateUserLinesBuffer(const std::vector<std::pair<glm::vec3, glm::vec3>>& lineSegments, const std::vector<size_t>& selectedLineIndices) { /* ... same ... */ if (userLinesVBO == 0) { userLinesVertexCount = 0; return; } if (lineSegments.empty()) { userLinesVertexCount = 0; return; } std::vector<float> lineData; lineData.reserve(lineSegments.size() * 2 * 7); for (size_t i = 0; i < lineSegments.size(); ++i) { const auto& segment = lineSegments[i]; glm::vec4 currentColor = userLineColor; if (std::find(selectedLineIndices.begin(), selectedLineIndices.end(), i) != selectedLineIndices.end()) { currentColor = selectedUserLineColor; } lineData.push_back(segment.first.x); lineData.push_back(segment.first.y); lineData.push_back(segment.first.z); lineData.push_back(currentColor.r); lineData.push_back(currentColor.g); lineData.push_back(currentColor.b); lineData.push_back(currentColor.a); lineData.push_back(segment.second.x); lineData.push_back(segment.second.y); lineData.push_back(segment.second.z); lineData.push_back(currentColor.r); lineData.push_back(currentColor.g); lineData.push_back(currentColor.b); lineData.push_back(currentColor.a); } glBindBuffer(GL_ARRAY_BUFFER, userLinesVBO); glBufferData(GL_ARRAY_BUFFER, lineData.size() * sizeof(float), lineData.data(), GL_DYNAMIC_DRAW); glBindBuffer(GL_ARRAY_BUFFER, 0); userLinesVertexCount = static_cast<int>(lineData.size() / 7); }
+    void Renderer::UpdateUserLinesBuffer(const std::map<uint64_t, Engine::Line>& lines, const std::set<uint64_t>& selectedLineIDs) {
+        if (userLinesVBO == 0) {
+            userLinesVertexCount = 0;
+            return;
+        }
+        
+        if (lines.empty()) {
+            userLinesVertexCount = 0;
+            return;
+        }
+        
+        std::vector<float> lineData;
+        lineData.reserve(lines.size() * 2 * 7);
+        
+        for (const auto& [lineID, line] : lines) {
+            glm::vec4 currentColor = userLineColor;
+            if (selectedLineIDs.find(lineID) != selectedLineIDs.end()) {
+                currentColor = selectedUserLineColor;
+            }
+            
+            // Start point
+            lineData.push_back(line.start.x);
+            lineData.push_back(line.start.y);
+            lineData.push_back(line.start.z);
+            lineData.push_back(currentColor.r);
+            lineData.push_back(currentColor.g);
+            lineData.push_back(currentColor.b);
+            lineData.push_back(currentColor.a);
+            
+            // End point
+            lineData.push_back(line.end.x);
+            lineData.push_back(line.end.y);
+            lineData.push_back(line.end.z);
+            lineData.push_back(currentColor.r);
+            lineData.push_back(currentColor.g);
+            lineData.push_back(currentColor.b);
+            lineData.push_back(currentColor.a);
+        }
+        
+        glBindBuffer(GL_ARRAY_BUFFER, userLinesVBO);
+        glBufferData(GL_ARRAY_BUFFER, lineData.size() * sizeof(float), lineData.data(), GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        userLinesVertexCount = static_cast<int>(lineData.size() / 7);
+    }
     bool Renderer::CreateMarkerResources() { /* ... same ... */ std::vector<float> circleVertices = GenerateCircleVertices(24); if (circleVertices.empty()) return false; markerVertexCounts[MarkerShape::CIRCLE] = static_cast<int>(circleVertices.size() / 2); glGenVertexArrays(1, &markerVAOs[MarkerShape::CIRCLE]); glGenBuffers(1, &markerVBOs[MarkerShape::CIRCLE]); glBindVertexArray(markerVAOs[MarkerShape::CIRCLE]); glBindBuffer(GL_ARRAY_BUFFER, markerVBOs[MarkerShape::CIRCLE]); glBufferData(GL_ARRAY_BUFFER, circleVertices.size() * sizeof(float), circleVertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glBindVertexArray(0); std::cout << "Renderer: Circle Marker VAO/VBO created (" << markerVertexCounts[MarkerShape::CIRCLE] << " vertices)." << std::endl; std::vector<float> diamondVertices = GenerateDiamondVertices(); if (diamondVertices.empty()) return false; markerVertexCounts[MarkerShape::DIAMOND] = static_cast<int>(diamondVertices.size() / 2); glGenVertexArrays(1, &markerVAOs[MarkerShape::DIAMOND]); glGenBuffers(1, &markerVBOs[MarkerShape::DIAMOND]); glBindVertexArray(markerVAOs[MarkerShape::DIAMOND]); glBindBuffer(GL_ARRAY_BUFFER, markerVBOs[MarkerShape::DIAMOND]); glBufferData(GL_ARRAY_BUFFER, diamondVertices.size() * sizeof(float), diamondVertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glBindVertexArray(0); std::cout << "Renderer: Diamond Marker VAO/VBO created (" << markerVertexCounts[MarkerShape::DIAMOND] << " vertices)." << std::endl; return true; }
     void Renderer::DrawSnapMarker(const SnapResult& snap, const Camera& camera, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight) { /* ... same ... */ if (!snap.snapped || markerShaderProgram == 0) return; MarkerShape shape = MarkerShape::CIRCLE; glm::vec4 color = snapMarkerColorPoint; float currentMarkerSize = markerScreenSize; switch (snap.type) { case SnapType::ENDPOINT: case SnapType::ORIGIN: shape = MarkerShape::CIRCLE; color = snapMarkerColorPoint; currentMarkerSize = markerScreenSize; break; case SnapType::MIDPOINT: shape = MarkerShape::CIRCLE; color = snapMarkerColorMidpoint; currentMarkerSize = markerScreenSizeMidpoint; break; case SnapType::ON_EDGE: shape = MarkerShape::DIAMOND; color = snapMarkerColorOnEdge; currentMarkerSize = markerScreenSizeOnEdge; break; case SnapType::AXIS_X: shape = MarkerShape::DIAMOND; color = snapMarkerColorAxisX; currentMarkerSize = markerScreenSize; break; case SnapType::AXIS_Y: shape = MarkerShape::DIAMOND; color = snapMarkerColorAxisY; currentMarkerSize = markerScreenSize; break; case SnapType::AXIS_Z: shape = MarkerShape::DIAMOND; color = snapMarkerColorAxisZ; currentMarkerSize = markerScreenSize; break; case SnapType::ON_FACE: shape = MarkerShape::CIRCLE; color = snapMarkerColorOnEdge; /* Using OnEdge magenta for now, define snapMarkerColorOnFace later */ currentMarkerSize = markerScreenSize; break; default: return; } if (markerVAOs.find(shape) == markerVAOs.end()) return; GLuint vao = markerVAOs[shape]; int vertexCount = markerVertexCounts[shape]; if (vao == 0 || vertexCount == 0) return; glUseProgram(markerShaderProgram); glUniform3fv(glGetUniformLocation(markerShaderProgram, "u_WorldPos"), 1, glm::value_ptr(snap.worldPoint)); glUniform1f(glGetUniformLocation(markerShaderProgram, "u_ScreenSize"), currentMarkerSize); glUniformMatrix4fv(glGetUniformLocation(markerShaderProgram, "u_ViewMatrix"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(markerShaderProgram, "u_ProjMatrix"), 1, GL_FALSE, glm::value_ptr(proj)); glUniform2f(glGetUniformLocation(markerShaderProgram, "u_ViewportSize"), (float)screenWidth, (float)screenHeight); glUniform4fv(glGetUniformLocation(markerShaderProgram, "u_Color"), 1, glm::value_ptr(color)); glBindVertexArray(vao); if (shape == MarkerShape::CIRCLE) { glDrawArrays(GL_TRIANGLE_FAN, 0, vertexCount); } else if (shape == MarkerShape::DIAMOND) { glLineWidth(2.0f); glDrawArrays(GL_LINE_LOOP, 0, vertexCount -1); } glBindVertexArray(0); glLineWidth(1.0f); }
     void Renderer::Cleanup() {

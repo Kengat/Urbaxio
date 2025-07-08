@@ -6,11 +6,13 @@
 #include <cstdint>
 #include <cstddef>
 #include <vector> // For std::vector
+#include <set> // For std::set
+#include <map> // For std::map
 #include <glm/glm.hpp>
 
 // Forward declaration
 struct ImGuiIO;
-namespace Urbaxio { class Camera; namespace Engine { class Scene; } }
+namespace Urbaxio { class Camera; namespace Engine { class Scene; struct Line; } }
 
 namespace Urbaxio {
 
@@ -27,7 +29,7 @@ namespace Urbaxio {
             // Selection state
             uint64_t& selectedObjId,
             std::vector<size_t>& selectedTriangleIndices,
-            std::vector<size_t>& selectedLineIndices,
+            std::set<uint64_t>& selectedLineIDs,
             // Tool state
             bool isDrawingLineMode,
             bool isPushPullMode,
@@ -95,7 +97,9 @@ namespace Urbaxio {
             const glm::vec3& p1, const glm::vec3& p2, // Segment endpoints
             float pickThresholdRadius,                 // How close the ray must pass to the segment
             float& outDistanceAlongRay,             // Output: distance along ray to closest point on ray
-            glm::vec3& outClosestPointOnSegment      // Output: closest point on segment to the ray
+            glm::vec3& outClosestPointOnSegment,      // Output: closest point on segment to the ray
+            const std::map<uint64_t, Engine::Line>& lines,
+            uint64_t& outHitLineId
         );
     };
 

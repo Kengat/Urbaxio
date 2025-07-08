@@ -1,6 +1,7 @@
 #pragma once
 
 #include "snapping.h"
+#include <engine/line.h> // <--- ADDED: Fix for unknown type 'Line'
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <vector>
@@ -10,6 +11,7 @@
 #include <cstddef>
 #include <map>
 #include <utility> // For std::pair
+#include <set>     // <--- ADDED: Fix for 'std::set' is not a member of 'std'
 
 namespace Urbaxio { class Camera; namespace Engine { class SceneObject; class Scene; } }
 struct ImDrawData;
@@ -34,7 +36,7 @@ namespace Urbaxio {
             // Selections
             uint64_t selectedObjId,
             const std::vector<size_t>& selectedTriangleIndices,
-            const std::vector<size_t>& selectedLineIndices,
+            const std::set<uint64_t>& selectedLineIDs,
             const glm::vec3& selectionHighlightColor,
             // Hovers
             uint64_t hoveredObjId,
@@ -48,7 +50,7 @@ namespace Urbaxio {
         void SetViewport(int x, int y, int width, int height);
         float GetMaxLineWidth() const { return maxLineWidth; }
 
-        void UpdateUserLinesBuffer(const std::vector<std::pair<glm::vec3, glm::vec3>>& lineSegments, const std::vector<size_t>& selectedLineIndices);
+        void UpdateUserLinesBuffer(const std::map<uint64_t, Engine::Line>& lines, const std::set<uint64_t>& selectedLineIDs);
         void UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance);
 
     private:
