@@ -10,7 +10,7 @@
 #include <iostream>
 #include <set>
 #include <cmath>
-#include <algorithm> // for std::reverse
+#include <algorithm> // for std::reverse, std::remove
 
 #include <glm/gtx/norm.hpp>
 #include <glm/common.hpp> // For epsilonEqual
@@ -65,7 +65,6 @@ namespace Urbaxio::Engine {
     std::vector<SceneObject*> Scene::get_all_objects() { std::vector<SceneObject*> result; result.reserve(objects_.size()); for (auto const& [id, obj_ptr] : objects_) { result.push_back(obj_ptr.get()); } return result; }
     std::vector<const SceneObject*> Scene::get_all_objects() const { std::vector<const SceneObject*> result; result.reserve(objects_.size()); for (auto const& [id, obj_ptr] : objects_) { result.push_back(obj_ptr.get()); } return result; }
 
-
     // Finds an existing vertex within tolerance or returns the input point.
     // This is the core of vertex merging.
     glm::vec3 Scene::MergeOrAddVertex(const glm::vec3& p) {
@@ -77,7 +76,49 @@ namespace Urbaxio::Engine {
         return p;
     }
 
-    uint64_t Scene::AddUserLine(const glm::vec3& start, const glm::vec3& end) {
+    // Public method to add a line, which now handles intersections.
+    void Scene::AddUserLine(const glm::vec3& start, const glm::vec3& end) {
+        std::map<uint64_t, glm::vec3> intersections_on_existing_lines;
+        std::vector<glm::vec3> split_points_on_new_line;
+
+        // Find all intersections with existing lines
+        for (const auto& [existing_id, existing_line] : lines_) {
+            glm::vec3 intersection_point;
+            if (LineSegmentIntersection(start, end, existing_line.start, existing_line.end, intersection_point)) {
+                intersections_on_existing_lines[existing_id] = intersection_point;
+                split_points_on_new_line.push_back(intersection_point);
+            }
+        }
+
+        // Split all existing lines that were intersected
+        for (const auto& [line_id, point] : intersections_on_existing_lines) {
+            SplitLineAtPoint(line_id, point);
+        }
+        
+        // Add the new line, potentially splitting it as well
+        std::vector<glm::vec3> all_points = { start };
+        all_points.insert(all_points.end(), split_points_on_new_line.begin(), split_points_on_new_line.end());
+        all_points.push_back(end);
+
+        // Sort all points along the new line's direction
+        glm::vec3 dir = end - start;
+        std::sort(all_points.begin(), all_points.end(), 
+            [&start, &dir](const glm::vec3& a, const glm::vec3& b) {
+                if (glm::length2(dir) < 1e-9) return false;
+                return glm::dot(a - start, dir) < glm::dot(b - start, dir);
+            });
+            
+        // Remove duplicate points
+        all_points.erase(std::unique(all_points.begin(), all_points.end(), AreVec3Equal), all_points.end());
+
+        // Add the new line as segments
+        for (size_t i = 0; i < all_points.size() - 1; ++i) {
+            AddSingleLineSegment(all_points[i], all_points[i+1]);
+        }
+    }
+
+    // This is the internal, "dumb" version of AddUserLine. It just adds a segment.
+    uint64_t Scene::AddSingleLineSegment(const glm::vec3& start, const glm::vec3& end) {
         glm::vec3 canonicalStart = MergeOrAddVertex(start);
         glm::vec3 canonicalEnd = MergeOrAddVertex(end);
 
@@ -113,7 +154,7 @@ namespace Urbaxio::Engine {
         next_line_id_ = 1;
         std::cout << "Scene: Cleared user lines and adjacency data." << std::endl;
     }
-
+    
     void Scene::RemoveLine(uint64_t lineId) {
         auto it = lines_.find(lineId);
         if (it == lines_.end()) return;
@@ -137,7 +178,7 @@ namespace Urbaxio::Engine {
         // Remove from the main map
         lines_.erase(it);
     }
-
+    
     glm::vec3 Scene::SplitLineAtPoint(uint64_t lineId, const glm::vec3& splitPoint) {
         auto it = lines_.find(lineId);
         if (it == lines_.end()) {
@@ -152,19 +193,65 @@ namespace Urbaxio::Engine {
             return canonicalSplitPoint; // No split needed, just return the merged vertex.
         }
 
-        std::cout << "Scene: Splitting line " << lineId << " at (" << splitPoint.x << ", " << splitPoint.y << ", " << splitPoint.z << ")" << std::endl;
+        std::cout << "Scene: Splitting line " << lineId << std::endl;
 
         // 1. Remove the old line from existence
         RemoveLine(lineId);
 
-        // 2. Add two new lines
-        // These calls will automatically handle vertex adjacency updates for the new lines and the new split point.
-        AddUserLine(originalLine.start, canonicalSplitPoint);
-        AddUserLine(canonicalSplitPoint, originalLine.end);
+        // 2. Add two new lines. Use internal function to avoid recursive intersection checks.
+        AddSingleLineSegment(originalLine.start, canonicalSplitPoint);
+        AddSingleLineSegment(canonicalSplitPoint, originalLine.end);
         
         // Return the canonical merged vertex for the split point
         return canonicalSplitPoint;
     }
+
+    bool Scene::LineSegmentIntersection(
+        const glm::vec3& p1, const glm::vec3& p2, // Segment 1
+        const glm::vec3& p3, const glm::vec3& p4, // Segment 2
+        glm::vec3& out_intersection_point)
+    {
+        const float EPSILON = 1e-5f;
+        glm::vec3 d1 = p2 - p1;
+        glm::vec3 d2 = p4 - p3;
+        
+        // Check for coplanarity. If the volume of the tetrahedron formed by the 4 points is near zero, they are coplanar.
+        glm::vec3 p3_p1 = p3 - p1;
+        glm::vec3 p4_p1 = p4 - p1;
+        float volume = glm::dot(d1, glm::cross(p3_p1, p4_p1));
+        if (std::abs(volume) > EPSILON) {
+            return false; // Not coplanar
+        }
+
+        // Lines are coplanar, now find intersection point
+        glm::vec3 d1_cross_d2 = glm::cross(d1, d2);
+        float d1_cross_d2_lenSq = glm::length2(d1_cross_d2);
+
+        // Check if lines are parallel
+        if (d1_cross_d2_lenSq < EPSILON * EPSILON) {
+            return false; // Parallel lines, we don't handle overlapping case for now.
+        }
+        
+        glm::vec3 p3_p1_cross_d2 = glm::cross(p3 - p1, d2);
+
+        float t = glm::dot(p3_p1_cross_d2, d1_cross_d2) / d1_cross_d2_lenSq;
+        
+        // Check if intersection is within segment 1
+        if (t < -EPSILON || t > 1.0f + EPSILON) {
+            return false;
+        }
+
+        float u = glm::dot(p3_p1_cross_d2, d1) / d1_cross_d2_lenSq;
+        
+        // Check if intersection is within segment 2
+        if (u < -EPSILON || u > 1.0f + EPSILON) {
+            return false;
+        }
+
+        out_intersection_point = p1 + t * d1;
+        return true;
+    }
+
 
     bool Scene::ArePointsCoplanar(const std::vector<glm::vec3>& points, gp_Pln& outPlane) {
         if (points.size() < 3) return false;

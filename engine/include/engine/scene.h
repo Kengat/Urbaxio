@@ -10,7 +10,7 @@
 #include <utility>
 #include <set> // For visited segments in DFS
 #include <glm/glm.hpp>
-#include "line.h"
+#include "engine/line.h" // Include the new Line struct
 
 // Forward declare OCCT types to avoid including heavy headers here
 class gp_Pln;
@@ -35,66 +35,71 @@ namespace Urbaxio {
 namespace Urbaxio::Engine {
 
     class Scene {
-public:
-    Scene();
-    ~Scene();
+    public:
+        Scene();
+        ~Scene();
 
-    Scene(const Scene&) = delete;
-    Scene& operator=(const Scene&) = delete;
-    Scene(Scene&&) = default;
-    Scene& operator=(Scene&&) = default;
+        Scene(const Scene&) = delete;
+        Scene& operator=(const Scene&) = delete;
+        Scene(Scene&&) = default;
+        Scene& operator=(Scene&&) = default;
 
-    SceneObject* create_object(const std::string& name);
-    SceneObject* create_box_object(const std::string& name, double dx, double dy, double dz);
-    SceneObject* get_object_by_id(uint64_t id);
-    const SceneObject* get_object_by_id(uint64_t id) const;
-    std::vector<SceneObject*> get_all_objects();
-    std::vector<const SceneObject*> get_all_objects() const;
+        SceneObject* create_object(const std::string& name);
+        SceneObject* create_box_object(const std::string& name, double dx, double dy, double dz);
+        SceneObject* get_object_by_id(uint64_t id);
+        const SceneObject* get_object_by_id(uint64_t id) const;
+        std::vector<SceneObject*> get_all_objects();
+        std::vector<const SceneObject*> get_all_objects() const;
 
-    // --- Line Management ---
-    uint64_t AddUserLine(const glm::vec3& start, const glm::vec3& end);
-    void ClearUserLines();
-    const std::map<uint64_t, Line>& GetAllLines() const;
-    // This is the key new function for splitting lines.
-    glm::vec3 SplitLineAtPoint(uint64_t lineId, const glm::vec3& splitPoint);
+        // --- Line Management ---
+        void AddUserLine(const glm::vec3& start, const glm::vec3& end); // Now returns void as it can create many lines
+        void ClearUserLines();
+        const std::map<uint64_t, Line>& GetAllLines() const;
+        glm::vec3 SplitLineAtPoint(uint64_t lineId, const glm::vec3& splitPoint);
 
 
-    // --- Geometry Modification ---
-    bool ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance);
+        // --- Geometry Modification ---
+        bool ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance);
 
-private:
-    std::unordered_map<uint64_t, std::unique_ptr<SceneObject>> objects_;
-    uint64_t next_object_id_ = 1;
-    int next_face_id_ = 1; // For naming created faces
+    private:
+        std::unordered_map<uint64_t, std::unique_ptr<SceneObject>> objects_;
+        uint64_t next_object_id_ = 1;
+        int next_face_id_ = 1; // For naming created faces
 
-    // New line storage system
-    std::map<uint64_t, Line> lines_;
-    uint64_t next_line_id_ = 1;
-    std::map<glm::vec3, std::vector<uint64_t>, Urbaxio::Vec3Comparator> vertexAdjacency_;
-
-    // Helper to remove a line completely from all data structures
-    void RemoveLine(uint64_t lineId);
-
-    glm::vec3 MergeOrAddVertex(const glm::vec3& p);
-    
-    // --- Face Creation Logic ---
-    void FindAndCreateFaces(uint64_t newLineId);
-    bool PerformDFS(
-        const glm::vec3& startNode,
-        const glm::vec3& currentNode,
-        const glm::vec3& targetNode,
-        std::vector<glm::vec3>& currentPathVertices,
-        std::vector<uint64_t>& currentPathLineIDs,
-        std::set<uint64_t>& visitedLinesDFS,
-        uint64_t originatingLineId,
-        int& recursionDepth
-    );
-    bool ArePointsCoplanar(const std::vector<glm::vec3>& points, gp_Pln& outPlane);
-    void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
-    
-    // --- Push/Pull Helpers ---
-    TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal);
-    void AnalyzeShape(const TopoDS_Shape& shape, const std::string& label);
+        std::map<uint64_t, Line> lines_;
+        uint64_t next_line_id_ = 1;
+        std::map<glm::vec3, std::vector<uint64_t>, Urbaxio::Vec3Comparator> vertexAdjacency_;
+        
+        // Internal line adding function that skips intersection checks.
+        uint64_t AddSingleLineSegment(const glm::vec3& start, const glm::vec3& end);
+        void RemoveLine(uint64_t lineId);
+        glm::vec3 MergeOrAddVertex(const glm::vec3& p);
+        
+        // --- Intersection Helper ---
+        static bool LineSegmentIntersection(
+            const glm::vec3& p1, const glm::vec3& p2, // Segment 1
+            const glm::vec3& p3, const glm::vec3& p4, // Segment 2
+            glm::vec3& out_intersection_point
+        );
+        
+        // --- Face Creation Logic ---
+        void FindAndCreateFaces(uint64_t newLineId);
+        bool PerformDFS(
+            const glm::vec3& startNode,
+            const glm::vec3& currentNode,
+            const glm::vec3& targetNode,
+            std::vector<glm::vec3>& currentPathVertices,
+            std::vector<uint64_t>& currentPathLineIDs,
+            std::set<uint64_t>& visitedLinesDFS,
+            uint64_t originatingLineId,
+            int& recursionDepth
+        );
+        bool ArePointsCoplanar(const std::vector<glm::vec3>& points, gp_Pln& outPlane);
+        void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
+        
+        // --- Push/Pull Helpers ---
+        TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal);
+        void AnalyzeShape(const TopoDS_Shape& shape, const std::string& label);
     };
 
 }
