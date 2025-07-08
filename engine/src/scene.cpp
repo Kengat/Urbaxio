@@ -214,13 +214,21 @@ namespace Urbaxio::Engine {
         const float EPSILON = 1e-5f;
         glm::vec3 d1 = p2 - p1;
         glm::vec3 d2 = p4 - p3;
-        
-        // Check for coplanarity. If the volume of the tetrahedron formed by the 4 points is near zero, they are coplanar.
-        glm::vec3 p3_p1 = p3 - p1;
-        glm::vec3 p4_p1 = p4 - p1;
-        float volume = glm::dot(d1, glm::cross(p3_p1, p4_p1));
-        if (std::abs(volume) > EPSILON) {
-            return false; // Not coplanar
+
+        // --- NEW: More robust coplanarity check ---
+        // Create a plane with 3 points and check if the 4th is on it.
+        glm::vec3 plane_normal = glm::cross(d1, p3 - p1);
+        if (glm::length2(plane_normal) < EPSILON * EPSILON) {
+            // All 3 points are collinear. Check if p4 is on the same line.
+            if (glm::length2(glm::cross(d1, p4 - p1)) > EPSILON * EPSILON) {
+                return false; // Not coplanar/collinear
+            }
+        } else {
+            // Check distance of 4th point to the plane
+            float dist = glm::dot(p4 - p1, glm::normalize(plane_normal));
+            if (std::abs(dist) > EPSILON) {
+                return false; // Not coplanar
+            }
         }
 
         // Lines are coplanar, now find intersection point
@@ -236,15 +244,15 @@ namespace Urbaxio::Engine {
 
         float t = glm::dot(p3_p1_cross_d2, d1_cross_d2) / d1_cross_d2_lenSq;
         
-        // Check if intersection is within segment 1
-        if (t < -EPSILON || t > 1.0f + EPSILON) {
+        // --- NEW: Stricter bounds check to avoid intersections at endpoints ---
+        if (t < EPSILON || t > 1.0f - EPSILON) {
             return false;
         }
 
-        float u = glm::dot(p3_p1_cross_d2, d1) / d1_cross_d2_lenSq;
+        float u = glm::dot(glm::cross(p3 - p1, d1), d1_cross_d2) / d1_cross_d2_lenSq;
         
-        // Check if intersection is within segment 2
-        if (u < -EPSILON || u > 1.0f + EPSILON) {
+        // --- NEW: Stricter bounds check to avoid intersections at endpoints ---
+        if (u < EPSILON || u > 1.0f - EPSILON) {
             return false;
         }
 
