@@ -328,7 +328,8 @@ namespace Urbaxio::Engine {
                     occtNormal.Reverse();
                 }
                 
-                bool normalMatches = occtNormal.IsParallel(targetNormal, 0.3);
+                // Tighter tolerance for normal matching
+                bool normalMatches = occtNormal.IsParallel(targetNormal, 0.1); // Was 0.3
                 
                 // 2. Count matching vertices
                 TopExp_Explorer vertexExplorer(candidateFace, TopAbs_VERTEX);
@@ -365,7 +366,7 @@ namespace Urbaxio::Engine {
                 
                 std::cout << "DEBUG: Face " << face_count << " normal: (" << occtNormal.X() << ", " << occtNormal.Y() << ", " << occtNormal.Z() 
                          << "), vertices: " << matchingVertices << "/" << faceVertices.size() 
-                         << ", center dist: " << centerDistance << ", score: " << score << std::endl;
+                         << ", center dist: " << centerDistance << ", score: " << score << ", normal match: " << (normalMatches ? "YES":"NO") << std::endl;
                 
                 if (matchingVertices > 0) {
                     candidates.push_back({candidateFace, score, matchingVertices, normalMatches, centerDistance});
@@ -398,6 +399,10 @@ namespace Urbaxio::Engine {
     }
 
     void Scene::AnalyzeShape(const TopoDS_Shape& shape, const std::string& label) {
+        if (shape.IsNull()) {
+             std::cout << "=== SHAPE ANALYSIS: " << label << " (SHAPE IS NULL) ===" << std::endl;
+             return;
+        }
         std::cout << "=== SHAPE ANALYSIS: " << label << " ===" << std::endl;
         
         // Basic info
@@ -462,8 +467,6 @@ namespace Urbaxio::Engine {
 
         const auto& mesh = obj->get_mesh_buffers();
         const TopoDS_Shape* originalShape = obj->get_shape();
-
-        // Analyze original shape
         AnalyzeShape(*originalShape, "ORIGINAL SHAPE");
 
         std::set<unsigned int> faceVertexIndicesSet;
@@ -484,9 +487,6 @@ namespace Urbaxio::Engine {
         }
 
         try {
-            // --- UNIVERSAL Push/Pull Logic: Works for ALL face types ---
-            
-            // Step 1: Create extrusion vector exactly as in preview (direction * distance)
             gp_Vec extrudeVector(direction.x * distance, direction.y * distance, direction.z * distance);
             BRepPrimAPI_MakePrism prismMaker(faceToExtrude, extrudeVector);
             
@@ -494,98 +494,68 @@ namespace Urbaxio::Engine {
                 std::cerr << "OCCT Error: Failed to create prism from face." << std::endl;
                 return false;
             }
-            
             TopoDS_Shape prismShape = prismMaker.Shape();
-            TopoDS_Shape newFinalShape;
-            
-            // Analyze prism shape
             AnalyzeShape(prismShape, "CREATED PRISM");
             
-            // DEBUG: Analyze prism shape
-            std::cout << "DEBUG: Prism shape type: " << prismShape.ShapeType() << std::endl;
-            TopExp_Explorer prismExplorer(prismShape, TopAbs_SOLID);
-            int prismSolids = 0;
-            for (; prismExplorer.More(); prismExplorer.Next()) prismSolids++;
-            std::cout << "DEBUG: Prism contains " << prismSolids << " solids" << std::endl;
+            TopoDS_Shape newFinalShape;
             
-            // Step 2: Handle different object types consistently
-            if (originalShape->ShapeType() == TopAbs_FACE) {
-                // Standalone face: Always replace with prism (becomes solid)
-                newFinalShape = prismShape;
-                std::cout << "Scene: Push/Pull - Standalone face converted to solid." << std::endl;
-            } else {
-                // DEBUG: Analyze original shape
-                TopExp_Explorer origExplorer(*originalShape, TopAbs_SOLID);
-                int origSolids = 0;
-                for (; origExplorer.More(); origExplorer.Next()) origSolids++;
-                std::cout << "DEBUG: Original shape contains " << origSolids << " solids" << std::endl;
-                
-                // Solid object: Use boolean operations based on distance direction
-                if (distance >= 0) {
-                    // Positive distance: Add material (Fuse)
-                    BRepAlgoAPI_Fuse fuseAlgo(*originalShape, prismShape);
-                    if (!fuseAlgo.IsDone()) {
-                        std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl;
-                        return false;
-                    }
-                    newFinalShape = fuseAlgo.Shape();
-                    std::cout << "Scene: Push/Pull - Added material (Fuse operation)." << std::endl;
-                    
-                    // Check for healing errors
-                    if (fuseAlgo.HasErrors()) {
-                        std::cerr << "OCCT Warning: Fuse operation has errors." << std::endl;
-                    }
-                    if (fuseAlgo.HasWarnings()) {
-                        std::cout << "OCCT Info: Fuse operation has warnings." << std::endl;
-                    }
-                    
-                } else {
-                    // Negative distance: Remove material (Cut)
-                    BRepAlgoAPI_Cut cutAlgo(*originalShape, prismShape);
-                    if (!cutAlgo.IsDone()) {
-                        std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl;
-                        return false;
-                    }
-                    newFinalShape = cutAlgo.Shape();
-                    std::cout << "Scene: Push/Pull - Removed material (Cut operation)." << std::endl;
-                    
-                    // Check for healing errors
-                    if (cutAlgo.HasErrors()) {
-                        std::cerr << "OCCT Warning: Cut operation has errors." << std::endl;
-                    }
-                    if (cutAlgo.HasWarnings()) {
-                        std::cout << "OCCT Info: Cut operation has warnings." << std::endl;
-                    }
-                }
+            // --- ROBUST BOOLEAN OPERATION LOGIC ---
+            // Determine the correct operation based on the extrusion direction relative to the solid's face
+            BRepAdaptor_Surface surfaceAdaptor(faceToExtrude, Standard_True); // Use Standard_True for natural UV mapping
+            gp_Pln plane = surfaceAdaptor.Plane();
+            gp_Dir occtFaceNormal = plane.Axis().Direction();
+            if (faceToExtrude.Orientation() == TopAbs_REVERSED) {
+                occtFaceNormal.Reverse();
             }
 
-            // Step 3: Analyze result shape
-            TopExp_Explorer resultExplorer(newFinalShape, TopAbs_SOLID);
-            int resultSolids = 0;
-            for (; resultExplorer.More(); resultExplorer.Next()) resultSolids++;
-            std::cout << "DEBUG: Result shape contains " << resultSolids << " solids" << std::endl;
+            double dotProduct = extrudeVector.Dot(gp_Vec(occtFaceNormal));
+            std::cout << "Scene: Push/Pull - Face normal dot extrusion vector = " << dotProduct << std::endl;
+
+            if (originalShape->ShapeType() == TopAbs_FACE) {
+                // A standalone face is always extruded into a solid, the boolean operation is irrelevant.
+                newFinalShape = prismShape;
+                std::cout << "Scene: Push/Pull - Standalone face converted to solid." << std::endl;
+
+            } else if (dotProduct >= -1e-6) { // Use tolerance for the parallel (dot=0) case
+                // Extruding outwards from the solid, or parallel to the face -> Add material
+                std::cout << "Scene: Push/Pull - Detected outward extrusion. Using Fuse operation." << std::endl;
+                BRepAlgoAPI_Fuse fuseAlgo(*originalShape, prismShape);
+                if (!fuseAlgo.IsDone()) {
+                    std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl;
+                    AnalyzeShape(fuseAlgo.Shape(), "FUSE FAILED SHAPE");
+                    return false;
+                }
+                newFinalShape = fuseAlgo.Shape();
+                if (fuseAlgo.HasErrors()) { std::cerr << "OCCT Warning: Fuse operation has errors." << std::endl; }
+                if (fuseAlgo.HasWarnings()) { std::cout << "OCCT Info: Fuse operation has warnings." << std::endl; }
+
+            } else { // dotProduct < 0
+                // Extruding inwards into the solid -> Remove material
+                std::cout << "Scene: Push/Pull - Detected inward extrusion. Using Cut operation." << std::endl;
+                BRepAlgoAPI_Cut cutAlgo(*originalShape, prismShape);
+                if (!cutAlgo.IsDone()) {
+                    std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl;
+                    AnalyzeShape(cutAlgo.Shape(), "CUT FAILED SHAPE");
+                    return false;
+                }
+                newFinalShape = cutAlgo.Shape();
+                if (cutAlgo.HasErrors()) { std::cerr << "OCCT Warning: Cut operation has errors." << std::endl; }
+                if (cutAlgo.HasWarnings()) { std::cout << "OCCT Info: Cut operation has warnings." << std::endl; }
+            }
             
-            // Check if result is empty or null
+            // --- VALIDATION AND UPDATE ---
+            AnalyzeShape(newFinalShape, "FINAL RESULT (Before Healing)");
+            
             if (newFinalShape.IsNull()) {
-                std::cerr << "OCCT Error: Result shape is null!" << std::endl;
+                std::cerr << "OCCT Error: Resulting shape is null after boolean operation!" << std::endl;
                 return false;
             }
             
-            // Check result shape type
-            std::cout << "DEBUG: Result shape type: " << newFinalShape.ShapeType() << std::endl;
-            
-            // Analyze final result shape
-            AnalyzeShape(newFinalShape, "FINAL RESULT");
-            
-            // Step 4: Validate the result
             BRepCheck_Analyzer analyzer(newFinalShape);
             if (!analyzer.IsValid()) {
-                std::cerr << "OCCT Warning: Result shape is not valid - may cause display issues." << std::endl;
-                
-                // Try to heal the shape
+                std::cerr << "OCCT Warning: Result shape is not valid. Attempting to heal..." << std::endl;
                 try {
-                    ShapeFix_Shape shapeFixer;
-                    shapeFixer.Init(newFinalShape);
+                    ShapeFix_Shape shapeFixer(newFinalShape);
                     shapeFixer.Perform();
                     TopoDS_Shape healedShape = shapeFixer.Shape();
                     
@@ -593,8 +563,9 @@ namespace Urbaxio::Engine {
                     if (healedAnalyzer.IsValid()) {
                         std::cout << "DEBUG: Shape healing successful." << std::endl;
                         newFinalShape = healedShape;
+                        AnalyzeShape(newFinalShape, "FINAL RESULT (After Healing)");
                     } else {
-                        std::cout << "DEBUG: Shape healing failed, using original result." << std::endl;
+                        std::cout << "DEBUG: Shape healing failed, using original (invalid) result." << std::endl;
                     }
                 } catch (const Standard_Failure& e) {
                     std::cout << "DEBUG: Shape healing threw exception: " << e.GetMessageString() << std::endl;
@@ -603,12 +574,11 @@ namespace Urbaxio::Engine {
                 std::cout << "DEBUG: Result shape is valid." << std::endl;
             }
             
-            // Step 4: Update the object
             obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(newFinalShape)));
             obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(newFinalShape));
-            obj->vao = 0; 
+            obj->vao = 0; // Mark for re-upload to GPU
             
-            std::cout << "Scene: Push/Pull successful. Object " << objectId << " updated with distance " << distance << " in direction (" << direction.x << ", " << direction.y << ", " << direction.z << ")" << std::endl;
+            std::cout << "Scene: Push/Pull successful. Object " << objectId << " updated." << std::endl;
 
         } catch (const Standard_Failure& e) {
             std::cerr << "OCCT Exception during ExtrudeFace: " << e.GetMessageString() << std::endl;

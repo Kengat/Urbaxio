@@ -183,20 +183,38 @@ namespace Urbaxio {
                                 pushPull_objId = hoveredObjId;
                                 pushPull_faceIndices = hoveredFaceTriangleIndices;
                                 Urbaxio::Engine::SceneObject* obj = scene->get_object_by_id(pushPull_objId);
-                                const auto& mesh = obj->get_mesh_buffers();
-                                unsigned int firstTriFirstVertIdx = mesh.indices[pushPull_faceIndices[0]];
-                                pushPull_faceNormal = glm::normalize(glm::vec3(mesh.normals[firstTriFirstVertIdx*3], mesh.normals[firstTriFirstVertIdx*3+1], mesh.normals[firstTriFirstVertIdx*3+2]));
                                 
+                                // More robust normal calculation
+                                const auto& mesh = obj->get_mesh_buffers();
+                                std::set<unsigned int> uniqueVertIndices;
+                                for (size_t baseIdx : pushPull_faceIndices) {
+                                    uniqueVertIndices.insert(mesh.indices[baseIdx]);
+                                    uniqueVertIndices.insert(mesh.indices[baseIdx + 1]);
+                                    uniqueVertIndices.insert(mesh.indices[baseIdx + 2]);
+                                }
+                                glm::vec3 averagedNormal(0.0f);
+                                for (unsigned int vIdx : uniqueVertIndices) {
+                                    averagedNormal.x += mesh.normals[vIdx * 3];
+                                    averagedNormal.y += mesh.normals[vIdx * 3 + 1];
+                                    averagedNormal.z += mesh.normals[vIdx * 3 + 2];
+                                }
+                                if (glm::length2(averagedNormal) > 1e-9f) {
+                                    pushPull_faceNormal = glm::normalize(averagedNormal);
+                                } else { // Fallback for safety
+                                    unsigned int firstTriFirstVertIdx = mesh.indices[pushPull_faceIndices[0]];
+                                    pushPull_faceNormal = glm::normalize(glm::vec3(mesh.normals[firstTriFirstVertIdx*3], mesh.normals[firstTriFirstVertIdx*3+1], mesh.normals[firstTriFirstVertIdx*3+2]));
+                                }
+
                                 glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
                                 float closestHitDist;
-                                glm::intersectRayPlane(rayOrigin, rayDir, glm::vec3(mesh.vertices[firstTriFirstVertIdx*3], mesh.vertices[firstTriFirstVertIdx*3+1], mesh.vertices[firstTriFirstVertIdx*3+2]), pushPull_faceNormal, closestHitDist);
+                                glm::intersectRayPlane(rayOrigin, rayDir, glm::vec3(mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+1], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+2]), pushPull_faceNormal, closestHitDist);
                                 pushPull_startPoint = rayOrigin + rayDir * closestHitDist;
                                 pushPullCurrentDistance = 0.0f;
                                 SDL_GetMouseState(&pushPull_startMouseX, &pushPull_startMouseY);
 
                                 selectedObjId = 0; selectedTriangleIndices.clear();
                                 lineLengthInputBuf[0] = '\0';
-                                std::cout << "DEBUG: Push/Pull operation started on Obj " << pushPull_objId << ", Normal (" << pushPull_faceNormal.x << ", " << pushPull_faceNormal.y << ", " << pushPull_faceNormal.z << ")" << std::endl;
+                                std::cout << "DEBUG: Push/Pull operation started on Obj " << pushPull_objId << ", Averaged Normal (" << pushPull_faceNormal.x << ", " << pushPull_faceNormal.y << ", " << pushPull_faceNormal.z << ")" << std::endl;
                             }
                         }
                     }

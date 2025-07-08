@@ -54,26 +54,26 @@ cmake/: Вспомогательные скрипты CMake.
 Shift+ЛКМ для добавления/удаления линии из множественного выбора.
 Выбранные линии подсвечиваются оранжевым цветом.
 Рефакторинг: Логика камеры, ввода, рендеринга, привязок вынесена в классы.
-План и Ближайшие Действия:
 Вдохновение: Blender, SketchUp, Dreams (PS4).
-Текущий фокус: Завершение системы моделирования на основе линий и граней, улучшение взаимодействия.
-Ближайшее действие: Реализация инструмента Push/Pull (Выдавливание/Вдавливание).
-Для этого сначала нужно доработать систему выбора, чтобы можно было выбирать грани (faces), а не только линии или объекты целиком.
-Дальнейшие шаги (Вероятно):
-Улучшение выбора:
-Выбор граней (Ray Casting -> определение, какой SceneObject (грань) и какой ее треугольник пересечен).
-Подсветка выбранной грани.
-Реализация Push/Pull:
-После выбора грани, по движению мыши (или вводу значения) смещать эту грань вдоль ее нормали.
-Использовать OpenCASCADE (BRepPrimAPI_MakePrism или аналогичные) для создания боковых граней и формирования объемного тела. Обновлять B-Rep модель объекта.
-Улучшение автоматического создания граней:
-Более надежный алгоритм поиска всех минимальных циклов (вместо текущего простого DFS).
-Обработка случаев, когда новая линия делит существующую грань.
-Поддержка создания граней с отверстиями.
-Улучшение системы привязок (дополнительно):
-Привязка к пересечениям линий/ребер.
-Блокировка осей клавишами-стрелками (как в SketchUp).
-(Позже) Улучшить рендеринг (тени, PBR?), управление объектами (трансформации, группировка), более сложная работа с историей команд/отменой.
+Текущий Этап - Push/Pull Диагностика и Стабилизация:
+СТАТУС: Push/Pull частично работает (Некоторые операции работают правильно, некоторые - нет. Будто рандомно). 
+Создана стабильная версия с диагностической системой для сохранения.
+
+Что реализовано в текущей версии:
+ Базовая функциональность Push/Pull с выбором граней и интерактивным preview
+
+Проблема: Непоследовательность результатов Push/Pull операций
+- Иногда операции не дают видимого эффекта (возможно, нулевой объём результата)
+- Иногда создают неожиданную геометрию (например, разделение на части вместо изменения размера)
+
+Следующий Этап - Анализ и Устранение Проблем Push/Pull
+
+Дальнейшие Направления Развития:
+- Улучшение автоматического создания граней (более надежный поиск циклов)
+- Расширение системы привязок (пересечения, блокировка осей)
+- Улучшение UI/UX взаимодействия
+- Система отмены/повтора операций
+- Более продвинутый рендеринг
 
 --- AI INSTRUCTIONS ---
 
@@ -167,7 +167,8 @@ message(STATUS "Manually set OpenCASCADE include dir: ${OpenCASCADE_INCLUDE_DIR}
 # 3. Create a list of the full paths to the required OCCT library files
 set(OCCT_LIB_DIR_RELEASE "${VCPKG_INSTALLED_DIR}/lib")
 set(OCCT_LIB_DIR_DEBUG "${VCPKG_INSTALLED_DIR}/debug/lib")
-set(OCCT_MODULES TKernel TKMath TKPrim TKBRep TKTopAlgo TKG2d TKG3d TKMesh)
+# ADDED TKBO (for BRepAlgoAPI_Fuse), TKService (for BRepCheck_Analyzer) and TKShHealing (for ShapeFix_Shape)
+set(OCCT_MODULES TKernel TKMath TKPrim TKBRep TKTopAlgo TKG2d TKG3d TKMesh TKBO TKService TKShHealing)
 set(OpenCASCADE_LIBRARIES "") # Initialize an empty list
 foreach(module ${OCCT_MODULES})
     # Add both the release and debug versions of the library using generator expressions
@@ -651,6 +652,8 @@ ENCODINGUTF8#ifndef URBAXIO_SCENE_H
 
 // Forward declare OCCT types to avoid including heavy headers here
 class gp_Pln;
+class TopoDS_Shape;
+class TopoDS_Face;
 
 namespace Urbaxio::Engine { class SceneObject; }
 
@@ -690,6 +693,9 @@ namespace Urbaxio::Engine {
         const std::vector<std::pair<glm::vec3, glm::vec3>>& GetLineSegments() const;
         void ClearUserLines();
 
+        // --- Geometry Modification ---
+        bool ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance);
+
     private:
         std::unordered_map<uint64_t, std::unique_ptr<SceneObject>> objects_;
         uint64_t next_object_id_ = 1;
@@ -704,17 +710,21 @@ namespace Urbaxio::Engine {
         // --- Face Creation Logic ---
         void FindAndCreateFaces(size_t newSegmentIndex);
         bool PerformDFS(
-            const glm::vec3& startNode,         // The ultimate start of the entire path (e.g., pA of the new line)
-            const glm::vec3& currentNode,       // Current vertex in DFS
-            const glm::vec3& targetNode,        // The node we are trying to reach (e.g., pA of the new line)
-            std::vector<glm::vec3>& currentPathVertices, // Vertices in the current path (excluding startNode initially)
-            std::vector<size_t>& currentPathSegmentIndices, // Indices of segments in the path
-            std::set<size_t>& visitedSegmentsDFS, // Segments visited in *this specific DFS call*
-            size_t originatingSegmentIndex,     // Index of the new segment that triggered this DFS
-            int& recursionDepth                 // To prevent infinite loops in complex graphs
+            const glm::vec3& startNode,
+            const glm::vec3& currentNode,
+            const glm::vec3& targetNode,
+            std::vector<glm::vec3>& currentPathVertices,
+            std::vector<size_t>& currentPathSegmentIndices,
+            std::set<size_t>& visitedSegmentsDFS,
+            size_t originatingSegmentIndex,
+            int& recursionDepth
         );
         bool ArePointsCoplanar(const std::vector<glm::vec3>& points, gp_Pln& outPlane);
         void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
+        
+        // --- Push/Pull Helpers ---
+        TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal);
+        void AnalyzeShape(const TopoDS_Shape& shape, const std::string& label);
     };
 
 }
@@ -855,21 +865,37 @@ ENCODINGUTF8#define GLM_ENABLE_EXPERIMENTAL
 
 #include <glm/gtx/norm.hpp>
 #include <glm/common.hpp> // For epsilonEqual
+#include <glm/gtx/intersect.hpp> // For glm::intersectRayPlane
 
-// OCCT Includes for face creation
+// OCCT Includes for face creation & modification
 #include <gp_Pnt.hxx>
 #include <gp_Vec.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pln.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Wire.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopExp_Explorer.hxx>
+#include <BRep_Tool.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepLProp_SLProps.hxx> // For getting face properties like normal
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
-#include <Standard_Failure.hxx> // For try-catch with OCCT
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Cut.hxx> // For subtraction
+#include <BRepCheck_Analyzer.hxx>
+#include <ShapeFix_Shape.hxx>
+#include <TopTools_ListOfShape.hxx>
+#include <Standard_Failure.hxx>
+#include <Bnd_Box.hxx>
+#include <BRepBndLib.hxx>
+#include <GProp_GProps.hxx>
+#include <BRepGProp.hxx>
 
 namespace Urbaxio::Engine {
 
@@ -907,13 +933,11 @@ namespace Urbaxio::Engine {
         glm::vec3 canonicalEnd = MergeVertex(end, foundExistingEnd);
 
         if (AreVec3Equal(canonicalStart, canonicalEnd)) {
-            // std::cout << "Scene: Degenerate line ignored (points too close after merging)." << std::endl;
             return;
         }
         for(const auto& segment : lineSegments_) {
             if ((AreVec3Equal(segment.first, canonicalStart) && AreVec3Equal(segment.second, canonicalEnd)) ||
                 (AreVec3Equal(segment.first, canonicalEnd) && AreVec3Equal(segment.second, canonicalStart))) {
-                // std::cout << "Scene: Duplicate line segment ignored." << std::endl;
                 return;
             }
         }
@@ -925,7 +949,6 @@ namespace Urbaxio::Engine {
         vertexAdjacency_[canonicalStart].push_back(newSegmentIndex);
         vertexAdjacency_[canonicalEnd].push_back(newSegmentIndex);
         
-        // std::cout << "Scene: Added line segment " << newSegmentIndex << std::endl;
         FindAndCreateFaces(newSegmentIndex);
     }
 
@@ -955,7 +978,7 @@ namespace Urbaxio::Engine {
                 break;
             }
         }
-        if (!foundP1) { /*std::cout << "CoplanarCheck: All points coincident with p0." << std::endl;*/ return false; }
+        if (!foundP1) { return false; }
 
         for (size_t i = 1; i < points.size(); ++i) {
             if (!AreVec3Equal(points[i], p0_glm) && !AreVec3Equal(points[i], p1_glm)) {
@@ -968,7 +991,7 @@ namespace Urbaxio::Engine {
                 }
             }
         }
-        if (!foundP2) { /*std::cout << "CoplanarCheck: All points collinear." << std::endl;*/ return false; }
+        if (!foundP2) { return false; }
 
         try {
             gp_Pnt occt_p0(p0_glm.x, p0_glm.y, p0_glm.z);
@@ -976,19 +999,13 @@ namespace Urbaxio::Engine {
             gp_Vec v2_occt(p2_glm.x - p0_glm.x, p2_glm.y - p0_glm.y, p2_glm.z - p0_glm.z);
             
             gp_Vec normal_vec = v1_occt.Crossed(v2_occt);
-            if (normal_vec.Magnitude() < gp::Resolution()) { // Check if normal vector is (close to) zero
-                // std::cout << "CoplanarCheck: Degenerate normal vector from cross product." << std::endl;
-                return false; 
-            }
-            gp_Dir occt_normal_dir(normal_vec); // This will normalize
+            if (normal_vec.Magnitude() < gp::Resolution()) { return false; }
+            gp_Dir occt_normal_dir(normal_vec);
             outPlane = gp_Pln(occt_p0, occt_normal_dir);
 
             for (const auto& pt_glm : points) {
                 gp_Pnt pt_check(pt_glm.x, pt_glm.y, pt_glm.z);
-                if (outPlane.Distance(pt_check) > COPLANARITY_TOLERANCE_SCENE) {
-                    // std::cout << "CoplanarCheck: Point deviates from plane. Dist: " << outPlane.Distance(pt_check) << std::endl;
-                    return false;
-                }
+                if (outPlane.Distance(pt_check) > COPLANARITY_TOLERANCE_SCENE) { return false; }
             }
         } catch (const Standard_Failure& e) {
             std::cerr << "OCCT Exception during plane creation/check: " << e.GetMessageString() << std::endl;
@@ -998,74 +1015,45 @@ namespace Urbaxio::Engine {
     }
 
 
-    bool Scene::PerformDFS(
-        const glm::vec3& pathStartNode, // The very first node of the cycle we are building (e.g. pA of new line)
-        const glm::vec3& currentNode,   // Current vertex in DFS traversal
-        const glm::vec3& ultimateTargetNode, // The node we are trying to reach to close the cycle (pA)
-        std::vector<glm::vec3>& currentPathVertices, // Path so far *excluding* pathStartNode
-        std::vector<size_t>& currentPathSegmentIndices,
-        std::set<size_t>& visitedSegmentsDFS, // Segments visited in *this specific DFS call*
-        size_t originatingSegmentIndex,
-        int& recursionDepth
-    ) {
-        if (recursionDepth++ > MAX_DFS_DEPTH) {
-             std::cerr << "DFS max recursion depth reached, aborting path search." << std::endl;
-             recursionDepth--;
-             return false;
-        }
+    bool Scene::PerformDFS(const glm::vec3& pathStartNode, const glm::vec3& currentNode, const glm::vec3& ultimateTargetNode, std::vector<glm::vec3>& currentPathVertices, std::vector<size_t>& currentPathSegmentIndices, std::set<size_t>& visitedSegmentsDFS, size_t originatingSegmentIndex, int& recursionDepth) {
+        if (recursionDepth++ > MAX_DFS_DEPTH) { recursionDepth--; return false; }
 
-        // Check if we've reached the ultimate target (pathStartNode)
         if (AreVec3Equal(currentNode, ultimateTargetNode)) {
-            if (currentPathVertices.size() >= 2) { // Need at least 3 segments in total (new one + 2 from DFS)
-                 recursionDepth--;
-                 return true; // Cycle found!
-            }
+            if (currentPathVertices.size() >= 2) { recursionDepth--; return true; }
         }
 
         auto it = vertexAdjacency_.find(currentNode);
-        if (it == vertexAdjacency_.end()) {
-            recursionDepth--;
-            return false; // Should not happen if graph is consistent
-        }
+        if (it == vertexAdjacency_.end()) { recursionDepth--; return false; }
 
         const std::vector<size_t>& incidentSegments = it->second;
 
-        // TODO: Implement "left-turn" logic here for sorting incidentSegments based on angle in the plane
-        // For now, just iterate in stored order.
-
         for (size_t segmentIdx : incidentSegments) {
             if (segmentIdx == originatingSegmentIndex || segmentUsedInFace_[segmentIdx] || visitedSegmentsDFS.count(segmentIdx)) {
-                continue; // Skip the new line itself, already used segments, or segments in current DFS path
+                continue;
             }
 
             const auto& segment = lineSegments_[segmentIdx];
             glm::vec3 nextNode = AreVec3Equal(segment.first, currentNode) ? segment.second : segment.first;
 
-            // Tentatively add to path
             currentPathVertices.push_back(nextNode);
             currentPathSegmentIndices.push_back(segmentIdx);
             visitedSegmentsDFS.insert(segmentIdx);
 
-            // Check coplanarity on the fly (only if we have enough points to define a plane)
             bool coplanarCheck = true;
-            if (currentPathVertices.size() >= 2) { // currentPathVertices + pathStartNode make up the points for the plane
+            if (currentPathVertices.size() >= 2) {
                 std::vector<glm::vec3> planePoints = {pathStartNode};
                 planePoints.insert(planePoints.end(), currentPathVertices.begin(), currentPathVertices.end());
-                gp_Pln tempPlane; // Not used beyond check here
-                if (!ArePointsCoplanar(planePoints, tempPlane)) {
-                    coplanarCheck = false;
-                }
+                gp_Pln tempPlane;
+                if (!ArePointsCoplanar(planePoints, tempPlane)) { coplanarCheck = false; }
             }
-
 
             if (coplanarCheck) {
                 if (PerformDFS(pathStartNode, nextNode, ultimateTargetNode, currentPathVertices, currentPathSegmentIndices, visitedSegmentsDFS, originatingSegmentIndex, recursionDepth)) {
                     recursionDepth--;
-                    return true; // Propagate success
+                    return true;
                 }
             }
-
-            // Backtrack
+            
             visitedSegmentsDFS.erase(segmentIdx);
             currentPathSegmentIndices.pop_back();
             currentPathVertices.pop_back();
@@ -1083,20 +1071,15 @@ namespace Urbaxio::Engine {
             for (size_t i = 0; i < orderedVertices.size(); ++i) {
                 gp_Pnt p1_occt(orderedVertices[i].x, orderedVertices[i].y, orderedVertices[i].z);
                 gp_Pnt p2_occt(orderedVertices[(i + 1) % orderedVertices.size()].x, orderedVertices[(i + 1) % orderedVertices.size()].y, orderedVertices[(i + 1) % orderedVertices.size()].z);
+                if (p1_occt.IsEqual(p2_occt, SCENE_POINT_EQUALITY_TOLERANCE)) continue;
                 TopoDS_Vertex v1 = BRepBuilderAPI_MakeVertex(p1_occt);
                 TopoDS_Vertex v2 = BRepBuilderAPI_MakeVertex(p2_occt);
                 TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(v1, v2);
-                if (edge.IsNull()) {
-                    std::cerr << "OCCT Error: Failed to create edge for face." << std::endl;
-                    return;
-                }
+                if (edge.IsNull()) { std::cerr << "OCCT Error: Failed to create edge for face." << std::endl; return; }
                 edges.push_back(edge);
             }
             for(const auto& edge : edges) wireMaker.Add(edge);
-        } catch (const Standard_Failure& e) {
-            std::cerr << "OCCT Exception during edge/vertex creation for face: " << e.GetMessageString() << std::endl;
-            return;
-        }
+        } catch (const Standard_Failure& e) { std::cerr << "OCCT Exception during edge/vertex creation for face: " << e.GetMessageString() << std::endl; return; }
 
         if (wireMaker.IsDone() && !wireMaker.Wire().IsNull()) {
             TopoDS_Wire wire = wireMaker.Wire();
@@ -1111,99 +1094,382 @@ namespace Urbaxio::Engine {
                     Urbaxio::CadKernel::MeshBuffers mesh_data = Urbaxio::CadKernel::TriangulateShape(face);
                     if (!mesh_data.isEmpty()) {
                         new_face_obj->set_mesh_buffers(std::move(mesh_data));
-                        // GPU Upload will be handled by the Shell's main loop
                         std::cout << "Scene: Auto-created Face object: " << face_name << ". Mesh ready for GPU." << std::endl;
-                    } else {
-                        std::cerr << "Scene: Triangulation failed for auto-face " << new_face_obj->get_id() << std::endl;
-                    }
+                    } else { std::cerr << "Scene: Triangulation failed for auto-face " << new_face_obj->get_id() << std::endl; }
                 }
-            } else {
-                std::cerr << "OCCT Error: Failed to create face from wire. Error: " << faceMaker.Error() << std::endl;
-            }
-        } else {
-            std::cerr << "OCCT Error: Failed to create wire for face. Error: " << wireMaker.Error() << std::endl;
-        }
+            } else { std::cerr << "OCCT Error: Failed to create face from wire. Error: " << faceMaker.Error() << std::endl; }
+        } else { std::cerr << "OCCT Error: Failed to create wire for face. Error: " << wireMaker.Error() << std::endl; }
     }
 
 
     void Scene::FindAndCreateFaces(size_t newSegmentIndex) {
-        // std::cout << "DEBUG: Scene::FindAndCreateFaces called for new segment index " << newSegmentIndex << std::endl;
-        if (newSegmentIndex >= lineSegments_.size() || segmentUsedInFace_[newSegmentIndex]) {
-            return; // Segment invalid or already part of a face
-        }
-
+        if (newSegmentIndex >= lineSegments_.size() || segmentUsedInFace_[newSegmentIndex]) return;
         const auto& newSeg = lineSegments_[newSegmentIndex];
-        const glm::vec3& pA = newSeg.first;  // Start of the new segment
-        const glm::vec3& pB = newSeg.second; // End of the new segment
-
-        // Try to find a cycle starting from pB and ending at pA (using other lines)
-        std::vector<glm::vec3> pathVerticesCollector; // Will store [v1, v2, ..., pA] if path found
+        const glm::vec3& pA = newSeg.first;
+        const glm::vec3& pB = newSeg.second;
+        std::vector<glm::vec3> pathVerticesCollector;
         std::vector<size_t> pathSegmentIndicesCollector;
         std::set<size_t> visitedSegmentsInCurrentDFS;
-        visitedSegmentsInCurrentDFS.insert(newSegmentIndex); // Don't traverse the new segment back immediately
+        visitedSegmentsInCurrentDFS.insert(newSegmentIndex);
         int recursionDepth = 0;
 
-        // We start DFS from pB, trying to reach pA. pathStartNode for coplanarity is pA.
         if (PerformDFS(pA, pB, pA, pathVerticesCollector, pathSegmentIndicesCollector, visitedSegmentsInCurrentDFS, newSegmentIndex, recursionDepth)) {
-            // pathVerticesCollector should be [neighbor_of_pB, ..., pA]
-            
             std::vector<glm::vec3> finalOrderedVertices;
-            finalOrderedVertices.push_back(pA); // Start of the new segment that triggered face finding
-            finalOrderedVertices.push_back(pB); // End of the new segment
-
-            // Add vertices from the DFS path, excluding the last one if it's pA (which it should be)
-            // because pA is already the start of our finalOrderedVertices.
+            finalOrderedVertices.push_back(pA);
+            finalOrderedVertices.push_back(pB);
             if (!pathVerticesCollector.empty()) {
-                for (size_t i = 0; i < pathVerticesCollector.size() -1; ++i) { // Iterate up to N-1
+                for (size_t i = 0; i < pathVerticesCollector.size() - 1; ++i) {
                     finalOrderedVertices.push_back(pathVerticesCollector[i]);
                 }
-                // The last element pathVerticesCollector.back() should be pA.
-                // If it's not, then the DFS didn't correctly close the loop to pA.
-                if (!AreVec3Equal(pathVerticesCollector.back(), pA)) {
-                    std::cout << "DEBUG ERROR: DFS path did not end at the start node pA!" << std::endl;
-                    return; // Abort face creation
-                }
-            } else {
-                // This means newSegment (pA, pB) was closed by a direct segment (pB, pA)
-                // which should have been caught by duplicate segment check earlier if already existing.
-                // Or, if pathVerticesCollector is empty, it means pB is directly connected to pA by ONE other segment.
-                // DFS(pA, pB, pA, path, ...) -> path would contain just [pA] if pB connected to pA via one segment.
-                // In this case, finalOrderedVertices = [pA, pB] and we need one more point.
-                // This logic needs refinement if pathVerticesCollector can be empty on success.
-                // For now, assume pathVerticesCollector has at least pA if successful.
-                 std::cout << "DEBUG: DFS returned success with an empty path collector (should contain at least target)." << std::endl;
-                 return;
-            }
-
-
-            std::cout << "DEBUG: DFS found a cycle. Final ordered vertices for OCCT: " << finalOrderedVertices.size() << std::endl;
-            for(size_t i=0; i < finalOrderedVertices.size(); ++i) {
-                std::cout << "  finalCycleVert[" << i << "]: (" << finalOrderedVertices[i].x << ", " << finalOrderedVertices[i].y << ", " << finalOrderedVertices[i].z << ")" << std::endl;
-            }
-
-            if (finalOrderedVertices.size() < 3) {
-                std::cout << "DEBUG: Cycle has less than 3 distinct vertices for OCCT wire. Size: " << finalOrderedVertices.size() << std::endl;
-                return;
-            }
+                if (!AreVec3Equal(pathVerticesCollector.back(), pA)) { return; }
+            } else { return; }
+            if (finalOrderedVertices.size() < 3) return;
 
             gp_Pln cyclePlane;
             if (ArePointsCoplanar(finalOrderedVertices, cyclePlane)) {
-                std::cout << "DEBUG: Cycle is coplanar. Creating face." << std::endl;
-                CreateOCCTFace(finalOrderedVertices, cyclePlane); // Pass finalOrderedVertices
-
+                CreateOCCTFace(finalOrderedVertices, cyclePlane);
                 segmentUsedInFace_[newSegmentIndex] = true;
                 for (size_t segIdx : pathSegmentIndicesCollector) {
                     segmentUsedInFace_[segIdx] = true;
                 }
-            } else {
-                std::cout << "DEBUG: Cycle found by DFS is not coplanar." << std::endl;
             }
-        } else {
-            // std::cout << "DEBUG: DFS did not find a cycle for new segment " << newSegmentIndex << std::endl;
         }
     }
 
-} // namespace Urbaxio::Engine
+    // --- Push/Pull Implementation ---
+
+    TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal) {
+        if (faceVertices.empty()) return TopoDS_Face();
+        
+        std::cout << "DEBUG: FindOriginalFace - Shape type: " << shape.ShapeType() << ", Target normal: (" << faceNormal.x << ", " << faceNormal.y << ", " << faceNormal.z << ")" << std::endl;
+        
+        // Calculate center of selected face vertices for proximity scoring
+        glm::vec3 selectedFaceCenter(0.0f);
+        for (const auto& v : faceVertices) {
+            selectedFaceCenter += v;
+        }
+        selectedFaceCenter /= float(faceVertices.size());
+        std::cout << "DEBUG: Selected face center: (" << selectedFaceCenter.x << ", " << selectedFaceCenter.y << ", " << selectedFaceCenter.z << ")" << std::endl;
+        
+        gp_Dir targetNormal(faceNormal.x, faceNormal.y, faceNormal.z);
+        
+        struct FaceCandidate {
+            TopoDS_Face face;
+            float score;
+            int matchingVertices;
+            bool normalMatches;
+            float centerDistance;
+        };
+        
+        std::vector<FaceCandidate> candidates;
+
+        TopExp_Explorer faceExplorer(shape, TopAbs_FACE);
+        int face_count = 0;
+        for (; faceExplorer.More(); faceExplorer.Next()) {
+            face_count++;
+            TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
+            
+            try {
+                BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_False);
+                
+                // 1. Check Normal
+                gp_Pln plane = surfaceAdaptor.Plane();
+                gp_Dir occtNormal = plane.Axis().Direction();
+                if (candidateFace.Orientation() == TopAbs_REVERSED) {
+                    occtNormal.Reverse();
+                }
+                
+                bool normalMatches = occtNormal.IsParallel(targetNormal, 0.3);
+                
+                // 2. Count matching vertices
+                TopExp_Explorer vertexExplorer(candidateFace, TopAbs_VERTEX);
+                int matchingVertices = 0;
+                glm::vec3 faceCenterSum(0.0f);
+                int vertexCount = 0;
+                
+                while (vertexExplorer.More()) {
+                    gp_Pnt occt_p = BRep_Tool::Pnt(TopoDS::Vertex(vertexExplorer.Current()));
+                    glm::vec3 candidateVertex(occt_p.X(), occt_p.Y(), occt_p.Z());
+                    faceCenterSum += candidateVertex;
+                    vertexCount++;
+                    
+                    for(const auto& v : faceVertices) {
+                        if (occt_p.IsEqual(gp_Pnt(v.x, v.y, v.z), SCENE_POINT_EQUALITY_TOLERANCE)) {
+                            matchingVertices++;
+                            break;
+                        }
+                    }
+                    vertexExplorer.Next();
+                }
+                
+                // 3. Calculate face center and distance to selected center
+                glm::vec3 candidateFaceCenter = (vertexCount > 0) ? faceCenterSum / float(vertexCount) : glm::vec3(0.0f);
+                float centerDistance = glm::distance(selectedFaceCenter, candidateFaceCenter);
+                
+                // 4. Calculate composite score
+                float score = 0.0f;
+                if (matchingVertices > 0) {
+                    score += matchingVertices * 100.0f; // High weight for vertex matches
+                    if (normalMatches) score += 50.0f; // Bonus for normal match
+                    score -= centerDistance; // Penalty for distance from selected center
+                }
+                
+                std::cout << "DEBUG: Face " << face_count << " normal: (" << occtNormal.X() << ", " << occtNormal.Y() << ", " << occtNormal.Z() 
+                         << "), vertices: " << matchingVertices << "/" << faceVertices.size() 
+                         << ", center dist: " << centerDistance << ", score: " << score << std::endl;
+                
+                if (matchingVertices > 0) {
+                    candidates.push_back({candidateFace, score, matchingVertices, normalMatches, centerDistance});
+                }
+                
+            } catch (const Standard_Failure& e) {
+                std::cout << "DEBUG: Failed to process face " << face_count << ": " << e.GetMessageString() << std::endl;
+                continue;
+            }
+        }
+        
+        std::cout << "DEBUG: Total faces found: " << face_count << ", Candidates: " << candidates.size() << std::endl;
+        
+        if (candidates.empty()) {
+            std::cout << "DEBUG: No matching faces found!" << std::endl;
+            return TopoDS_Face();
+        }
+        
+        // Sort by score (highest first)
+        std::sort(candidates.begin(), candidates.end(), [](const FaceCandidate& a, const FaceCandidate& b) {
+            return a.score > b.score;
+        });
+        
+        const auto& best = candidates[0];
+        std::cout << "DEBUG: Selected best face with score: " << best.score 
+                  << ", matching vertices: " << best.matchingVertices 
+                  << ", normal match: " << best.normalMatches << std::endl;
+        
+        return best.face;
+    }
+
+    void Scene::AnalyzeShape(const TopoDS_Shape& shape, const std::string& label) {
+        std::cout << "=== SHAPE ANALYSIS: " << label << " ===" << std::endl;
+        
+        // Basic info
+        std::cout << "Shape Type: " << shape.ShapeType() << " (0=Compound, 1=CompSolid, 2=Solid, 3=Shell, 4=Face, 5=Wire, 6=Edge, 7=Vertex)" << std::endl;
+        
+        // Count components
+        TopExp_Explorer solidExp(shape, TopAbs_SOLID);
+        int solidCount = 0;
+        for (; solidExp.More(); solidExp.Next()) solidCount++;
+        
+        TopExp_Explorer faceExp(shape, TopAbs_FACE);
+        int faceCount = 0;
+        for (; faceExp.More(); faceExp.Next()) faceCount++;
+        
+        std::cout << "Contains: " << solidCount << " solids, " << faceCount << " faces" << std::endl;
+        
+        // Bounding box
+        try {
+            Bnd_Box boundingBox;
+            BRepBndLib::Add(shape, boundingBox);
+            if (!boundingBox.IsVoid()) {
+                Standard_Real xmin, ymin, zmin, xmax, ymax, zmax;
+                boundingBox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+                std::cout << "Bounding Box: (" << xmin << ", " << ymin << ", " << zmin << ") to (" 
+                         << xmax << ", " << ymax << ", " << zmax << ")" << std::endl;
+                std::cout << "Dimensions: " << (xmax-xmin) << " x " << (ymax-ymin) << " x " << (zmax-zmin) << std::endl;
+            } else {
+                std::cout << "Bounding Box: VOID" << std::endl;
+            }
+        } catch (const Standard_Failure& e) {
+            std::cout << "Bounding Box: ERROR - " << e.GetMessageString() << std::endl;
+        }
+        
+        // Volume/properties
+        try {
+            GProp_GProps props;
+            BRepGProp::VolumeProperties(shape, props);
+            Standard_Real volume = props.Mass();
+            gp_Pnt center = props.CentreOfMass();
+            std::cout << "Volume: " << volume << std::endl;
+            std::cout << "Center of Mass: (" << center.X() << ", " << center.Y() << ", " << center.Z() << ")" << std::endl;
+        } catch (const Standard_Failure& e) {
+            std::cout << "Volume Properties: ERROR - " << e.GetMessageString() << std::endl;
+        }
+        
+        // Validity
+        try {
+            BRepCheck_Analyzer analyzer(shape);
+            std::cout << "Shape Valid: " << (analyzer.IsValid() ? "YES" : "NO") << std::endl;
+        } catch (const Standard_Failure& e) {
+            std::cout << "Validity Check: ERROR - " << e.GetMessageString() << std::endl;
+        }
+        
+        std::cout << "=== END ANALYSIS ===" << std::endl << std::endl;
+    }
+
+    bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance) {
+        SceneObject* obj = get_object_by_id(objectId);
+        if (!obj || !obj->has_shape() || faceTriangleIndices.empty() || std::abs(distance) < 1e-4) {
+            return false;
+        }
+
+        const auto& mesh = obj->get_mesh_buffers();
+        const TopoDS_Shape* originalShape = obj->get_shape();
+
+        // Analyze original shape
+        AnalyzeShape(*originalShape, "ORIGINAL SHAPE");
+
+        std::set<unsigned int> faceVertexIndicesSet;
+        for (size_t baseIdx : faceTriangleIndices) {
+            faceVertexIndicesSet.insert(mesh.indices[baseIdx]);
+            faceVertexIndicesSet.insert(mesh.indices[baseIdx + 1]);
+            faceVertexIndicesSet.insert(mesh.indices[baseIdx + 2]);
+        }
+        std::vector<glm::vec3> faceVertices;
+        for (unsigned int idx : faceVertexIndicesSet) {
+            faceVertices.push_back({mesh.vertices[idx * 3], mesh.vertices[idx * 3 + 1], mesh.vertices[idx * 3 + 2]});
+        }
+        
+        TopoDS_Face faceToExtrude = FindOriginalFace(*originalShape, faceVertices, direction);
+        if (faceToExtrude.IsNull()) {
+            std::cerr << "ExtrudeFace Error: Could not find corresponding B-Rep face." << std::endl;
+            return false;
+        }
+
+        try {
+            // --- UNIVERSAL Push/Pull Logic: Works for ALL face types ---
+            
+            // Step 1: Create extrusion vector exactly as in preview (direction * distance)
+            gp_Vec extrudeVector(direction.x * distance, direction.y * distance, direction.z * distance);
+            BRepPrimAPI_MakePrism prismMaker(faceToExtrude, extrudeVector);
+            
+            if (!prismMaker.IsDone()) {
+                std::cerr << "OCCT Error: Failed to create prism from face." << std::endl;
+                return false;
+            }
+            
+            TopoDS_Shape prismShape = prismMaker.Shape();
+            TopoDS_Shape newFinalShape;
+            
+            // Analyze prism shape
+            AnalyzeShape(prismShape, "CREATED PRISM");
+            
+            // DEBUG: Analyze prism shape
+            std::cout << "DEBUG: Prism shape type: " << prismShape.ShapeType() << std::endl;
+            TopExp_Explorer prismExplorer(prismShape, TopAbs_SOLID);
+            int prismSolids = 0;
+            for (; prismExplorer.More(); prismExplorer.Next()) prismSolids++;
+            std::cout << "DEBUG: Prism contains " << prismSolids << " solids" << std::endl;
+            
+            // Step 2: Handle different object types consistently
+            if (originalShape->ShapeType() == TopAbs_FACE) {
+                // Standalone face: Always replace with prism (becomes solid)
+                newFinalShape = prismShape;
+                std::cout << "Scene: Push/Pull - Standalone face converted to solid." << std::endl;
+            } else {
+                // DEBUG: Analyze original shape
+                TopExp_Explorer origExplorer(*originalShape, TopAbs_SOLID);
+                int origSolids = 0;
+                for (; origExplorer.More(); origExplorer.Next()) origSolids++;
+                std::cout << "DEBUG: Original shape contains " << origSolids << " solids" << std::endl;
+                
+                // Solid object: Use boolean operations based on distance direction
+                if (distance >= 0) {
+                    // Positive distance: Add material (Fuse)
+                    BRepAlgoAPI_Fuse fuseAlgo(*originalShape, prismShape);
+                    if (!fuseAlgo.IsDone()) {
+                        std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl;
+                        return false;
+                    }
+                    newFinalShape = fuseAlgo.Shape();
+                    std::cout << "Scene: Push/Pull - Added material (Fuse operation)." << std::endl;
+                    
+                    // Check for healing errors
+                    if (fuseAlgo.HasErrors()) {
+                        std::cerr << "OCCT Warning: Fuse operation has errors." << std::endl;
+                    }
+                    if (fuseAlgo.HasWarnings()) {
+                        std::cout << "OCCT Info: Fuse operation has warnings." << std::endl;
+                    }
+                    
+                } else {
+                    // Negative distance: Remove material (Cut)
+                    BRepAlgoAPI_Cut cutAlgo(*originalShape, prismShape);
+                    if (!cutAlgo.IsDone()) {
+                        std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl;
+                        return false;
+                    }
+                    newFinalShape = cutAlgo.Shape();
+                    std::cout << "Scene: Push/Pull - Removed material (Cut operation)." << std::endl;
+                    
+                    // Check for healing errors
+                    if (cutAlgo.HasErrors()) {
+                        std::cerr << "OCCT Warning: Cut operation has errors." << std::endl;
+                    }
+                    if (cutAlgo.HasWarnings()) {
+                        std::cout << "OCCT Info: Cut operation has warnings." << std::endl;
+                    }
+                }
+            }
+
+            // Step 3: Analyze result shape
+            TopExp_Explorer resultExplorer(newFinalShape, TopAbs_SOLID);
+            int resultSolids = 0;
+            for (; resultExplorer.More(); resultExplorer.Next()) resultSolids++;
+            std::cout << "DEBUG: Result shape contains " << resultSolids << " solids" << std::endl;
+            
+            // Check if result is empty or null
+            if (newFinalShape.IsNull()) {
+                std::cerr << "OCCT Error: Result shape is null!" << std::endl;
+                return false;
+            }
+            
+            // Check result shape type
+            std::cout << "DEBUG: Result shape type: " << newFinalShape.ShapeType() << std::endl;
+            
+            // Analyze final result shape
+            AnalyzeShape(newFinalShape, "FINAL RESULT");
+            
+            // Step 4: Validate the result
+            BRepCheck_Analyzer analyzer(newFinalShape);
+            if (!analyzer.IsValid()) {
+                std::cerr << "OCCT Warning: Result shape is not valid - may cause display issues." << std::endl;
+                
+                // Try to heal the shape
+                try {
+                    ShapeFix_Shape shapeFixer;
+                    shapeFixer.Init(newFinalShape);
+                    shapeFixer.Perform();
+                    TopoDS_Shape healedShape = shapeFixer.Shape();
+                    
+                    BRepCheck_Analyzer healedAnalyzer(healedShape);
+                    if (healedAnalyzer.IsValid()) {
+                        std::cout << "DEBUG: Shape healing successful." << std::endl;
+                        newFinalShape = healedShape;
+                    } else {
+                        std::cout << "DEBUG: Shape healing failed, using original result." << std::endl;
+                    }
+                } catch (const Standard_Failure& e) {
+                    std::cout << "DEBUG: Shape healing threw exception: " << e.GetMessageString() << std::endl;
+                }
+            } else {
+                std::cout << "DEBUG: Result shape is valid." << std::endl;
+            }
+            
+            // Step 4: Update the object
+            obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(newFinalShape)));
+            obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(newFinalShape));
+            obj->vao = 0; 
+            
+            std::cout << "Scene: Push/Pull successful. Object " << objectId << " updated with distance " << distance << " in direction (" << direction.x << ", " << direction.y << ", " << direction.z << ")" << std::endl;
+
+        } catch (const Standard_Failure& e) {
+            std::cerr << "OCCT Exception during ExtrudeFace: " << e.GetMessageString() << std::endl;
+            return false;
+        }
+        return true;
+    }
+
+
+} // namespace Urbaxio
 ENCODINGUTF8ENCODINGUTF8--- File: engine/src/scene_object.cpp ---
 ENCODINGUTF8#include "engine/scene_object.h"
 #include <utility>
@@ -1265,6 +1531,14 @@ ENCODINGUTF8ENCODINGUTF8--- File: shell/CMakeLists.txt ---
 ENCODINGUTF8# Set the project name
 project(UrbaxioShell)
 
+# Enable RC language for Windows resources
+if(WIN32)
+    enable_language(RC)
+    set(RESOURCE_FILES "${CMAKE_SOURCE_DIR}/resources/urbaxio.rc")
+else()
+    set(RESOURCE_FILES "")
+endif()
+
 # Define the executable target FIRST
 add_executable(Urbaxio
     main.cpp
@@ -1275,6 +1549,8 @@ add_executable(Urbaxio
     # Add ImGui backend implementation files directly to the compilation
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_sdl2.cpp"
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_opengl3.cpp"
+    # Add Windows resources
+    ${RESOURCE_FILES}
 )
 
 # NOW specify include directories for the defined target "Urbaxio"
@@ -1315,6 +1591,15 @@ add_custom_command(TARGET Urbaxio POST_BUILD
 )
 message(STATUS "Added post-build command to copy OCCT DLLs.")
 
+# --- Resources configuration ---
+if(WIN32 AND RESOURCE_FILES)
+    message(STATUS "Windows resources enabled. Logo will be embedded in executable.")
+    message(STATUS "Resource file: ${RESOURCE_FILES}")
+    # Set working directory for resource compiler to find the ICO file
+    set_property(SOURCE ${RESOURCE_FILES} PROPERTY COMPILE_FLAGS "/I\"${CMAKE_SOURCE_DIR}/resources\"")
+else()
+    message(STATUS "No Windows resources configured.")
+endif()
 
 message(STATUS "Configuring Urbaxio executable...")
 # --- Check found libraries (Corrected multi-line format) ---
@@ -1368,20 +1653,6 @@ ENCODINGUTF8// --- Includes ---
 #include <charconv>
 #include <limits> // Required for numeric_limits 2222
 
-// OCCT Includes for face creation are now primarily in Scene.cpp // <<< COMMENTED OUT/REMOVED UNUSED OCCT INCLUDES
-// #include <gp_Pnt.hxx>
-// #include <TopoDS_Vertex.hxx>
-// #include <TopoDS_Edge.hxx>
-// #include <TopoDS_Wire.hxx>
-// #include <TopoDS_Face.hxx>
-// #include <BRepBuilderAPI_MakeVertex.hxx>
-// #include <BRepBuilderAPI_MakeEdge.hxx>
-// #include <BRepBuilderAPI_MakeWire.hxx>
-// #include <BRepBuilderAPI_MakeFace.hxx>
-// #include <TopExp_Explorer.hxx>
-// #include <gp_Pln.hxx>
-// #include <gp_Ax3.hxx>
-
 
 // --- GPU Mesh Upload Helper ---
 bool UploadMeshToGPU(Urbaxio::Engine::SceneObject& object) { /* ... */ const Urbaxio::CadKernel::MeshBuffers& mesh = object.get_mesh_buffers(); if (mesh.isEmpty() || mesh.normals.empty()) { if (mesh.normals.empty() && !mesh.vertices.empty()) { std::cerr << "UploadMeshToGPU: Mesh for object " << object.get_id() << " is missing normals!" << std::endl; } return false; } if (object.vao != 0) glDeleteVertexArrays(1, &object.vao); if (object.vbo_vertices != 0) glDeleteBuffers(1, &object.vbo_vertices); if (object.vbo_normals != 0) glDeleteBuffers(1, &object.vbo_normals); if (object.ebo != 0) glDeleteBuffers(1, &object.ebo); object.vao = object.vbo_vertices = object.vbo_normals = object.ebo = 0; object.index_count = 0; glGenVertexArrays(1, &object.vao); if (object.vao == 0) return false; glBindVertexArray(object.vao); glGenBuffers(1, &object.vbo_vertices); if (object.vbo_vertices == 0) { glDeleteVertexArrays(1, &object.vao); object.vao = 0; return false; } glBindBuffer(GL_ARRAY_BUFFER, object.vbo_vertices); glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(float), mesh.vertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glGenBuffers(1, &object.vbo_normals); if (object.vbo_normals == 0) { glDeleteBuffers(1, &object.vbo_vertices); glDeleteVertexArrays(1, &object.vao); object.vao = object.vbo_vertices = 0; return false; } glBindBuffer(GL_ARRAY_BUFFER, object.vbo_normals); glBufferData(GL_ARRAY_BUFFER, mesh.normals.size() * sizeof(float), mesh.normals.data(), GL_STATIC_DRAW); glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0); glEnableVertexAttribArray(1); glGenBuffers(1, &object.ebo); if (object.ebo == 0) { glDeleteBuffers(1, &object.vbo_normals); glDeleteBuffers(1, &object.vbo_vertices); glDeleteVertexArrays(1, &object.vao); object.vao = object.vbo_vertices = object.vbo_normals = 0; return false; } glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, object.ebo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(unsigned int), mesh.indices.data(), GL_STATIC_DRAW); object.index_count = static_cast<GLsizei>(mesh.indices.size()); glBindVertexArray(0); glBindBuffer(GL_ARRAY_BUFFER, 0); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0); std::cout << "UploadMeshToGPU: Successfully uploaded mesh for object " << object.get_id() << std::endl; return true; }
@@ -1403,18 +1674,55 @@ int main(int argc, char* argv[]) {
 
     Urbaxio::Renderer renderer; if (!renderer.Initialize()) { return 1; }
     Urbaxio::Camera camera; Urbaxio::InputHandler inputHandler;
-    ImVec4 clear_color = ImVec4(0.18f, 0.18f, 0.22f, 1.00f); int object_counter = 0; glm::vec3 objectColor(0.6f, 0.7f, 0.9f); glm::vec3 lightDirection = glm::normalize(glm::vec3(0.8f, 1.0f, -0.6f)); glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f); float ambientStrength = 0.15f; float gridLineWidth = 2.0f; float axisLineWidth = 4.0f; glm::vec4 splatColor = glm::vec4(1.0f, 0.5f, 0.2f, 0.8f); float splatBlurStrength = 10.0f; bool showGrid = true; bool showAxes = true; float maxLineWidth = renderer.GetMaxLineWidth(); uint64_t selectedObjId = 0; size_t selectedTriangleBaseIndex = 0; std::vector<size_t> selectedLineIndices; glm::vec3 selectionHighlightColor = glm::vec3(0.6f, 0.8f, 1.0f); bool isDrawingLineMode = false; bool isPlacingFirstPoint = false; bool isPlacingSecondPoint = false; glm::vec3 currentLineStartPoint(0.0f); glm::vec3 currentRubberBandEnd(0.0f); Urbaxio::SnapResult currentSnap; char lineLengthInputBuf[64] = ""; float lineLengthValue = 0.0f;
+    ImVec4 clear_color = ImVec4(0.18f, 0.18f, 0.22f, 1.00f); int object_counter = 0; glm::vec3 objectColor(0.6f, 0.7f, 0.9f); glm::vec3 lightDirection = glm::normalize(glm::vec3(0.8f, 1.0f, -0.6f)); glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f); float ambientStrength = 0.15f; float gridLineWidth = 2.0f; float axisLineWidth = 4.0f; glm::vec4 splatColor = glm::vec4(1.0f, 0.5f, 0.2f, 0.8f); float splatBlurStrength = 10.0f; bool showGrid = true; bool showAxes = true; float maxLineWidth = renderer.GetMaxLineWidth();
+    // --- Selection State ---
+    uint64_t selectedObjId = 0;
+    std::vector<size_t> selectedTriangleIndices;
+    std::vector<size_t> selectedLineIndices;
+    glm::vec3 selectionHighlightColor = glm::vec3(0.6f, 0.8f, 1.0f);
+
+    // --- Tool State ---
+    bool isDrawingLineMode = false;
+    bool isPushPullMode = false;
+    bool isPushPullActive = false; // Is a Push/Pull operation currently in progress?
+
+    // --- Push/Pull State ---
+    uint64_t hoveredObjId = 0;
+    std::vector<size_t> hoveredFaceTriangleIndices;
+    glm::vec3 hoverHighlightColor = glm::vec3(0.4f, 0.9f, 1.0f); // Light cyan
+    float pushPullCurrentDistance = 0.0f; // This will be updated by InputHandler
+
+    // --- Drawing State ---
+    bool isPlacingFirstPoint = false;
+    bool isPlacingSecondPoint = false;
+    glm::vec3 currentLineStartPoint(0.0f);
+    glm::vec3 currentRubberBandEnd(0.0f);
+    Urbaxio::SnapResult currentSnap;
+    char lineLengthInputBuf[64] = "";
+    float lineLengthValue = 0.0f;
 
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
     while (!should_quit) {
         int display_w, display_h; SDL_GetWindowSize(window, &display_w, &display_h);
         if (isDrawingLineMode && !isPlacingFirstPoint && !isPlacingSecondPoint) { isPlacingFirstPoint = true; } else if (!isDrawingLineMode && (isPlacingFirstPoint || isPlacingSecondPoint)) { isPlacingFirstPoint = false; isPlacingSecondPoint = false; lineLengthInputBuf[0] = '\0'; lineLengthValue = 0.0f; }
-        inputHandler.ProcessEvents(camera, should_quit, window, display_w, display_h, selectedObjId, selectedTriangleBaseIndex, selectedLineIndices, isDrawingLineMode, isPlacingFirstPoint, isPlacingSecondPoint, currentLineStartPoint, scene_ptr, currentRubberBandEnd, currentSnap, lineLengthInputBuf, lineLengthValue);
+        
+        inputHandler.ProcessEvents(camera, should_quit, window, display_w, display_h, selectedObjId, selectedTriangleIndices, selectedLineIndices, isDrawingLineMode, isPushPullMode, isPushPullActive, hoveredObjId, hoveredFaceTriangleIndices, pushPullCurrentDistance, isPlacingFirstPoint, isPlacingSecondPoint, currentLineStartPoint, scene_ptr, currentRubberBandEnd, currentSnap, lineLengthInputBuf, lineLengthValue);
+        
+        if (isPushPullActive) {
+            Urbaxio::Engine::SceneObject* obj = scene_ptr->get_object_by_id(inputHandler.GetPushPullObjectId());
+            if (obj) {
+                renderer.UpdatePushPullPreview(*obj, inputHandler.GetPushPullFaceIndices(), inputHandler.GetPushPullNormal(), pushPullCurrentDistance);
+            }
+        } else {
+            // Clear preview when not active
+            renderer.UpdatePushPullPreview(Urbaxio::Engine::SceneObject(0, ""), {}, {}, 0.0f);
+        }
+
         static bool wasPlacingSecondPoint = false; if (wasPlacingSecondPoint && !isPlacingSecondPoint) { /* ... */ } wasPlacingSecondPoint = isPlacingSecondPoint;
         if (should_quit) break;
         if (scene_ptr) { renderer.UpdateUserLinesBuffer(scene_ptr->GetLineSegments(), selectedLineIndices); }
 
-        // <<< NEW: GPU Upload for newly created face objects >>>
+        // GPU Upload for newly created face objects
         if (scene_ptr) {
             std::vector<Urbaxio::Engine::SceneObject*> all_objects = scene_ptr->get_all_objects();
             for (Urbaxio::Engine::SceneObject* obj : all_objects) {
@@ -1424,20 +1732,24 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-            renderer.UpdateUserLinesBuffer(scene_ptr->GetLineSegments(), selectedLineIndices);
         }
-        // <<< END NEW GPU Upload >>>
 
         ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplSDL2_NewFrame(); ImGui::NewFrame();
 
-        { /* Urbaxio Controls Window */
+        { // Urbaxio Controls Window
             ImGui::Begin("Urbaxio Controls");
             // ... (FPS, Create Box, Colors, Lighting, View Options, Splat Test, Drawing - same as before) ...
             ImGui::Text("App avg %.3f ms/f (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate); ImGui::Separator(); if (ImGui::Button("Create Box Object")) { object_counter++; std::string box_name = "Box_" + std::to_string(object_counter); Urbaxio::Engine::SceneObject* new_box = scene_ptr->create_box_object(box_name, 10.0, 20.0, 5.0); if (new_box && new_box->has_mesh()) { /* GPU upload handled by main loop now */ } else { if (!new_box) { std::cerr << "Shell: Failed to create SceneObject for '" << box_name << "'." << std::endl; } else { std::cerr << "Shell: Failed to triangulate or mesh is empty for '" << box_name << "'." << std::endl; } } } ImGui::Separator(); ImGui::ColorEdit3("Object Color", (float*)&objectColor); ImGui::ColorEdit3("Background Color", (float*)&clear_color); ImGui::Separator(); ImGui::Text("Lighting:"); ImGui::SliderFloat("Ambient Strength", &ambientStrength, 0.0f, 1.0f); static glm::vec3 lightDirInput = lightDirection; if (ImGui::SliderFloat3("Light Direction", glm::value_ptr(lightDirInput), -1.0f, 1.0f)) { if (glm::length(lightDirInput) > 1e-6f) { lightDirection = glm::normalize(lightDirInput); } } ImGui::ColorEdit3("Light Color", glm::value_ptr(lightColor)); ImGui::Separator(); ImGui::Text("View Options:"); ImGui::Checkbox("Show Grid", &showGrid); ImGui::SameLine(); ImGui::Checkbox("Show Axes", &showAxes); ImGui::SliderFloat("Grid Line Width", &gridLineWidth, 1.0f, maxLineWidth); ImGui::SliderFloat("Axis Line Width", &axisLineWidth, 1.0f, maxLineWidth); ImGui::Separator(); ImGui::Text("Gaussian Splat Test:"); ImGui::ColorEdit4("Splat Color", glm::value_ptr(splatColor), ImGuiColorEditFlags_AlphaBar); ImGui::SliderFloat("Splat Blur Strength", &splatBlurStrength, 1.0f, 50.0f); ImGui::Separator();
-            ImGui::Text("Drawing:"); ImGui::Checkbox("Draw Line Mode", &isDrawingLineMode); if (ImGui::Button("Clear Lines") && scene_ptr) { scene_ptr->ClearUserLines(); renderer.UpdateUserLinesBuffer(scene_ptr->GetLineSegments(), selectedLineIndices); isPlacingFirstPoint = isDrawingLineMode; isPlacingSecondPoint = false; lineLengthInputBuf[0] = '\0'; selectedLineIndices.clear(); }
+            ImGui::Text("Tools:");
+            if (ImGui::Checkbox("Draw Line Mode", &isDrawingLineMode)) {
+                if (isDrawingLineMode) { isPushPullMode = false; isPushPullActive = false; }
+            }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Push/Pull Mode", &isPushPullMode)) {
+                if (isPushPullMode) { isDrawingLineMode = false; } else { isPushPullActive = false; }
+            }
+            if (ImGui::Button("Clear Lines") && scene_ptr) { scene_ptr->ClearUserLines(); renderer.UpdateUserLinesBuffer(scene_ptr->GetLineSegments(), selectedLineIndices); isPlacingFirstPoint = isDrawingLineMode; isPlacingSecondPoint = false; lineLengthInputBuf[0] = '\0'; selectedLineIndices.clear(); }
 
-            // <<< Create Face Button is now for debug or removed >>>
-            // Face creation is attempted automatically in Scene::AddUserLine -> FindAndCreateFaces
             if (!selectedLineIndices.empty()) {
                 if (ImGui::Button("Show Selected Lines (Debug)")) {
                     std::cout << "DEBUG: Currently selected line segment indices: ";
@@ -1447,7 +1759,14 @@ int main(int argc, char* argv[]) {
             }
 
             if (isPlacingSecondPoint) { ImGui::Separator(); ImGui::Text("Length: %s", lineLengthInputBuf); ImGui::Separator(); }
-            ImGui::Text("Scene Info:"); ImGui::Text("Selected Object ID: %llu", selectedObjId); const char* snapTypeName = "None"; if (currentSnap.snapped) { switch (currentSnap.type) { case Urbaxio::SnapType::ENDPOINT: snapTypeName = "Endpoint"; break; case Urbaxio::SnapType::ORIGIN:   snapTypeName = "Origin"; break; case Urbaxio::SnapType::AXIS_X:   snapTypeName = "On Axis X"; break; case Urbaxio::SnapType::AXIS_Y:   snapTypeName = "On Axis Y"; break; case Urbaxio::SnapType::AXIS_Z:   snapTypeName = "On Axis Z"; break; default: snapTypeName = "Unknown"; break; } } ImGui::Text("Current Snap: %s (%.2f, %.2f, %.2f)", snapTypeName, currentSnap.worldPoint.x, currentSnap.worldPoint.y, currentSnap.worldPoint.z);
+            if (isPushPullActive) { ImGui::Separator(); ImGui::Text("Distance: %s", lineLengthInputBuf); ImGui::Separator(); }
+            ImGui::Text("Scene Info:");
+            ImGui::Text("Selected Object ID: %llu", selectedObjId);
+            if (selectedObjId != 0) {
+                 ImGui::Text("Selected Triangles: %zu", selectedTriangleIndices.size());
+            }
+
+            const char* snapTypeName = "None"; if (currentSnap.snapped) { switch (currentSnap.type) { case Urbaxio::SnapType::ENDPOINT: snapTypeName = "Endpoint"; break; case Urbaxio::SnapType::ORIGIN:   snapTypeName = "Origin"; break; case Urbaxio::SnapType::AXIS_X:   snapTypeName = "On Axis X"; break; case Urbaxio::SnapType::AXIS_Y:   snapTypeName = "On Axis Y"; break; case Urbaxio::SnapType::AXIS_Z:   snapTypeName = "On Axis Z"; break; default: snapTypeName = "Unknown"; break; } } ImGui::Text("Current Snap: %s (%.2f, %.2f, %.2f)", snapTypeName, currentSnap.worldPoint.x, currentSnap.worldPoint.y, currentSnap.worldPoint.z);
             ImGui::Text("Scene Objects:"); if (scene_ptr) { std::vector<Urbaxio::Engine::SceneObject*> objects = scene_ptr->get_all_objects(); if (objects.empty()) { ImGui::TextDisabled("(No objects yet)"); } else { ImGui::BeginChild("ObjectList", ImVec2(0, 100), true, ImGuiWindowFlags_HorizontalScrollbar); for (const auto* obj : objects) { if (obj) { ImGui::BulletText("%s (ID:%llu)%s%s%s", obj->get_name().c_str(), obj->get_id(), obj->has_shape() ? " [Geo]" : "", obj->has_mesh() ? " [Mesh]" : "", (obj->vao != 0) ? " [GPU]" : ""); } } ImGui::EndChild(); } } else { ImGui::TextDisabled("(Scene pointer is null)"); }
             ImGui::End();
         }
@@ -1456,7 +1775,7 @@ int main(int argc, char* argv[]) {
         renderer.SetViewport(0, 0, display_w, display_h);
         glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightDirection, lightColor, ambientStrength, showGrid, showAxes, gridLineWidth, axisLineWidth, splatColor, splatBlurStrength, selectedObjId, selectedTriangleBaseIndex, selectedLineIndices, selectionHighlightColor, isPlacingSecondPoint, currentLineStartPoint, currentRubberBandEnd, currentSnap, ImGui::GetDrawData());
+        renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightDirection, lightColor, ambientStrength, showGrid, showAxes, gridLineWidth, axisLineWidth, splatColor, splatBlurStrength, selectedObjId, selectedTriangleIndices, selectedLineIndices, selectionHighlightColor, hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor, isPlacingSecondPoint, currentLineStartPoint, currentRubberBandEnd, currentSnap, ImGui::GetDrawData());
         SDL_GL_SwapWindow(window);
     }
 
@@ -1573,10 +1892,16 @@ namespace Urbaxio {
             int& display_w, int& display_h,
             // Selection state
             uint64_t& selectedObjId,
-            size_t& selectedTriangleBaseIndex,
-            std::vector<size_t>& selectedLineIndices, // <<< NEW: For selected lines
-            // Drawing mode & state (Input/Output)
+            std::vector<size_t>& selectedTriangleIndices,
+            std::vector<size_t>& selectedLineIndices,
+            // Tool state
             bool isDrawingLineMode,
+            bool isPushPullMode,
+            bool& isPushPullActive,
+            uint64_t& hoveredObjId,
+            std::vector<size_t>& hoveredFaceTriangleIndices,
+            float& pushPullCurrentDistance,
+            // Drawing mode & state (Input/Output)
             bool& isPlacingFirstPoint,
             bool& isPlacingSecondPoint,
             glm::vec3& currentLineStartPoint,
@@ -1588,6 +1913,11 @@ namespace Urbaxio {
             char* lineLengthInputBuf,
             float& lineLengthValue
         );
+        
+        // --- Getters for Push/Pull state (needed by main loop for preview) ---
+        uint64_t GetPushPullObjectId() const { return pushPull_objId; }
+        const std::vector<size_t>& GetPushPullFaceIndices() const { return pushPull_faceIndices; }
+        const glm::vec3& GetPushPullNormal() const { return pushPull_faceNormal; }
 
     private:
         // Input states
@@ -1598,6 +1928,19 @@ namespace Urbaxio {
         int lastMouseY;
         bool isMouseFocused;
         bool firstMouse;
+
+        // Double-click detection state
+        uint32_t lastClickTimestamp;
+        uint64_t lastClickedObjId;
+        size_t lastClickedTriangleIndex;
+
+        // Push/Pull internal state
+        uint64_t pushPull_objId;
+        std::vector<size_t> pushPull_faceIndices;
+        glm::vec3 pushPull_faceNormal;
+        glm::vec3 pushPull_startPoint;
+        int pushPull_startMouseX;
+        int pushPull_startMouseY;
 
         // Axis Locking State
         bool isAxisLocked;
@@ -1612,7 +1955,7 @@ namespace Urbaxio {
         void HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h);
         glm::vec3 GetCursorPointInWorld(const Camera& camera, int mouseX, int mouseY, int screenWidth, int screenHeight, const glm::vec3& fallbackPlanePoint);
 
-        // <<< NEW: Helper for line picking >>>
+        // Line picking helper
         bool RayLineSegmentIntersection(
             const glm::vec3& rayOrigin, const glm::vec3& rayDir,
             const glm::vec3& p1, const glm::vec3& p2, // Segment endpoints
@@ -1652,14 +1995,21 @@ namespace Urbaxio {
         void RenderFrame(
             SDL_Window* window,
             const Urbaxio::Camera& camera,
-            Urbaxio::Engine::Scene* scene, // Scene pointer to get line segments
+            Urbaxio::Engine::Scene* scene,
             const glm::vec3& defaultObjectColor,
             const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
             bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth,
             const glm::vec4& splatColor, float splatBlurStrength,
-            uint64_t selectedObjId, size_t selectedTriangleBaseIndex,
+            // Selections
+            uint64_t selectedObjId,
+            const std::vector<size_t>& selectedTriangleIndices,
             const std::vector<size_t>& selectedLineIndices,
             const glm::vec3& selectionHighlightColor,
+            // Hovers
+            uint64_t hoveredObjId,
+            const std::vector<size_t>& hoveredFaceTriangleIndices,
+            const glm::vec3& hoverHighlightColor,
+            // Tools
             bool isDrawingActive, const glm::vec3& rubberBandStart, const glm::vec3& rubberBandEnd,
             const SnapResult& currentSnap,
             ImDrawData* imguiDrawData
@@ -1667,8 +2017,8 @@ namespace Urbaxio {
         void SetViewport(int x, int y, int width, int height);
         float GetMaxLineWidth() const { return maxLineWidth; }
 
-        // MODIFIED: Now takes line segments directly
         void UpdateUserLinesBuffer(const std::vector<std::pair<glm::vec3, glm::vec3>>& lineSegments, const std::vector<size_t>& selectedLineIndices);
+        void UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance);
 
     private:
         GLuint objectShaderProgram = 0;
@@ -1680,6 +2030,10 @@ namespace Urbaxio {
         GLuint axesVAO = 0, axesVBO = 0; int axesVertexCount = 0;
         GLuint splatVAO = 0, splatVBO = 0, splatEBO = 0;
         GLuint userLinesVAO = 0, userLinesVBO = 0; int userLinesVertexCount = 0;
+        
+        // --- Preview Resources ---
+        GLuint previewVAO = 0, previewVBO = 0;
+        GLsizei previewVertexCount = 0;
 
         std::map<MarkerShape, GLuint> markerVAOs;
         std::map<MarkerShape, GLuint> markerVBOs;
@@ -1712,6 +2066,7 @@ namespace Urbaxio {
         bool CreateSplatResources();
         bool CreateUserLinesResources();
         bool CreateMarkerResources();
+        bool CreatePreviewResources();
         void Cleanup();
         void DrawSnapMarker(const SnapResult& snap, const Camera& camera, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight);
 
@@ -1890,10 +2245,14 @@ ENCODINGUTF8#define GLM_ENABLE_EXPERIMENTAL
 #include <limits>
 #include <vector>
 #include <algorithm>
+#include <map>
+#include <set>
+#include <list>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/norm.hpp>
 #include <glm/gtx/vector_angle.hpp>
+#include <glm/gtx/intersect.hpp> // For glm::intersectRayPlane
 #include <cstddef>
 #include <charconv>
 #include <string>
@@ -1904,97 +2263,296 @@ namespace { // Anonymous namespace for utility functions
     const float SCREEN_EPSILON = 1e-4f;
     const float SCREEN_VECTOR_MIN_LENGTH_SQ = 4.0f;
     const float LINE_PICK_THRESHOLD_RADIUS = 0.25f;
-
-    // RayTriangleIntersect is now part of SnappingSystem
-    // bool RayTriangleIntersect(...) { ... }
+    const float MAX_EXTRUDE_DISTANCE = 1000.0f;
 
     void AppendCharToBuffer(char* buf, size_t bufSize, char c) { /* ... */ size_t len = strlen(buf); if (len + 1 < bufSize) { buf[len] = c; buf[len + 1] = '\0'; } }
     void RemoveLastChar(char* buf) { /* ... */ size_t len = strlen(buf); if (len > 0) { buf[len - 1] = '\0'; } }
     glm::vec3 ClosestPointOnLine(const glm::vec3& lineOrigin, const glm::vec3& lineDir, const glm::vec3& point) { float t = glm::dot(point - lineOrigin, lineDir); return lineOrigin + lineDir * t; }
     const glm::vec3 AXIS_X_DIR(1.0f, 0.0f, 0.0f); const glm::vec3 AXIS_Y_DIR(0.0f, 1.0f, 0.0f); const glm::vec3 AXIS_Z_DIR(0.0f, 0.0f, 1.0f);
     bool IsProjectablePointSnap(Urbaxio::SnapType type) { switch(type) { case Urbaxio::SnapType::ENDPOINT: case Urbaxio::SnapType::ORIGIN: case Urbaxio::SnapType::MIDPOINT: case Urbaxio::SnapType::CENTER: case Urbaxio::SnapType::INTERSECTION: return true; default: return false; } }
+
+    // Check for snaps that are valid for Push/Pull projection
+    bool IsValidPushPullSnap(Urbaxio::SnapType type) {
+        switch (type) {
+            case Urbaxio::SnapType::ENDPOINT:
+            case Urbaxio::SnapType::MIDPOINT:
+            case Urbaxio::SnapType::ORIGIN:
+            case Urbaxio::SnapType::CENTER:
+            case Urbaxio::SnapType::AXIS_X:
+            case Urbaxio::SnapType::AXIS_Y:
+            case Urbaxio::SnapType::AXIS_Z:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    std::vector<size_t> FindCoplanarAdjacentTriangles(
+        const Urbaxio::Engine::SceneObject& object,
+        size_t startTriangleBaseIndex)
+    {
+        const float NORMAL_DOT_TOLERANCE = 0.999f; // Cosine of angle tolerance
+        const float PLANE_DIST_TOLERANCE = 1e-4f;
+
+        const auto& mesh = object.get_mesh_buffers();
+        if (!object.has_mesh() || startTriangleBaseIndex + 2 >= mesh.indices.size()) {
+            return { startTriangleBaseIndex };
+        }
+
+        std::map<std::pair<unsigned int, unsigned int>, std::vector<size_t>> edgeToTriangles;
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            unsigned int v_indices[3] = { mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2] };
+            for (int j = 0; j < 3; ++j) {
+                unsigned int v1_idx = v_indices[j];
+                unsigned int v2_idx = v_indices[(j + 1) % 3];
+                if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
+                edgeToTriangles[{v1_idx, v2_idx}].push_back(i);
+            }
+        }
+
+        std::vector<size_t> resultFaceTriangles;
+        std::list<size_t> queue;
+        std::set<size_t> visitedTriangles;
+
+        unsigned int i0 = mesh.indices[startTriangleBaseIndex];
+        
+        glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+        glm::vec3 referenceNormal(mesh.normals[i0*3], mesh.normals[i0*3+1], mesh.normals[i0*3+2]);
+        float referencePlaneD = -glm::dot(referenceNormal, v0);
+
+        queue.push_back(startTriangleBaseIndex);
+        visitedTriangles.insert(startTriangleBaseIndex);
+
+        while (!queue.empty()) {
+            size_t currentTriangleIndex = queue.front();
+            queue.pop_front();
+            resultFaceTriangles.push_back(currentTriangleIndex);
+
+            unsigned int current_v_indices[3] = { mesh.indices[currentTriangleIndex], mesh.indices[currentTriangleIndex + 1], mesh.indices[currentTriangleIndex + 2] };
+
+            for (int j = 0; j < 3; ++j) {
+                unsigned int v1_idx = current_v_indices[j];
+                unsigned int v2_idx = current_v_indices[(j + 1) % 3];
+                if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
+
+                const auto& potentialNeighbors = edgeToTriangles.at({v1_idx, v2_idx});
+                for (size_t neighborIndex : potentialNeighbors) {
+                    if (neighborIndex == currentTriangleIndex) continue;
+
+                    if (visitedTriangles.find(neighborIndex) == visitedTriangles.end()) {
+                        visitedTriangles.insert(neighborIndex);
+
+                        unsigned int n_i0 = mesh.indices[neighborIndex];
+                        
+                        glm::vec3 n_v0(mesh.vertices[n_i0*3], mesh.vertices[n_i0*3+1], mesh.vertices[n_i0*3+2]);
+                        
+                        glm::vec3 neighborNormal(mesh.normals[n_i0*3], mesh.normals[n_i0*3+1], mesh.normals[n_i0*3+2]);
+                        
+                        if (glm::abs(glm::dot(referenceNormal, neighborNormal)) > NORMAL_DOT_TOLERANCE) {
+                            float dist = glm::abs(glm::dot(referenceNormal, n_v0) + referencePlaneD);
+                            if (dist < PLANE_DIST_TOLERANCE) {
+                                queue.push_back(neighborIndex);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return resultFaceTriangles;
+    }
 }
 
 namespace Urbaxio {
 
-    InputHandler::InputHandler() : middleMouseButtonDown(false), shiftDown(false), shiftWasPressed(false), lastMouseX(0), lastMouseY(0), isMouseFocused(true), firstMouse(true), isAxisLocked(false), lockedAxisType(SnapType::NONE), lockedAxisOrigin(0.0f), lockedAxisDir(0.0f), snappingSystem() {}
+    InputHandler::InputHandler() : middleMouseButtonDown(false), shiftDown(false), shiftWasPressed(false), lastMouseX(0), lastMouseY(0), isMouseFocused(true), firstMouse(true), lastClickTimestamp(0), lastClickedObjId(0), lastClickedTriangleIndex(0), pushPull_objId(0), pushPull_startMouseX(0), pushPull_startMouseY(0), isAxisLocked(false), lockedAxisType(SnapType::NONE), lockedAxisOrigin(0.0f), lockedAxisDir(0.0f), snappingSystem() {}
     glm::vec3 InputHandler::GetCursorPointInWorld(const Camera& camera, int mouseX, int mouseY, int screenWidth, int screenHeight, const glm::vec3& fallbackPlanePoint) { glm::vec3 point; if (SnappingSystem::RaycastToZPlane(mouseX, mouseY, screenWidth, screenHeight, camera, point)) { return point; } else { glm::vec3 rayOrigin, rayDirection; glm::mat4 view = camera.GetViewMatrix(); glm::mat4 projection = camera.GetProjectionMatrix((screenHeight > 0) ? ((float)screenWidth / (float)screenHeight) : 1.0f); Camera::ScreenToWorldRay(mouseX, mouseY, screenWidth, screenHeight, view, projection, rayOrigin, rayDirection); glm::vec3 planeNormal = -camera.Front; glm::vec3 pointOnPlane = fallbackPlanePoint; float denom = glm::dot(rayDirection, planeNormal); if (std::abs(denom) > 1e-6f) { float t = glm::dot(pointOnPlane - rayOrigin, planeNormal) / denom; if (t > 1e-4f && t < 10000.0f) return rayOrigin + rayDirection * t; } return rayOrigin + rayDirection * 10.0f; } }
     bool InputHandler::RayLineSegmentIntersection( const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::vec3& p1, const glm::vec3& p2, float pickThresholdRadius, float& outDistanceAlongRay, glm::vec3& outClosestPointOnSegment ) { /* ... same implementation ... */ glm::vec3 segDir = p2 - p1; float segLenSq = glm::length2(segDir); if (segLenSq < LINE_RAY_EPSILON * LINE_RAY_EPSILON) { outDistanceAlongRay = glm::dot(p1 - rayOrigin, rayDir); if (outDistanceAlongRay < 0) return false; glm::vec3 pointOnRay = rayOrigin + rayDir * outDistanceAlongRay; if (glm::distance2(pointOnRay, p1) < pickThresholdRadius * pickThresholdRadius) { outClosestPointOnSegment = p1; return true; } return false; } glm::vec3 segDirNormalized = glm::normalize(segDir); glm::vec3 w0 = rayOrigin - p1; float a = 1.0f; float b = glm::dot(rayDir, segDirNormalized); float c = 1.0f; float d = glm::dot(rayDir, w0); float e = glm::dot(segDirNormalized, w0); float denom = a * c - b * b; float t_ray, t_seg_param; if (std::abs(denom) < LINE_RAY_EPSILON) { glm::vec3 closest_on_ray_to_p1 = rayOrigin + rayDir * glm::dot(p1 - rayOrigin, rayDir); if (glm::distance2(closest_on_ray_to_p1, p1) < pickThresholdRadius * pickThresholdRadius) { outDistanceAlongRay = glm::dot(p1 - rayOrigin, rayDir); outClosestPointOnSegment = p1; return outDistanceAlongRay >=0; } glm::vec3 closest_on_ray_to_p2 = rayOrigin + rayDir * glm::dot(p2 - rayOrigin, rayDir); if (glm::distance2(closest_on_ray_to_p2, p2) < pickThresholdRadius * pickThresholdRadius) { outDistanceAlongRay = glm::dot(p2 - rayOrigin, rayDir); outClosestPointOnSegment = p2; return outDistanceAlongRay >=0; } return false; } t_ray = (b * e - c * d) / denom; t_seg_param = (a * e - b * d) / denom; float segActualLength = glm::sqrt(segLenSq); t_seg_param = glm::clamp(t_seg_param, 0.0f, segActualLength); outClosestPointOnSegment = p1 + segDirNormalized * t_seg_param; float actual_t_ray = glm::dot(outClosestPointOnSegment - rayOrigin, rayDir); if (actual_t_ray < 0) return false; glm::vec3 closestPointOnRayToClampedSegPoint = rayOrigin + actual_t_ray * rayDir; float distSq = glm::distance2(closestPointOnRayToClampedSegPoint, outClosestPointOnSegment); if (distSq < pickThresholdRadius * pickThresholdRadius) { outDistanceAlongRay = actual_t_ray; return true; } return false; }
 
-    void InputHandler::ProcessEvents( Urbaxio::Camera& camera, bool& should_quit, SDL_Window* window, int& display_w, int& display_h, uint64_t& selectedObjId, size_t& selectedTriangleBaseIndex, std::vector<size_t>& selectedLineIndices, bool isDrawingLineMode, bool& isPlacingFirstPoint, bool& isPlacingSecondPoint, glm::vec3& currentLineStartPoint, Urbaxio::Engine::Scene* scene, glm::vec3& currentRubberBandEnd, SnapResult& currentSnap, char* lineLengthInputBuf, float& lineLengthValue ) {
-        // ... (Event loop and most logic remains the same) ...
-        SDL_Event event; ImGuiIO& io = ImGui::GetIO(); currentRubberBandEnd = glm::vec3(0.0f); currentSnap.snapped = false; currentSnap.type = SnapType::NONE; bool enterPressedThisFrame = false; bool shiftPressedDownThisFrame = false; bool currentShiftDown = (SDL_GetModState() & KMOD_SHIFT); if (currentShiftDown && !shiftWasPressed) { shiftPressedDownThisFrame = true; } shiftWasPressed = currentShiftDown; shiftDown = currentShiftDown;
-        while (SDL_PollEvent(&event)) { ImGui_ImplSDL2_ProcessEvent(&event); bool wantCaptureMouse = io.WantCaptureMouse; bool wantCaptureKeyboard = io.WantCaptureKeyboard; switch (event.type) { case SDL_QUIT: should_quit = true; break; case SDL_WINDOWEVENT: if (event.window.event == SDL_WINDOWEVENT_RESIZED) { SDL_GetWindowSize(window, &display_w, &display_h); } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) { isMouseFocused = true; } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) { isMouseFocused = false; middleMouseButtonDown = false; SDL_ShowCursor(SDL_ENABLE); if (isPlacingSecondPoint || isPlacingFirstPoint) { isPlacingFirstPoint = false; isPlacingSecondPoint = false; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line drawing cancelled due to focus loss." << std::endl; } } else if (event.window.event == SDL_WINDOWEVENT_ENTER) { isMouseFocused = true; } else if (event.window.event == SDL_WINDOWEVENT_LEAVE) { isMouseFocused = false; } break; case SDL_KEYDOWN: if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) { shiftDown = true; } if (event.key.keysym.sym == SDLK_ESCAPE) { if (isAxisLocked) { isAxisLocked = false; std::cout << "DEBUG: Axis lock cancelled by ESC." << std::endl; } else if (isPlacingSecondPoint) { isPlacingSecondPoint = false; isPlacingFirstPoint = true; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line drawing second point cancelled by ESC." << std::endl; } else if (isPlacingFirstPoint) { isPlacingFirstPoint = false; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line drawing first point placement cancelled by ESC." << std::endl; } } else if (isPlacingSecondPoint && !wantCaptureKeyboard) { SDL_Keycode key = event.key.keysym.sym; bool isEnter = (key == SDLK_RETURN || key == SDLK_KP_ENTER); bool isBackspace = (key == SDLK_BACKSPACE); if (isEnter) { enterPressedThisFrame = true; } else if (isBackspace) { RemoveLastChar(lineLengthInputBuf); } else { char c = '\0'; if ((key >= SDLK_0 && key <= SDLK_9)) { c = (char)key; } else if ((key >= SDLK_KP_0 && key <= SDLK_KP_9)) { c = '0' + (key - SDLK_KP_0); } else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(lineLengthInputBuf, '.') == nullptr) { c = '.'; } } if (c != '\0') { AppendCharToBuffer(lineLengthInputBuf, 64, c); } } } break; case SDL_KEYUP: if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) { shiftDown = false; } break;
+    void InputHandler::ProcessEvents(
+        Urbaxio::Camera& camera,
+        bool& should_quit,
+        SDL_Window* window,
+        int& display_w,
+        int& display_h,
+        uint64_t& selectedObjId,
+        std::vector<size_t>& selectedTriangleIndices,
+        std::vector<size_t>& selectedLineIndices,
+        bool isDrawingLineMode,
+        bool isPushPullMode,
+        bool& isPushPullActive,
+        uint64_t& hoveredObjId,
+        std::vector<size_t>& hoveredFaceTriangleIndices,
+        float& pushPullCurrentDistance,
+        bool& isPlacingFirstPoint,
+        bool& isPlacingSecondPoint,
+        glm::vec3& currentLineStartPoint,
+        Urbaxio::Engine::Scene* scene,
+        glm::vec3& currentRubberBandEnd,
+        SnapResult& currentSnap,
+        char* lineLengthInputBuf,
+        float& lineLengthValue
+    ) {
+        // --- Event Loop ---
+        SDL_Event event; ImGuiIO& io = ImGui::GetIO(); bool enterPressedThisFrame = false; bool shiftPressedDownThisFrame = false; bool currentShiftDown = (SDL_GetModState() & KMOD_SHIFT); if (currentShiftDown && !shiftWasPressed) { shiftPressedDownThisFrame = true; } shiftWasPressed = currentShiftDown; shiftDown = currentShiftDown;
+        while (SDL_PollEvent(&event)) { ImGui_ImplSDL2_ProcessEvent(&event); bool wantCaptureMouse = io.WantCaptureMouse; bool wantCaptureKeyboard = io.WantCaptureKeyboard; switch (event.type) { case SDL_QUIT: should_quit = true; break; case SDL_WINDOWEVENT: if (event.window.event == SDL_WINDOWEVENT_RESIZED) { SDL_GetWindowSize(window, &display_w, &display_h); } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) { isMouseFocused = true; } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) { isMouseFocused = false; middleMouseButtonDown = false; SDL_ShowCursor(SDL_ENABLE); if (isPlacingSecondPoint || isPlacingFirstPoint) { isPlacingFirstPoint = false; isPlacingSecondPoint = false; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } if(isPushPullActive) { isPushPullActive = false; } } else if (event.window.event == SDL_WINDOWEVENT_ENTER) { isMouseFocused = true; } else if (event.window.event == SDL_WINDOWEVENT_LEAVE) { isMouseFocused = false; } break; case SDL_KEYDOWN: if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) { shiftDown = true; } if (event.key.keysym.sym == SDLK_ESCAPE) { if (isAxisLocked) { isAxisLocked = false; } else if (isPlacingSecondPoint) { isPlacingSecondPoint = false; isPlacingFirstPoint = true; lineLengthInputBuf[0] = '\0'; } else if (isPlacingFirstPoint) { isPlacingFirstPoint = false; lineLengthInputBuf[0] = '\0'; } else if (isPushPullActive) { isPushPullActive = false; std::cout << "DEBUG: Push/Pull operation cancelled by ESC." << std::endl;} } else if ((isPlacingSecondPoint || isPushPullActive) && !wantCaptureKeyboard) { SDL_Keycode key = event.key.keysym.sym; bool isEnter = (key == SDLK_RETURN || key == SDLK_KP_ENTER); bool isBackspace = (key == SDLK_BACKSPACE); if (isEnter) { enterPressedThisFrame = true; } else if (isBackspace) { RemoveLastChar(lineLengthInputBuf); } else { char c = '\0'; if ((key >= SDLK_0 && key <= SDLK_9)) { c = (char)key; } else if ((key >= SDLK_KP_0 && key <= SDLK_KP_9)) { c = '0' + (key - SDLK_KP_0); } else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(lineLengthInputBuf, '.') == nullptr) { c = '.'; } } if (c != '\0') { AppendCharToBuffer(lineLengthInputBuf, 64, c); } } } break; case SDL_KEYUP: if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) { shiftDown = false; } break;
         case SDL_MOUSEBUTTONDOWN:
             if (!wantCaptureMouse) {
                 if (event.button.button == SDL_BUTTON_MIDDLE) { middleMouseButtonDown = true; firstMouse = true; SDL_ShowCursor(SDL_DISABLE); }
                 else if (event.button.button == SDL_BUTTON_LEFT) {
                     int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
-                    if (isDrawingLineMode && scene) { /* ... line drawing clicks ... */ glm::vec3 clickPoint = currentSnap.worldPoint; if (isPlacingFirstPoint) { currentLineStartPoint = clickPoint; isPlacingFirstPoint = false; isPlacingSecondPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line Start Point Set: (" << clickPoint.x << ", " << clickPoint.y << ", " << clickPoint.z << ") Snap: " << (currentSnap.snapped ? "Yes" : "No") << std::endl; } else if (isPlacingSecondPoint) { glm::vec3 endPoint = clickPoint; if (glm::distance(currentLineStartPoint, endPoint) > 1e-3f) { scene->AddUserLine(currentLineStartPoint, endPoint); std::cout << "DEBUG: Line Added (Click): Start(...), End(" << endPoint.x << ", " << endPoint.y << ", " << endPoint.z << ") SnapType: " << (int)currentSnap.type << std::endl; } else { std::cout << "DEBUG: Points too close, line not added." << std::endl; } isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } }
-                    else if (!isDrawingLineMode && scene) { // Select lines or objects
-                        glm::vec3 rayOrigin, rayDir;
-                        Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
-                        struct LineHit { size_t lineIndex; float distanceAlongRay; glm::vec3 intersectionPoint; };
-                        std::vector<LineHit> lineHits;
-                        const auto& lineSegments = scene->GetLineSegments();
-                        for (size_t i = 0; i < lineSegments.size(); ++i) { const auto& segment = lineSegments[i]; float distAlongRay; glm::vec3 closestPtOnSeg; if (RayLineSegmentIntersection(rayOrigin, rayDir, segment.first, segment.second, LINE_PICK_THRESHOLD_RADIUS, distAlongRay, closestPtOnSeg)) { lineHits.push_back({i, distAlongRay, closestPtOnSeg}); } }
-                        if (!lineHits.empty()) { /* ... line selection logic ... */ std::sort(lineHits.begin(), lineHits.end(), [](const LineHit& a, const LineHit& b){ return a.distanceAlongRay < b.distanceAlongRay; }); size_t closestLineIndex = lineHits[0].lineIndex; if (!shiftDown) { selectedLineIndices.clear(); selectedLineIndices.push_back(closestLineIndex); selectedObjId = 0; } else { auto it = std::find(selectedLineIndices.begin(), selectedLineIndices.end(), closestLineIndex); if (it != selectedLineIndices.end()) { selectedLineIndices.erase(it); } else { selectedLineIndices.push_back(closestLineIndex); } } std::cout << "DEBUG: Selected line index: " << closestLineIndex << " (Total selected: " << selectedLineIndices.size() << ")" << std::endl; }
-                        else { // No lines hit, try object picking
+                    if (isDrawingLineMode && scene) { glm::vec3 clickPoint = currentSnap.worldPoint; if (isPlacingFirstPoint) { currentLineStartPoint = clickPoint; isPlacingFirstPoint = false; isPlacingSecondPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } else if (isPlacingSecondPoint) { glm::vec3 endPoint = clickPoint; if (glm::distance(currentLineStartPoint, endPoint) > 1e-3f) { scene->AddUserLine(currentLineStartPoint, endPoint); } isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } }
+                    else if (isPushPullMode && scene) {
+                        if (isPushPullActive) {
+                            scene->ExtrudeFace(pushPull_objId, pushPull_faceIndices, pushPull_faceNormal, pushPullCurrentDistance);
+                            std::cout << "DEBUG: Push/Pull operation finalized with distance: " << pushPullCurrentDistance << std::endl;
+                            isPushPullActive = false;
+                            pushPullCurrentDistance = 0.0f;
+
+                        } else { // Start a new Push/Pull operation
+                            if (hoveredObjId != 0 && !hoveredFaceTriangleIndices.empty()) {
+                                isPushPullActive = true;
+                                pushPull_objId = hoveredObjId;
+                                pushPull_faceIndices = hoveredFaceTriangleIndices;
+                                Urbaxio::Engine::SceneObject* obj = scene->get_object_by_id(pushPull_objId);
+                                const auto& mesh = obj->get_mesh_buffers();
+                                unsigned int firstTriFirstVertIdx = mesh.indices[pushPull_faceIndices[0]];
+                                pushPull_faceNormal = glm::normalize(glm::vec3(mesh.normals[firstTriFirstVertIdx*3], mesh.normals[firstTriFirstVertIdx*3+1], mesh.normals[firstTriFirstVertIdx*3+2]));
+                                
+                                glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
+                                float closestHitDist;
+                                glm::intersectRayPlane(rayOrigin, rayDir, glm::vec3(mesh.vertices[firstTriFirstVertIdx*3], mesh.vertices[firstTriFirstVertIdx*3+1], mesh.vertices[firstTriFirstVertIdx*3+2]), pushPull_faceNormal, closestHitDist);
+                                pushPull_startPoint = rayOrigin + rayDir * closestHitDist;
+                                pushPullCurrentDistance = 0.0f;
+                                SDL_GetMouseState(&pushPull_startMouseX, &pushPull_startMouseY);
+
+                                selectedObjId = 0; selectedTriangleIndices.clear();
+                                lineLengthInputBuf[0] = '\0';
+                                std::cout << "DEBUG: Push/Pull operation started on Obj " << pushPull_objId << ", Normal (" << pushPull_faceNormal.x << ", " << pushPull_faceNormal.y << ", " << pushPull_faceNormal.z << ")" << std::endl;
+                            }
+                        }
+                    }
+                    else { // Default selection mode
+                        glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
+                        uint64_t hitObjectId = 0; size_t hitTriangleBaseIndex = 0; float closestHitDistance = std::numeric_limits<float>::max();
+                        struct LineHit { size_t lineIndex; float distanceAlongRay; }; std::vector<LineHit> lineHits; const auto& lineSegments = scene->GetLineSegments(); for (size_t i = 0; i < lineSegments.size(); ++i) { const auto& segment = lineSegments[i]; float distAlongRay; glm::vec3 closestPtOnSeg; if (RayLineSegmentIntersection(rayOrigin, rayDir, segment.first, segment.second, LINE_PICK_THRESHOLD_RADIUS, distAlongRay, closestPtOnSeg)) { lineHits.push_back({i, distAlongRay}); } }
+                        if (!lineHits.empty()) { std::sort(lineHits.begin(), lineHits.end(), [](const LineHit& a, const LineHit& b){ return a.distanceAlongRay < b.distanceAlongRay; }); size_t closestLineIndex = lineHits[0].lineIndex; if (!shiftDown) { selectedLineIndices.clear(); selectedLineIndices.push_back(closestLineIndex); selectedObjId = 0; selectedTriangleIndices.clear(); } else { auto it = std::find(selectedLineIndices.begin(), selectedLineIndices.end(), closestLineIndex); if (it != selectedLineIndices.end()) { selectedLineIndices.erase(it); } else { selectedLineIndices.push_back(closestLineIndex); } }
+                        } else {
                             if (!shiftDown) selectedLineIndices.clear();
-                            uint64_t hitObjectId = 0; size_t hitTriangleBaseIndex = 0; float closestHitDistance = std::numeric_limits<float>::max();
-                            std::vector<Urbaxio::Engine::SceneObject*> objects = scene->get_all_objects();
-                            for (Urbaxio::Engine::SceneObject* obj_ptr : objects) {
-                                const Urbaxio::Engine::SceneObject& obj = *obj_ptr;
-                                if (obj.has_mesh()) {
-                                    const auto& mesh = obj.get_mesh_buffers();
-                                    const auto& vertices = mesh.vertices;
-                                    const auto& indices = mesh.indices;
-                                    size_t max_vtx_idx = vertices.size() / 3;
-                                    if (max_vtx_idx == 0 || vertices.empty() || indices.empty()) continue;
-                                    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
-                                        unsigned int i0 = indices[i]; unsigned int i1 = indices[i+1]; unsigned int i2 = indices[i+2];
-                                        if (i0 >= max_vtx_idx || i1 >= max_vtx_idx || i2 >= max_vtx_idx) continue;
-                                        glm::vec3 v0(vertices[i0*3], vertices[i0*3+1], vertices[i0*3+2]);
-                                        glm::vec3 v1(vertices[i1*3], vertices[i1*3+1], vertices[i1*3+2]);
-                                        glm::vec3 v2(vertices[i2*3], vertices[i2*3+1], vertices[i2*3+2]);
-                                        float t = -1.0f;
-                                        // <<< USE SnappingSystem's static method >>>
-                                        if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t)) {
-                                            if (t < closestHitDistance && t > 0) { // Ensure t is positive
-                                                closestHitDistance = t;
-                                                hitObjectId = obj.get_id();
-                                                hitTriangleBaseIndex = i;
-                                            }
+                            for (Urbaxio::Engine::SceneObject* obj_ptr : scene->get_all_objects()) {
+                                if (obj_ptr->has_mesh()) {
+                                    const auto& mesh = obj_ptr->get_mesh_buffers();
+                                    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                                        glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]); glm::vec3 v1(mesh.vertices[mesh.indices[i+1]*3], mesh.vertices[mesh.indices[i+1]*3+1], mesh.vertices[mesh.indices[i+1]*3+2]); glm::vec3 v2(mesh.vertices[mesh.indices[i+2]*3], mesh.vertices[mesh.indices[i+2]*3+1], mesh.vertices[mesh.indices[i+2]*3+2]); float t; if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDistance) { closestHitDistance = t; hitObjectId = obj_ptr->get_id(); hitTriangleBaseIndex = i; }
                                         }
                                     }
                                 }
-                            }
-                            selectedObjId = hitObjectId; selectedTriangleBaseIndex = hitTriangleBaseIndex;
-                            if (selectedObjId != 0) { std::cout << "DEBUG: Hit Object ID: " << selectedObjId << std::endl; }
-                            else { if (!shiftDown) { selectedObjId = 0; } std::cout << "DEBUG: Click missed objects and lines." << std::endl; }
+                            if (hitObjectId != 0) {
+                                uint32_t currentTime = SDL_GetTicks(); const uint32_t DOUBLE_CLICK_TIME = 300;
+                                if (currentTime - lastClickTimestamp < DOUBLE_CLICK_TIME && hitObjectId == lastClickedObjId && hitTriangleBaseIndex == lastClickedTriangleIndex) { selectedTriangleIndices.assign(1, hitTriangleBaseIndex); selectedObjId = hitObjectId; lastClickTimestamp = 0;
+                                } else { Urbaxio::Engine::SceneObject* hitObject = scene->get_object_by_id(hitObjectId); if (hitObject) { selectedTriangleIndices = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex); selectedObjId = hitObjectId; } lastClickTimestamp = currentTime; lastClickedObjId = hitObjectId; lastClickedTriangleIndex = hitTriangleBaseIndex; }
+                            } else { if (!shiftDown) { selectedObjId = 0; selectedTriangleIndices.clear(); } lastClickTimestamp = 0; }
                         }
                     }
-                } else if (event.button.button == SDL_BUTTON_RIGHT) { /* ... same cancel logic ... */ if (isAxisLocked) { isAxisLocked = false; std::cout << "DEBUG: Axis lock cancelled by Right Click." << std::endl; } else if (isPlacingSecondPoint) { isPlacingSecondPoint = false; isPlacingFirstPoint = true; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line drawing second point cancelled by Right Click." << std::endl; } else if (isPlacingFirstPoint) { isPlacingFirstPoint = false; lineLengthInputBuf[0] = '\0'; std::cout << "DEBUG: Line drawing first point placement cancelled by Right Click." << std::endl; } }
+                } else if (event.button.button == SDL_BUTTON_RIGHT) { if (isAxisLocked) { isAxisLocked = false; } else if (isPlacingSecondPoint) { isPlacingSecondPoint = false; isPlacingFirstPoint = true; lineLengthInputBuf[0] = '\0'; } else if (isPlacingFirstPoint) { isPlacingFirstPoint = false; lineLengthInputBuf[0] = '\0'; } }
             } break;
-        case SDL_MOUSEBUTTONUP: /* ... same ... */ if (event.button.button == SDL_BUTTON_MIDDLE) { middleMouseButtonDown = false; SDL_ShowCursor(SDL_ENABLE); } break;
-        case SDL_MOUSEWHEEL: /* ... same ... */ if (!wantCaptureMouse) { camera.ProcessMouseScroll(static_cast<float>(event.wheel.y)); } break;
-        }} // End Event Loop & Switch
+        case SDL_MOUSEBUTTONUP: if (event.button.button == SDL_BUTTON_MIDDLE) { middleMouseButtonDown = false; SDL_ShowCursor(SDL_ENABLE); } break;
+        case SDL_MOUSEWHEEL: if (!wantCaptureMouse) { camera.ProcessMouseScroll(static_cast<float>(event.wheel.y)); } break;
+        }}
 
-        // --- Update Snapping / Axis Locking (AFTER Event Loop) ---
-        // ... (same logic as before for axis lock activation, normal snapping, axis locked snapping with point projection) ...
-        int currentMouseX, currentMouseY; SDL_GetMouseState(&currentMouseX, &currentMouseY); glm::mat4 view = camera.GetViewMatrix(); glm::mat4 proj = camera.GetProjectionMatrix((display_h > 0) ? ((float)display_w / (float)display_h) : 1.0f); glm::vec3 cursorWorldPoint = GetCursorPointInWorld(camera, currentMouseX, currentMouseY, display_w, display_h, isPlacingSecondPoint ? currentLineStartPoint : glm::vec3(0.0f));
-        if (isPlacingSecondPoint) { if (!shiftDown && isAxisLocked) { isAxisLocked = false; std::cout << "DEBUG: Axis lock released." << std::endl; } else if (shiftPressedDownThisFrame && !isAxisLocked) { glm::vec2 startScreenPos, endScreenPos; bool startVisible = SnappingSystem::WorldToScreen(currentLineStartPoint, view, proj, display_w, display_h, startScreenPos); bool endVisible = SnappingSystem::WorldToScreen(cursorWorldPoint, view, proj, display_w, display_h, endScreenPos); if (startVisible && endVisible) { glm::vec2 rubberBandScreenVec = endScreenPos - startScreenPos; float screenLenSq = glm::length2(rubberBandScreenVec); if (screenLenSq > SCREEN_VECTOR_MIN_LENGTH_SQ) { glm::vec2 rubberBandScreenDir = glm::normalize(rubberBandScreenVec); float maxDot = -1.0f; SnapType bestAxisType = SnapType::NONE; glm::vec3 bestAxis3DDir(0.0f); const std::vector<std::pair<SnapType, glm::vec3>> globalAxes = { {SnapType::AXIS_X, AXIS_X_DIR}, {SnapType::AXIS_Y, AXIS_Y_DIR}, {SnapType::AXIS_Z, AXIS_Z_DIR} }; glm::vec2 originScreenPos; if (SnappingSystem::WorldToScreen(glm::vec3(0.0f), view, proj, display_w, display_h, originScreenPos)) { for (const auto& axisPair : globalAxes) { glm::vec2 axisEndScreenPos; if (SnappingSystem::WorldToScreen(axisPair.second, view, proj, display_w, display_h, axisEndScreenPos)) { glm::vec2 axisScreenVec = axisEndScreenPos - originScreenPos; if (glm::length2(axisScreenVec) > SCREEN_EPSILON * SCREEN_EPSILON) { glm::vec2 axisScreenDir = glm::normalize(axisScreenVec); float dot = abs(glm::dot(rubberBandScreenDir, axisScreenDir)); if (dot > maxDot) { maxDot = dot; bestAxisType = axisPair.first; bestAxis3DDir = axisPair.second; } } } } } if (bestAxisType != SnapType::NONE) { isAxisLocked = true; lockedAxisType = bestAxisType; lockedAxisDir = bestAxis3DDir; std::cout << "DEBUG: Axis direction lock activated (Visual): " << (int)lockedAxisType << std::endl; currentSnap.worldPoint = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, cursorWorldPoint); currentSnap.snapped = true; currentSnap.type = lockedAxisType; currentRubberBandEnd = currentSnap.worldPoint; goto skip_normal_snapping_update_label; } else { std::cout << "DEBUG: Shift pressed but no dominant screen axis found." << std::endl; } } else { std::cout << "DEBUG: Shift pressed but screen line direction is too short." << std::endl; } } else { std::cout << "DEBUG: Shift pressed but start/end points not visible on screen." << std::endl; } } } else { isAxisLocked = false; }
-        if (isAxisLocked) { glm::vec3 baseProjectedPoint = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, cursorWorldPoint); SnapResult cursorSnapResult = snappingSystem.FindSnapPoint(currentMouseX, currentMouseY, display_w, display_h, camera, *scene); if (cursorSnapResult.snapped && IsProjectablePointSnap(cursorSnapResult.type)) { glm::vec3 targetPoint = cursorSnapResult.worldPoint; currentSnap.worldPoint = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, targetPoint); currentSnap.snapped = true; currentSnap.type = cursorSnapResult.type; } else { currentSnap.worldPoint = baseProjectedPoint; currentSnap.snapped = true; currentSnap.type = lockedAxisType; } currentRubberBandEnd = currentSnap.worldPoint; }
-        else if ((isPlacingFirstPoint || isPlacingSecondPoint) && scene) { currentSnap = snappingSystem.FindSnapPoint(currentMouseX, currentMouseY, display_w, display_h, camera, *scene); currentRubberBandEnd = currentSnap.worldPoint; }
-        else { currentSnap.snapped = false; currentRubberBandEnd = cursorWorldPoint; }
-        skip_normal_snapping_update_label:;
-
-        // --- Handle Line Length Input Confirmation ---
-        if (enterPressedThisFrame && isPlacingSecondPoint && scene) { /* ... same length parsing logic ... */ float length = 0.0f; auto [ptr, ec] = std::from_chars(lineLengthInputBuf, lineLengthInputBuf + strlen(lineLengthInputBuf), length); if (ec == std::errc() && ptr == lineLengthInputBuf + strlen(lineLengthInputBuf) && length > 1e-4f) { lineLengthValue = length; glm::vec3 direction; if (isAxisLocked) { float dotProd = glm::dot(currentRubberBandEnd - currentLineStartPoint, lockedAxisDir); direction = (dotProd >= 0.0f) ? lockedAxisDir : -lockedAxisDir; } else { direction = currentRubberBandEnd - currentLineStartPoint; if (glm::length(direction) < 1e-6f) { std::cerr << "Warning: Cannot determine line direction for length input." << std::endl; isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; goto end_event_processing_final_label_2; } direction = glm::normalize(direction); } glm::vec3 finalEndPoint = currentLineStartPoint + direction * lineLengthValue; scene->AddUserLine(currentLineStartPoint, finalEndPoint); std::cout << "DEBUG: Line Added (Length Input): Length=" << lineLengthValue << ", Dir=(" << direction.x << "," << direction.y << "," << direction.z << ")" << std::endl; isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } else { std::cerr << "Warning: Invalid line length input: '" << lineLengthInputBuf << "'" << std::endl; lineLengthInputBuf[0] = '\0'; } }
-        end_event_processing_final_label_2:;
+        // --- Per-frame updates (after event loop) ---
+        int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
+        if(!isPushPullActive) {
+             hoveredObjId = 0; 
+             hoveredFaceTriangleIndices.clear();
+        }
+        currentRubberBandEnd = glm::vec3(0.0f);
+        
+        if (!io.WantCaptureMouse && scene) {
+            if (isPushPullActive) {
+                hoveredObjId = pushPull_objId;
+                hoveredFaceTriangleIndices = pushPull_faceIndices;
+                
+                // --- Push/Pull snapping and distance calculation ---
+                currentSnap = snappingSystem.FindSnapPoint(mouseX, mouseY, display_w, display_h, camera, *scene);
+                if (currentSnap.snapped && IsValidPushPullSnap(currentSnap.type)) {
+                    // Project the snapped point onto the extrusion axis to get the distance
+                    glm::vec3 projectedPoint = ClosestPointOnLine(pushPull_startPoint, pushPull_faceNormal, currentSnap.worldPoint);
+                    glm::vec3 offsetVector = projectedPoint - pushPull_startPoint;
+                    pushPullCurrentDistance = glm::dot(offsetVector, pushPull_faceNormal);
+                } else {
+                    // Fallback to screen-space mouse dragging if no valid snap
+                    glm::mat4 view = camera.GetViewMatrix(); glm::mat4 proj = camera.GetProjectionMatrix((float)display_w/(float)display_h);
+                    glm::vec2 screenStart, screenEnd;
+                    bool p1_visible = SnappingSystem::WorldToScreen(pushPull_startPoint, view, proj, display_w, display_h, screenStart);
+                    bool p2_visible = SnappingSystem::WorldToScreen(pushPull_startPoint + pushPull_faceNormal, view, proj, display_w, display_h, screenEnd);
+                    
+                    if (p1_visible && p2_visible) {
+                        glm::vec2 screenAxisDir = screenEnd - screenStart;
+                        if (glm::length2(screenAxisDir) > SCREEN_EPSILON * SCREEN_EPSILON) {
+                            screenAxisDir = glm::normalize(screenAxisDir);
+                            glm::vec2 mouseDelta(mouseX - pushPull_startMouseX, mouseY - pushPull_startMouseY);
+                            float pixel_dist = glm::dot(mouseDelta, screenAxisDir);
+                            float sensitivity = glm::distance(camera.Position, pushPull_startPoint) * 0.001f;
+                            pushPullCurrentDistance = pixel_dist * sensitivity;
+                        }
+                    }
+                }
+            } else if (isPushPullMode) {
+                // Hover logic only when not actively pushing/pulling
+                currentSnap.snapped = false; // No snapping when just hovering for Push/Pull
+                glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
+                uint64_t currentHoveredObjId = 0; size_t currentHoveredTriangleIdx = 0; float closestHitDist = std::numeric_limits<float>::max();
+                for (Urbaxio::Engine::SceneObject* obj_ptr : scene->get_all_objects()) {
+                    if (obj_ptr->has_mesh()) {
+                        const auto& mesh = obj_ptr->get_mesh_buffers();
+                        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                            glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]); glm::vec3 v1(mesh.vertices[mesh.indices[i+1]*3], mesh.vertices[mesh.indices[i+1]*3+1], mesh.vertices[mesh.indices[i+1]*3+2]); glm::vec3 v2(mesh.vertices[mesh.indices[i+2]*3], mesh.vertices[mesh.indices[i+2]*3+1], mesh.vertices[mesh.indices[i+2]*3+2]); float t; if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDist) { closestHitDist = t; currentHoveredObjId = obj_ptr->get_id(); currentHoveredTriangleIdx = i; }
+                        }
+                    }
+                }
+                if (currentHoveredObjId != 0) {
+                    Urbaxio::Engine::SceneObject* hitObject = scene->get_object_by_id(currentHoveredObjId);
+                    if (hitObject) {
+                        hoveredFaceTriangleIndices = FindCoplanarAdjacentTriangles(*hitObject, currentHoveredTriangleIdx);
+                        hoveredObjId = currentHoveredObjId;
+                    }
+                }
+            }
+            else if (isDrawingLineMode) {
+                // Drawing logic
+                currentSnap = snappingSystem.FindSnapPoint(mouseX, mouseY, display_w, display_h, camera, *scene);
+                glm::vec3 cursorWorldPoint = currentSnap.snapped ? currentSnap.worldPoint : GetCursorPointInWorld(camera, mouseX, mouseY, display_w, display_h, isPlacingSecondPoint ? currentLineStartPoint : glm::vec3(0.0f));
+                if (isPlacingSecondPoint) {
+                    glm::mat4 view = camera.GetViewMatrix(); glm::mat4 proj = camera.GetProjectionMatrix((display_h > 0) ? ((float)display_w / (float)display_h) : 1.0f);
+                    if (!shiftDown && isAxisLocked) { isAxisLocked = false; }
+                    else if (shiftPressedDownThisFrame && !isAxisLocked) { glm::vec2 startScreenPos, endScreenPos; bool sVis = SnappingSystem::WorldToScreen(currentLineStartPoint, view, proj, display_w, display_h, startScreenPos); bool eVis = SnappingSystem::WorldToScreen(cursorWorldPoint, view, proj, display_w, display_h, endScreenPos); if (sVis && eVis && glm::length2(endScreenPos - startScreenPos) > SCREEN_VECTOR_MIN_LENGTH_SQ) { glm::vec2 rbDir = glm::normalize(endScreenPos - startScreenPos); float maxDot = -1.0f; SnapType bestAxis = SnapType::NONE; glm::vec3 bestDir; const std::vector<std::pair<SnapType, glm::vec3>> axes = {{SnapType::AXIS_X, AXIS_X_DIR}, {SnapType::AXIS_Y, AXIS_Y_DIR}, {SnapType::AXIS_Z, AXIS_Z_DIR}}; glm::vec2 oScreen; if(SnappingSystem::WorldToScreen(glm::vec3(0.0f), view, proj, display_w, display_h, oScreen)) { for(const auto& ax : axes) { glm::vec2 axScreen; if(SnappingSystem::WorldToScreen(ax.second, view, proj, display_w, display_h, axScreen)) { glm::vec2 axDir = glm::normalize(axScreen - oScreen); float d = abs(glm::dot(rbDir, axDir)); if (d > maxDot) { maxDot = d; bestAxis = ax.first; bestDir = ax.second;}}}} if(bestAxis != SnapType::NONE) { isAxisLocked = true; lockedAxisType = bestAxis; lockedAxisDir = bestDir; } } }
+                }
+                if (isAxisLocked) { glm::vec3 basePt = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, cursorWorldPoint); SnapResult cSnap = snappingSystem.FindSnapPoint(mouseX, mouseY, display_w, display_h, camera, *scene); if (cSnap.snapped && IsProjectablePointSnap(cSnap.type)) { currentSnap.worldPoint = ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, cSnap.worldPoint); currentSnap.snapped = true; currentSnap.type = cSnap.type; } else { currentSnap.worldPoint = basePt; currentSnap.snapped = true; currentSnap.type = lockedAxisType; }
+                }
+                currentRubberBandEnd = currentSnap.snapped ? currentSnap.worldPoint : cursorWorldPoint;
+            }
+        }
+        
+        if (enterPressedThisFrame && scene) {
+            if (isPushPullActive) {
+                float dist;
+                auto [ptr, ec] = std::from_chars(lineLengthInputBuf, lineLengthInputBuf + strlen(lineLengthInputBuf), dist);
+                if (ec == std::errc() && ptr == lineLengthInputBuf + strlen(lineLengthInputBuf)) {
+                    scene->ExtrudeFace(pushPull_objId, pushPull_faceIndices, pushPull_faceNormal, dist);
+                    isPushPullActive = false;
+                    pushPullCurrentDistance = 0.0f;
+                    lineLengthInputBuf[0] = '\0';
+                }
+            }
+            else if (isPlacingSecondPoint) {
+                 float length; auto [ptr, ec] = std::from_chars(lineLengthInputBuf, lineLengthInputBuf + strlen(lineLengthInputBuf), length); if (ec == std::errc() && ptr == lineLengthInputBuf + strlen(lineLengthInputBuf) && length > 1e-4f) { lineLengthValue = length; glm::vec3 direction; if (isAxisLocked) { float dotProd = glm::dot(currentRubberBandEnd - currentLineStartPoint, lockedAxisDir); direction = (dotProd >= 0.0f) ? lockedAxisDir : -lockedAxisDir; } else { direction = currentRubberBandEnd - currentLineStartPoint; if (glm::length(direction) < 1e-6f) { isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; goto end_event_processing_final_label; } direction = glm::normalize(direction); } glm::vec3 finalEndPoint = currentLineStartPoint + direction * lineLengthValue; scene->AddUserLine(currentLineStartPoint, finalEndPoint); isPlacingSecondPoint = false; isPlacingFirstPoint = true; isAxisLocked = false; lineLengthInputBuf[0] = '\0'; } else { lineLengthInputBuf[0] = '\0'; }
+            }
+        }
+        end_event_processing_final_label:;
 
         HandleMouseMotion(camera, window, display_w, display_h);
     }
+
     void InputHandler::HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h) { /* ... */ int cX, cY; SDL_GetMouseState(&cX, &cY); if (middleMouseButtonDown && isMouseFocused) { if (firstMouse) { lastMouseX = cX; lastMouseY = cY; firstMouse = false; } else { float dX = static_cast<float>(cX - lastMouseX); float dY = static_cast<float>(cY - lastMouseY); if (std::abs(dX) > 1e-3f || std::abs(dY) > 1e-3f) { if (shiftDown) { camera.ProcessPan(dX, dY); } else { camera.ProcessOrbit(dX, dY); } int nX = cX; int nY = cY; bool w = false; const int m = 1; if (display_w > (m + 1) * 2 && display_h > (m + 1) * 2) { if (cX <= m) { nX = display_w - (m + 2); w = true; } else if (cX >= display_w - (m + 1)) { nX = m + 1; w = true; } if (cY <= m) { nY = display_h - (m + 2); w = true; } else if (cY >= display_h - (m + 1)) { nY = m + 1; w = true; } } if (w) { SDL_WarpMouseInWindow(window, nX, nY); lastMouseX = nX; lastMouseY = nY; } else { lastMouseX = cX; lastMouseY = cY; } } else { lastMouseX = cX; lastMouseY = cY; } } } else { firstMouse = true; lastMouseX = cX; lastMouseY = cY; } }
 
 } // namespace Urbaxio
@@ -2053,13 +2611,14 @@ namespace Urbaxio {
             "uniform vec3 lightColor;\n"
             "uniform float ambientStrength;\n"
             "uniform vec3 viewPos;\n"
+            "uniform float overrideAlpha = 1.0;\n"
             "void main() {\n"
             "    vec3 norm = normalize(NormalWorld);\n"
             "    vec3 ambient = ambientStrength * lightColor * objectColor;\n"
             "    float diff = max(dot(norm, normalize(lightDir)), 0.0);\n"
             "    vec3 diffuse = diff * lightColor * objectColor;\n"
             "    vec3 result = ambient + diffuse;\n"
-            "    FragColor = vec4(result, 1.0);\n"
+            "    FragColor = vec4(result, overrideAlpha);\n"
             "}\n";
 
         lineVertexShaderSource =
@@ -2136,11 +2695,101 @@ namespace Urbaxio {
             "}\n";
     }
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { /* ... same ... */ std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateSplatResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateSplatResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { /* ... same ... */ if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
-    void Renderer::RenderFrame( SDL_Window* window, const Urbaxio::Camera& camera, Urbaxio::Engine::Scene* scene, const glm::vec3& defaultObjectColor, const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength, bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth, const glm::vec4& splatColor, float splatBlurStrength, uint64_t selectedObjId, size_t selectedTriangleBaseIndex, const std::vector<size_t>& selectedLineIndices, const glm::vec3& selectionHighlightColor, bool isDrawingActive, const glm::vec3& rubberBandStart, const glm::vec3& rubberBandEnd, const SnapResult& currentSnap, ImDrawData* imguiDrawData) { /* ... same ... */ int display_w, display_h; SDL_GetWindowSize(window, &display_w, &display_h); if (display_w <= 0 || display_h <= 0) return; glm::mat4 view = camera.GetViewMatrix(); glm::mat4 projection = camera.GetProjectionMatrix((float)display_w / (float)display_h); glm::mat4 identityModel = glm::mat4(1.0f); if (showGrid && gridVAO != 0 && lineShaderProgram != 0) { glLineWidth(gridLineWidth); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(gridVAO); glDrawArrays(GL_LINES, 0, gridVertexCount); glBindVertexArray(0); } if (userLinesVAO != 0 && lineShaderProgram != 0 && userLinesVertexCount > 0) { glLineWidth(2.0f); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(userLinesVAO); glDrawArrays(GL_LINES, 0, userLinesVertexCount); glBindVertexArray(0); glLineWidth(1.0f); } if (isDrawingActive && lineShaderProgram != 0) { glLineWidth(1.0f); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); GLuint tempVBO, tempVAO; float lineData[] = { rubberBandStart.x, rubberBandStart.y, rubberBandStart.z, userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a, rubberBandEnd.x,   rubberBandEnd.y,   rubberBandEnd.z,   userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a }; glGenVertexArrays(1, &tempVAO); glGenBuffers(1, &tempVBO); glBindVertexArray(tempVAO); glBindBuffer(GL_ARRAY_BUFFER, tempVBO); glBufferData(GL_ARRAY_BUFFER, sizeof(lineData), lineData, GL_DYNAMIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindVertexArray(tempVAO); glDrawArrays(GL_LINES, 0, 2); glBindVertexArray(0); glDeleteBuffers(1, &tempVBO); glDeleteVertexArrays(1, &tempVAO); } if (objectShaderProgram != 0 && scene) { glLineWidth(1.0f); glUseProgram(objectShaderProgram); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor)); glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength); glUniform3fv(glGetUniformLocation(objectShaderProgram, "viewPos"), 1, glm::value_ptr(camera.Position)); std::vector<Urbaxio::Engine::SceneObject*> objects = scene->get_all_objects(); for (const auto* obj : objects) { if (obj && obj->vao != 0 && obj->index_count > 0) { glm::vec3 currentObjectColor = defaultObjectColor; glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(currentObjectColor)); glm::mat4 objModel = glm::mat4(1.0f); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(objModel)); glBindVertexArray(obj->vao); glDrawElements(GL_TRIANGLES, obj->index_count, GL_UNSIGNED_INT, 0); glBindVertexArray(0); } } if (selectedObjId != 0) { Urbaxio::Engine::SceneObject* selectedObj = scene->get_object_by_id(selectedObjId); if (selectedObj && selectedObj->vao != 0 && selectedObj->index_count > 0 && selectedTriangleBaseIndex + 2 < selectedObj->get_mesh_buffers().indices.size()) { glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(selectionHighlightColor)); glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(-1.0f, -1.0f); glm::mat4 objModel = glm::mat4(1.0f); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(objModel)); glBindVertexArray(selectedObj->vao); glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, (void*)(selectedTriangleBaseIndex * sizeof(unsigned int))); glBindVertexArray(0); glDisable(GL_POLYGON_OFFSET_FILL); } } } if (showAxes && axesVAO != 0 && lineShaderProgram != 0) {  glLineWidth(axisLineWidth); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(axesVAO); glDrawArrays(GL_LINES, 0, axesVertexCount); glBindVertexArray(0); } if (splatShaderProgram != 0 && splatVAO != 0) { glLineWidth(1.0f); glUseProgram(splatShaderProgram); glUniform4fv(glGetUniformLocation(splatShaderProgram, "splatColor"), 1, glm::value_ptr(splatColor)); glUniform1f(glGetUniformLocation(splatShaderProgram, "blurStrength"), splatBlurStrength); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(splatVAO); glm::mat4 modelStatic = glm::translate(glm::mat4(1.0f), splatPosStatic); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelStatic)); glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0); glm::mat4 modelBillboard = glm::translate(glm::mat4(1.0f), splatPosBillboard); glm::mat3 viewRot = glm::mat3(view); glm::mat3 counterRot = glm::transpose(viewRot); modelBillboard = modelBillboard * glm::mat4(counterRot); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelBillboard)); glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0); glBindVertexArray(0); }
+    
+    void Renderer::RenderFrame(
+        SDL_Window* window,
+        const Urbaxio::Camera& camera,
+        Urbaxio::Engine::Scene* scene,
+        const glm::vec3& defaultObjectColor,
+        const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
+        bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth,
+        const glm::vec4& splatColor, float splatBlurStrength,
+        uint64_t selectedObjId,
+        const std::vector<size_t>& selectedTriangleIndices,
+        const std::vector<size_t>& selectedLineIndices,
+        const glm::vec3& selectionHighlightColor,
+        uint64_t hoveredObjId,
+        const std::vector<size_t>& hoveredFaceTriangleIndices,
+        const glm::vec3& hoverHighlightColor,
+        bool isDrawingActive, const glm::vec3& rubberBandStart, const glm::vec3& rubberBandEnd,
+        const SnapResult& currentSnap,
+        ImDrawData* imguiDrawData
+    ) {
+        int display_w, display_h; SDL_GetWindowSize(window, &display_w, &display_h); if (display_w <= 0 || display_h <= 0) return; glm::mat4 view = camera.GetViewMatrix(); glm::mat4 projection = camera.GetProjectionMatrix((float)display_w / (float)display_h); glm::mat4 identityModel = glm::mat4(1.0f);
+        if (showGrid && gridVAO != 0 && lineShaderProgram != 0) { glLineWidth(gridLineWidth); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(gridVAO); glDrawArrays(GL_LINES, 0, gridVertexCount); glBindVertexArray(0); }
+        if (userLinesVAO != 0 && lineShaderProgram != 0 && userLinesVertexCount > 0) { glLineWidth(2.0f); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(userLinesVAO); glDrawArrays(GL_LINES, 0, userLinesVertexCount); glBindVertexArray(0); glLineWidth(1.0f); }
+        if (isDrawingActive && lineShaderProgram != 0) { glLineWidth(1.0f); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); GLuint tempVBO, tempVAO; float lineData[] = { rubberBandStart.x, rubberBandStart.y, rubberBandStart.z, userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a, rubberBandEnd.x,   rubberBandEnd.y,   rubberBandEnd.z,   userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a }; glGenVertexArrays(1, &tempVAO); glGenBuffers(1, &tempVBO); glBindVertexArray(tempVAO); glBindBuffer(GL_ARRAY_BUFFER, tempVBO); glBufferData(GL_ARRAY_BUFFER, sizeof(lineData), lineData, GL_DYNAMIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindVertexArray(tempVAO); glDrawArrays(GL_LINES, 0, 2); glBindVertexArray(0); glDeleteBuffers(1, &tempVBO); glDeleteVertexArrays(1, &tempVAO); }
+        if (objectShaderProgram != 0 && scene) { glLineWidth(1.0f); glUseProgram(objectShaderProgram); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor)); glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength); glUniform3fv(glGetUniformLocation(objectShaderProgram, "viewPos"), 1, glm::value_ptr(camera.Position)); glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+            
+            // 1. Draw all objects
+            for (const auto* obj : scene->get_all_objects()) {
+                if (obj && obj->vao != 0 && obj->index_count > 0) {
+                    glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
+                    glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+                    glBindVertexArray(obj->vao);
+                    glDrawElements(GL_TRIANGLES, obj->index_count, GL_UNSIGNED_INT, 0);
+                    glBindVertexArray(0);
+                }
+            }
+
+            // 2. Draw hover highlight (if any, and not the same as selected)
+            if (hoveredObjId != 0 && !hoveredFaceTriangleIndices.empty()) {
+                bool isSameAsSelected = (hoveredObjId == selectedObjId) && (hoveredFaceTriangleIndices == selectedTriangleIndices);
+                if (!isSameAsSelected) {
+                    Urbaxio::Engine::SceneObject* hoveredObj = scene->get_object_by_id(hoveredObjId);
+                     if (hoveredObj && hoveredObj->vao != 0) {
+                        glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(hoverHighlightColor));
+                        glEnable(GL_POLYGON_OFFSET_FILL);
+                        glPolygonOffset(-2.0f, -2.0f); // Use a different offset
+                        glBindVertexArray(hoveredObj->vao);
+                        for (size_t baseIndex : hoveredFaceTriangleIndices) {
+                             if (baseIndex + 2 < hoveredObj->get_mesh_buffers().indices.size()) {
+                                 glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, (void*)(baseIndex * sizeof(unsigned int)));
+                             }
+                        }
+                        glBindVertexArray(0);
+                        glDisable(GL_POLYGON_OFFSET_FILL);
+                     }
+                }
+            }
+            
+            // 3. Draw selection highlight (on top of everything)
+            if (selectedObjId != 0 && !selectedTriangleIndices.empty()) {
+                Urbaxio::Engine::SceneObject* selectedObj = scene->get_object_by_id(selectedObjId);
+                if (selectedObj && selectedObj->vao != 0) {
+                    glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(selectionHighlightColor));
+                    glEnable(GL_POLYGON_OFFSET_FILL);
+                    glPolygonOffset(-1.0f, -1.0f);
+                    glBindVertexArray(selectedObj->vao);
+                    for (size_t baseIndex : selectedTriangleIndices) {
+                        if (baseIndex + 2 < selectedObj->get_mesh_buffers().indices.size()) {
+                             glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, (void*)(baseIndex * sizeof(unsigned int)));
+                        }
+                    }
+                    glBindVertexArray(0);
+                    glDisable(GL_POLYGON_OFFSET_FILL);
+                }
+            }
+            
+            // 4. Draw Push/Pull Preview
+            if (previewVertexCount > 0) {
+                glDepthMask(GL_FALSE); // Disable writing to depth buffer for transparency
+                glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(hoverHighlightColor));
+                glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 0.5f);
+                glBindVertexArray(previewVAO);
+                glDrawArrays(GL_TRIANGLES, 0, previewVertexCount);
+                glBindVertexArray(0);
+                glDepthMask(GL_TRUE); // Re-enable depth writing
+                glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+            }
+        }
+        if (showAxes && axesVAO != 0 && lineShaderProgram != 0) {  glLineWidth(axisLineWidth); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(axesVAO); glDrawArrays(GL_LINES, 0, axesVertexCount); glBindVertexArray(0); }
+        if (splatShaderProgram != 0 && splatVAO != 0) { glLineWidth(1.0f); glUseProgram(splatShaderProgram); glUniform4fv(glGetUniformLocation(splatShaderProgram, "splatColor"), 1, glm::value_ptr(splatColor)); glUniform1f(glGetUniformLocation(splatShaderProgram, "blurStrength"), splatBlurStrength); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(splatVAO); glm::mat4 modelStatic = glm::translate(glm::mat4(1.0f), splatPosStatic); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelStatic)); glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0); glm::mat4 modelBillboard = glm::translate(glm::mat4(1.0f), splatPosBillboard); glm::mat3 viewRot = glm::mat3(view); glm::mat3 counterRot = glm::transpose(viewRot); modelBillboard = modelBillboard * glm::mat4(counterRot); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelBillboard)); glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0); glBindVertexArray(0); }
         glDisable(GL_DEPTH_TEST); DrawSnapMarker(currentSnap, camera, view, projection, display_w, display_h); glEnable(GL_DEPTH_TEST);
-        glLineWidth(1.0f); glUseProgram(0); ImGui_ImplOpenGL3_RenderDrawData(imguiDrawData); }
+        glLineWidth(1.0f); glUseProgram(0); ImGui_ImplOpenGL3_RenderDrawData(imguiDrawData);
+    }
     bool Renderer::CreateShaderPrograms() { /* ... same ... */ { GLuint vs = CompileShader(GL_VERTEX_SHADER, objectVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, objectFragmentShaderSource); if (vs != 0 && fs != 0) objectShaderProgram = LinkShaderProgram(vs, fs); if (objectShaderProgram == 0) return false; std::cout << "Renderer: Object shader program created." << std::endl; } { GLuint vs = CompileShader(GL_VERTEX_SHADER, lineVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, lineFragmentShaderSource); if (vs != 0 && fs != 0) lineShaderProgram = LinkShaderProgram(vs, fs); if (lineShaderProgram == 0) return false; std::cout << "Renderer: Line shader program created." << std::endl; } { GLuint vs = CompileShader(GL_VERTEX_SHADER, splatVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, splatFragmentShaderSource); if (vs != 0 && fs != 0) splatShaderProgram = LinkShaderProgram(vs, fs); if (splatShaderProgram == 0) return false; std::cout << "Renderer: Splat shader program created." << std::endl; } { GLuint vs = CompileShader(GL_VERTEX_SHADER, markerVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, markerFragmentShaderSource); if (vs != 0 && fs != 0) markerShaderProgram = LinkShaderProgram(vs, fs); if (markerShaderProgram == 0) { std::cerr << "Renderer Error: Failed to link marker shader program!" << std::endl; return false; } std::cout << "Renderer: Marker shader program created." << std::endl; } return true; }
     bool Renderer::CreateGridResources() { /* ... same ... */ std::vector<float> gridVertices = GenerateGridVertices(gridSizeF, gridSteps, gridAccentStep, gridColor1m, gridColor10m); if (gridVertices.empty()) { std::cerr << "Renderer Error: Failed to generate grid vertices!" << std::endl; return false; } gridVertexCount = static_cast<int>(gridVertices.size() / 7); glGenVertexArrays(1, &gridVAO); glGenBuffers(1, &gridVBO); glBindVertexArray(gridVAO); glBindBuffer(GL_ARRAY_BUFFER, gridVBO); glBufferData(GL_ARRAY_BUFFER, gridVertices.size() * sizeof(float), gridVertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindBuffer(GL_ARRAY_BUFFER, 0); glBindVertexArray(0); std::cout << "Renderer: Grid VAO/VBO created (" << gridVertexCount << " vertices)." << std::endl; return gridVAO != 0 && gridVBO != 0; }
     bool Renderer::CreateAxesResources() { /* ... same ... */ std::vector<float> axesVertices = GenerateAxisVertices(axisLength); if (axesVertices.empty()) { std::cerr << "Renderer Error: Failed to generate axes vertices!" << std::endl; return false; } axesVertexCount = static_cast<int>(axesVertices.size() / 7); glGenVertexArrays(1, &axesVAO); glGenBuffers(1, &axesVBO); glBindVertexArray(axesVAO); glBindBuffer(GL_ARRAY_BUFFER, axesVBO); glBufferData(GL_ARRAY_BUFFER, axesVertices.size() * sizeof(float), axesVertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindBuffer(GL_ARRAY_BUFFER, 0); glBindVertexArray(0); std::cout << "Renderer: Axes VAO/VBO created (" << axesVertexCount << " vertices)." << std::endl; return axesVAO != 0 && axesVBO != 0; }
@@ -2149,7 +2798,98 @@ namespace Urbaxio {
     void Renderer::UpdateUserLinesBuffer(const std::vector<std::pair<glm::vec3, glm::vec3>>& lineSegments, const std::vector<size_t>& selectedLineIndices) { /* ... same ... */ if (userLinesVBO == 0) { userLinesVertexCount = 0; return; } if (lineSegments.empty()) { userLinesVertexCount = 0; return; } std::vector<float> lineData; lineData.reserve(lineSegments.size() * 2 * 7); for (size_t i = 0; i < lineSegments.size(); ++i) { const auto& segment = lineSegments[i]; glm::vec4 currentColor = userLineColor; if (std::find(selectedLineIndices.begin(), selectedLineIndices.end(), i) != selectedLineIndices.end()) { currentColor = selectedUserLineColor; } lineData.push_back(segment.first.x); lineData.push_back(segment.first.y); lineData.push_back(segment.first.z); lineData.push_back(currentColor.r); lineData.push_back(currentColor.g); lineData.push_back(currentColor.b); lineData.push_back(currentColor.a); lineData.push_back(segment.second.x); lineData.push_back(segment.second.y); lineData.push_back(segment.second.z); lineData.push_back(currentColor.r); lineData.push_back(currentColor.g); lineData.push_back(currentColor.b); lineData.push_back(currentColor.a); } glBindBuffer(GL_ARRAY_BUFFER, userLinesVBO); glBufferData(GL_ARRAY_BUFFER, lineData.size() * sizeof(float), lineData.data(), GL_DYNAMIC_DRAW); glBindBuffer(GL_ARRAY_BUFFER, 0); userLinesVertexCount = static_cast<int>(lineData.size() / 7); }
     bool Renderer::CreateMarkerResources() { /* ... same ... */ std::vector<float> circleVertices = GenerateCircleVertices(24); if (circleVertices.empty()) return false; markerVertexCounts[MarkerShape::CIRCLE] = static_cast<int>(circleVertices.size() / 2); glGenVertexArrays(1, &markerVAOs[MarkerShape::CIRCLE]); glGenBuffers(1, &markerVBOs[MarkerShape::CIRCLE]); glBindVertexArray(markerVAOs[MarkerShape::CIRCLE]); glBindBuffer(GL_ARRAY_BUFFER, markerVBOs[MarkerShape::CIRCLE]); glBufferData(GL_ARRAY_BUFFER, circleVertices.size() * sizeof(float), circleVertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glBindVertexArray(0); std::cout << "Renderer: Circle Marker VAO/VBO created (" << markerVertexCounts[MarkerShape::CIRCLE] << " vertices)." << std::endl; std::vector<float> diamondVertices = GenerateDiamondVertices(); if (diamondVertices.empty()) return false; markerVertexCounts[MarkerShape::DIAMOND] = static_cast<int>(diamondVertices.size() / 2); glGenVertexArrays(1, &markerVAOs[MarkerShape::DIAMOND]); glGenBuffers(1, &markerVBOs[MarkerShape::DIAMOND]); glBindVertexArray(markerVAOs[MarkerShape::DIAMOND]); glBindBuffer(GL_ARRAY_BUFFER, markerVBOs[MarkerShape::DIAMOND]); glBufferData(GL_ARRAY_BUFFER, diamondVertices.size() * sizeof(float), diamondVertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glBindVertexArray(0); std::cout << "Renderer: Diamond Marker VAO/VBO created (" << markerVertexCounts[MarkerShape::DIAMOND] << " vertices)." << std::endl; return true; }
     void Renderer::DrawSnapMarker(const SnapResult& snap, const Camera& camera, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight) { /* ... same ... */ if (!snap.snapped || markerShaderProgram == 0) return; MarkerShape shape = MarkerShape::CIRCLE; glm::vec4 color = snapMarkerColorPoint; float currentMarkerSize = markerScreenSize; switch (snap.type) { case SnapType::ENDPOINT: case SnapType::ORIGIN: shape = MarkerShape::CIRCLE; color = snapMarkerColorPoint; currentMarkerSize = markerScreenSize; break; case SnapType::MIDPOINT: shape = MarkerShape::CIRCLE; color = snapMarkerColorMidpoint; currentMarkerSize = markerScreenSizeMidpoint; break; case SnapType::ON_EDGE: shape = MarkerShape::DIAMOND; color = snapMarkerColorOnEdge; currentMarkerSize = markerScreenSizeOnEdge; break; case SnapType::AXIS_X: shape = MarkerShape::DIAMOND; color = snapMarkerColorAxisX; currentMarkerSize = markerScreenSize; break; case SnapType::AXIS_Y: shape = MarkerShape::DIAMOND; color = snapMarkerColorAxisY; currentMarkerSize = markerScreenSize; break; case SnapType::AXIS_Z: shape = MarkerShape::DIAMOND; color = snapMarkerColorAxisZ; currentMarkerSize = markerScreenSize; break; case SnapType::ON_FACE: shape = MarkerShape::CIRCLE; color = snapMarkerColorOnEdge; /* Using OnEdge magenta for now, define snapMarkerColorOnFace later */ currentMarkerSize = markerScreenSize; break; default: return; } if (markerVAOs.find(shape) == markerVAOs.end()) return; GLuint vao = markerVAOs[shape]; int vertexCount = markerVertexCounts[shape]; if (vao == 0 || vertexCount == 0) return; glUseProgram(markerShaderProgram); glUniform3fv(glGetUniformLocation(markerShaderProgram, "u_WorldPos"), 1, glm::value_ptr(snap.worldPoint)); glUniform1f(glGetUniformLocation(markerShaderProgram, "u_ScreenSize"), currentMarkerSize); glUniformMatrix4fv(glGetUniformLocation(markerShaderProgram, "u_ViewMatrix"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(markerShaderProgram, "u_ProjMatrix"), 1, GL_FALSE, glm::value_ptr(proj)); glUniform2f(glGetUniformLocation(markerShaderProgram, "u_ViewportSize"), (float)screenWidth, (float)screenHeight); glUniform4fv(glGetUniformLocation(markerShaderProgram, "u_Color"), 1, glm::value_ptr(color)); glBindVertexArray(vao); if (shape == MarkerShape::CIRCLE) { glDrawArrays(GL_TRIANGLE_FAN, 0, vertexCount); } else if (shape == MarkerShape::DIAMOND) { glLineWidth(2.0f); glDrawArrays(GL_LINE_LOOP, 0, vertexCount -1); } glBindVertexArray(0); glLineWidth(1.0f); }
-    void Renderer::Cleanup() { /* ... same ... */ std::cout << "Renderer: Cleaning up resources..." << std::endl; if (gridVAO != 0) glDeleteVertexArrays(1, &gridVAO); gridVAO = 0; if (gridVBO != 0) glDeleteBuffers(1, &gridVBO); gridVBO = 0; if (axesVAO != 0) glDeleteVertexArrays(1, &axesVAO); axesVAO = 0; if (axesVBO != 0) glDeleteBuffers(1, &axesVBO); axesVBO = 0; if (splatVAO != 0) glDeleteVertexArrays(1, &splatVAO); splatVAO = 0; if (splatVBO != 0) glDeleteBuffers(1, &splatVBO); splatVBO = 0; if (splatEBO != 0) glDeleteBuffers(1, &splatEBO); splatEBO = 0; if (userLinesVAO != 0) glDeleteVertexArrays(1, &userLinesVAO); userLinesVAO = 0; if (userLinesVBO != 0) glDeleteBuffers(1, &userLinesVBO); userLinesVBO = 0; for (auto const& [shape, vao] : markerVAOs) { if (vao != 0) glDeleteVertexArrays(1, &vao); } markerVAOs.clear(); for (auto const& [shape, vbo] : markerVBOs) { if (vbo != 0) glDeleteBuffers(1, &vbo); } markerVBOs.clear(); markerVertexCounts.clear(); if (objectShaderProgram != 0) glDeleteProgram(objectShaderProgram); objectShaderProgram = 0; if (lineShaderProgram != 0) glDeleteProgram(lineShaderProgram); lineShaderProgram = 0; if (splatShaderProgram != 0) glDeleteProgram(splatShaderProgram); splatShaderProgram = 0; if (markerShaderProgram != 0) glDeleteProgram(markerShaderProgram); markerShaderProgram = 0; std::cout << "Renderer: Resource cleanup finished." << std::endl; }
+    void Renderer::Cleanup() {
+        std::cout << "Renderer: Cleaning up resources..." << std::endl;
+        if (gridVAO != 0) glDeleteVertexArrays(1, &gridVAO); gridVAO = 0; if (gridVBO != 0) glDeleteBuffers(1, &gridVBO); gridVBO = 0;
+        if (axesVAO != 0) glDeleteVertexArrays(1, &axesVAO); axesVAO = 0; if (axesVBO != 0) glDeleteBuffers(1, &axesVBO); axesVBO = 0;
+        if (splatVAO != 0) glDeleteVertexArrays(1, &splatVAO); splatVAO = 0; if (splatVBO != 0) glDeleteBuffers(1, &splatVBO); splatVBO = 0; if (splatEBO != 0) glDeleteBuffers(1, &splatEBO); splatEBO = 0;
+        if (userLinesVAO != 0) glDeleteVertexArrays(1, &userLinesVAO); userLinesVAO = 0; if (userLinesVBO != 0) glDeleteBuffers(1, &userLinesVBO); userLinesVBO = 0;
+        if (previewVAO != 0) glDeleteVertexArrays(1, &previewVAO); previewVAO = 0; if (previewVBO != 0) glDeleteBuffers(1, &previewVBO); previewVBO = 0;
+        for (auto const& [shape, vao] : markerVAOs) { if (vao != 0) glDeleteVertexArrays(1, &vao); } markerVAOs.clear();
+        for (auto const& [shape, vbo] : markerVBOs) { if (vbo != 0) glDeleteBuffers(1, &vbo); } markerVBOs.clear();
+        markerVertexCounts.clear();
+        if (objectShaderProgram != 0) glDeleteProgram(objectShaderProgram); objectShaderProgram = 0;
+        if (lineShaderProgram != 0) glDeleteProgram(lineShaderProgram); lineShaderProgram = 0;
+        if (splatShaderProgram != 0) glDeleteProgram(splatShaderProgram); splatShaderProgram = 0;
+        if (markerShaderProgram != 0) glDeleteProgram(markerShaderProgram); markerShaderProgram = 0;
+        std::cout << "Renderer: Resource cleanup finished." << std::endl;
+    }
+
+    bool Renderer::CreatePreviewResources() {
+        glGenVertexArrays(1, &previewVAO);
+        glGenBuffers(1, &previewVBO);
+        glBindVertexArray(previewVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, previewVBO);
+        // Allocate a large buffer for dynamic drawing
+        glBufferData(GL_ARRAY_BUFFER, 10000 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+        // Position attribute
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        // Normal attribute
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glBindVertexArray(0);
+        std::cout << "Renderer: Preview VAO/VBO created." << std::endl;
+        return previewVAO != 0 && previewVBO != 0;
+    }
+
+    void Renderer::UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance) {
+        if (faceIndices.empty() || std::abs(distance) < 1e-4) {
+            previewVertexCount = 0;
+            return;
+        }
+
+        const auto& mesh = object.get_mesh_buffers();
+        if (!object.has_mesh()) {
+            previewVertexCount = 0;
+            return;
+        }
+        
+        std::vector<float> previewVertices;
+        glm::vec3 offset = direction * distance;
+
+        for (size_t baseIndex : faceIndices) {
+            unsigned int i0 = mesh.indices[baseIndex];
+            unsigned int i1 = mesh.indices[baseIndex + 1];
+            unsigned int i2 = mesh.indices[baseIndex + 2];
+
+            glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+            glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+            glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+            
+            // --- Top Cap ---
+            glm::vec3 v0d = v0 + offset;
+            glm::vec3 v1d = v1 + offset;
+            glm::vec3 v2d = v2 + offset;
+            previewVertices.insert(previewVertices.end(), {v0d.x, v0d.y, v0d.z, direction.x, direction.y, direction.z});
+            previewVertices.insert(previewVertices.end(), {v1d.x, v1d.y, v1d.z, direction.x, direction.y, direction.z});
+            previewVertices.insert(previewVertices.end(), {v2d.x, v2d.y, v2d.z, direction.x, direction.y, direction.z});
+            
+            // --- Sides (3 quads) ---
+            glm::vec3 p[3] = {v0, v1, v2};
+            for(int i=0; i<3; ++i) {
+                glm::vec3 p1 = p[i];
+                glm::vec3 p2 = p[(i+1)%3];
+                glm::vec3 p1d = p1 + offset;
+                glm::vec3 p2d = p2 + offset;
+
+                glm::vec3 sideNormal = glm::normalize(glm::cross(p2-p1, direction));
+                
+                previewVertices.insert(previewVertices.end(), {p1.x, p1.y, p1.z, sideNormal.x, sideNormal.y, sideNormal.z});
+                previewVertices.insert(previewVertices.end(), {p2.x, p2.y, p2.z, sideNormal.x, sideNormal.y, sideNormal.z});
+                previewVertices.insert(previewVertices.end(), {p1d.x, p1d.y, p1d.z, sideNormal.x, sideNormal.y, sideNormal.z});
+
+                previewVertices.insert(previewVertices.end(), {p1d.x, p1d.y, p1d.z, sideNormal.x, sideNormal.y, sideNormal.z});
+                previewVertices.insert(previewVertices.end(), {p2.x, p2.y, p2.z, sideNormal.x, sideNormal.y, sideNormal.z});
+                previewVertices.insert(previewVertices.end(), {p2d.x, p2d.y, p2d.z, sideNormal.x, sideNormal.y, sideNormal.z});
+            }
+        }
+
+        previewVertexCount = previewVertices.size() / 6;
+        glBindBuffer(GL_ARRAY_BUFFER, previewVBO);
+        glBufferData(GL_ARRAY_BUFFER, previewVertices.size() * sizeof(float), previewVertices.data(), GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
 
 } // namespace Urbaxio
 ENCODINGUTF8ENCODINGUTF8--- File: shell/src/snapping.cpp ---
