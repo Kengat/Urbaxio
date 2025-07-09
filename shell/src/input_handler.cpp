@@ -205,8 +205,9 @@ namespace Urbaxio {
                         } 
                     }
                     else if (isPushPullMode && scene) {
+                        bool ctrlDown = (SDL_GetModState() & KMOD_CTRL);
                         if (isPushPullActive) {
-                            scene->ExtrudeFace(pushPull_objId, pushPull_faceIndices, pushPull_faceNormal, pushPullCurrentDistance);
+                            scene->ExtrudeFace(pushPull_objId, pushPull_faceIndices, pushPull_faceNormal, pushPullCurrentDistance, ctrlDown);
                             std::cout << "DEBUG: Push/Pull operation finalized with distance: " << pushPullCurrentDistance << std::endl;
                             isPushPullActive = false;
                             pushPullCurrentDistance = 0.0f;
@@ -358,11 +359,12 @@ namespace Urbaxio {
         }
         
         if (enterPressedThisFrame && scene) {
+            bool ctrlDown = (SDL_GetModState() & KMOD_CTRL);
             if (isPushPullActive) {
                 float dist;
                 auto [ptr, ec] = std::from_chars(lineLengthInputBuf, lineLengthInputBuf + strlen(lineLengthInputBuf), dist);
                 if (ec == std::errc() && ptr == lineLengthInputBuf + strlen(lineLengthInputBuf)) {
-                    scene->ExtrudeFace(pushPull_objId, pushPull_faceIndices, pushPull_faceNormal, dist);
+                    scene->ExtrudeFace(pushPull_objId, pushPull_faceIndices, pushPull_faceNormal, dist, ctrlDown);
                     isPushPullActive = false;
                     pushPullCurrentDistance = 0.0f;
                     lineLengthInputBuf[0] = '\0';

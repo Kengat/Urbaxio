@@ -47,6 +47,7 @@
 #include <BRepGProp.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx> // For vertex-edge map
 #include <TopExp.hxx> // For TopExp::MapShapes
+#include <ShapeUpgrade_UnifySameDomain.hxx> // <-- THE MAGIC TOOL
 
 namespace Urbaxio::Engine {
 
@@ -667,7 +668,7 @@ namespace Urbaxio::Engine {
     }
 
     
-    bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance) {
+    bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance, bool disableMerge) {
         SceneObject* obj = get_object_by_id(objectId);
         if (!obj || !obj->has_shape() || faceTriangleIndices.empty() || std::abs(distance) < 1e-4) {
             return false;
@@ -743,6 +744,16 @@ namespace Urbaxio::Engine {
             if (newFinalShape.IsNull()) {
                 std::cerr << "OCCT Error: Resulting shape is null after boolean operation!" << std::endl;
                 return false;
+            }
+
+            // --- Unification Step ---
+            if (!disableMerge) {
+                std::cout << "DEBUG: Attempting to unify coplanar faces..." << std::endl;
+                ShapeUpgrade_UnifySameDomain Unifier(newFinalShape);
+                Unifier.Build(); // <--- CORRECTED METHOD CALL
+                newFinalShape = Unifier.Shape();
+            } else {
+                std::cout << "DEBUG: Face unification skipped by user (Ctrl)." << std::endl;
             }
             
             BRepCheck_Analyzer analyzer(newFinalShape);

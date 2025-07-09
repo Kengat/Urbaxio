@@ -60,7 +60,7 @@ namespace Urbaxio::Engine {
 
 
         // --- Geometry Modification ---
-        bool ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance);
+        bool ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance, bool disableMerge = false);
 
     private:
         std::unordered_map<uint64_t, std::unique_ptr<SceneObject>> objects_;
