@@ -5,6 +5,7 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include <set> // <-- ADDED for boundaryLineIDs
 #include <cad_kernel/cad_kernel.h>
 #include <cad_kernel/MeshBuffers.h>
 #include <glad/glad.h> //     GLuint
@@ -43,6 +44,9 @@ namespace Urbaxio::Engine {
         GLuint vbo_normals = 0;
         GLuint ebo = 0;
         GLsizei index_count = 0;
+        
+        // --- NEW: Link to boundary lines ---
+        std::set<uint64_t> boundaryLineIDs;
 
     private:
         uint64_t id_;

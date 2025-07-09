@@ -45,6 +45,8 @@
 #include <BRepBndLib.hxx>
 #include <GProp_GProps.hxx>
 #include <BRepGProp.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx> // For vertex-edge map
+#include <TopExp.hxx> // For TopExp::MapShapes
 
 namespace Urbaxio::Engine {
 
@@ -59,7 +61,7 @@ namespace Urbaxio::Engine {
     Scene::~Scene() = default;
 
     SceneObject* Scene::create_object(const std::string& name) { uint64_t new_id = next_object_id_++; auto result = objects_.emplace(new_id, std::make_unique<SceneObject>(new_id, name)); if (result.second) { return result.first->second.get(); } else { std::cerr << "Scene: Failed to insert new object with ID " << new_id << " into map." << std::endl; next_object_id_--; return nullptr; } }
-    SceneObject* Scene::create_box_object(const std::string& name, double dx, double dy, double dz) { SceneObject* new_obj = create_object(name); if (!new_obj) { return nullptr; } Urbaxio::CadKernel::OCCT_ShapeUniquePtr box_shape_ptr = Urbaxio::CadKernel::create_box(dx, dy, dz); if (!box_shape_ptr) { return nullptr; } const TopoDS_Shape* shape_to_triangulate = box_shape_ptr.get(); if (!shape_to_triangulate || shape_to_triangulate->IsNull()) { return nullptr; } Urbaxio::CadKernel::MeshBuffers mesh_data = Urbaxio::CadKernel::TriangulateShape(*shape_to_triangulate); new_obj->set_shape(std::move(box_shape_ptr)); if (!mesh_data.isEmpty()) { new_obj->set_mesh_buffers(std::move(mesh_data)); } else { std::cerr << "Scene: Warning - Triangulation failed for box '" << name << "'." << std::endl; } return new_obj; }
+    SceneObject* Scene::create_box_object(const std::string& name, double dx, double dy, double dz) { SceneObject* new_obj = create_object(name); if (!new_obj) { return nullptr; } Urbaxio::CadKernel::OCCT_ShapeUniquePtr box_shape_ptr = Urbaxio::CadKernel::create_box(dx, dy, dz); if (!box_shape_ptr) { return nullptr; } const TopoDS_Shape* shape_to_triangulate = box_shape_ptr.get(); if (!shape_to_triangulate || shape_to_triangulate->IsNull()) { return nullptr; } new_obj->set_shape(std::move(box_shape_ptr)); UpdateObjectBoundary(new_obj); Urbaxio::CadKernel::MeshBuffers mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_obj->get_shape()); if (!mesh_data.isEmpty()) { new_obj->set_mesh_buffers(std::move(mesh_data)); } else { std::cerr << "Scene: Warning - Triangulation failed for box '" << name << "'." << std::endl; } return new_obj; }
     SceneObject* Scene::get_object_by_id(uint64_t id) { auto it = objects_.find(id); if (it != objects_.end()) { return it->second.get(); } return nullptr; }
     const SceneObject* Scene::get_object_by_id(uint64_t id) const { auto it = objects_.find(id); if (it != objects_.end()) { return it->second.get(); } return nullptr; }
     std::vector<SceneObject*> Scene::get_all_objects() { std::vector<SceneObject*> result; result.reserve(objects_.size()); for (auto const& [id, obj_ptr] : objects_) { result.push_back(obj_ptr.get()); } return result; }
@@ -111,13 +113,22 @@ namespace Urbaxio::Engine {
         // Remove duplicate points
         all_points.erase(std::unique(all_points.begin(), all_points.end(), AreVec3Equal), all_points.end());
 
-        // Add the new line as segments
+        // Add the new line as segments and trigger face finding for each new segment
+        std::vector<uint64_t> new_line_ids;
         for (size_t i = 0; i < all_points.size() - 1; ++i) {
-            AddSingleLineSegment(all_points[i], all_points[i+1]);
+            uint64_t new_id = AddSingleLineSegment(all_points[i], all_points[i+1]);
+            if (new_id != 0) {
+                new_line_ids.push_back(new_id);
+            }
+        }
+        
+        for (uint64_t id : new_line_ids) {
+            FindAndCreateFaces(id);
         }
     }
 
-    // This is the internal, "dumb" version of AddUserLine. It just adds a segment.
+    // This is the internal, "dumb" version of AddUserLine. It only adds a segment and updates adjacency.
+    // It does NOT trigger face finding.
     uint64_t Scene::AddSingleLineSegment(const glm::vec3& start, const glm::vec3& end) {
         glm::vec3 canonicalStart = MergeOrAddVertex(start);
         glm::vec3 canonicalEnd = MergeOrAddVertex(end);
@@ -130,7 +141,7 @@ namespace Urbaxio::Engine {
         for(const auto& [id, line] : lines_) {
             if ((AreVec3Equal(line.start, canonicalStart) && AreVec3Equal(line.end, canonicalEnd)) ||
                 (AreVec3Equal(line.start, canonicalEnd) && AreVec3Equal(line.end, canonicalStart))) {
-                return 0; // Duplicate line
+                return id; // Duplicate line, return existing ID
             }
         }
         
@@ -140,7 +151,6 @@ namespace Urbaxio::Engine {
         vertexAdjacency_[canonicalStart].push_back(newLineId);
         vertexAdjacency_[canonicalEnd].push_back(newLineId);
         
-        FindAndCreateFaces(newLineId);
         return newLineId;
     }
 
@@ -199,8 +209,12 @@ namespace Urbaxio::Engine {
         RemoveLine(lineId);
 
         // 2. Add two new lines. Use internal function to avoid recursive intersection checks.
-        AddSingleLineSegment(originalLine.start, canonicalSplitPoint);
-        AddSingleLineSegment(canonicalSplitPoint, originalLine.end);
+        uint64_t id1 = AddSingleLineSegment(originalLine.start, canonicalSplitPoint);
+        uint64_t id2 = AddSingleLineSegment(canonicalSplitPoint, originalLine.end);
+        
+        // 3. Now, explicitly try to find faces for the new segments
+        if(id1 != 0) FindAndCreateFaces(id1);
+        if(id2 != 0) FindAndCreateFaces(id2);
         
         // Return the canonical merged vertex for the split point
         return canonicalSplitPoint;
@@ -215,9 +229,9 @@ namespace Urbaxio::Engine {
         glm::vec3 d1 = p2 - p1;
         glm::vec3 d2 = p4 - p3;
 
-        // --- NEW: More robust coplanarity check ---
-        // Create a plane with 3 points and check if the 4th is on it.
-        glm::vec3 plane_normal = glm::cross(d1, p3 - p1);
+        // --- Robust coplanarity check ---
+        glm::vec3 p3_p1 = p3 - p1;
+        glm::vec3 plane_normal = glm::cross(d1, p3_p1);
         if (glm::length2(plane_normal) < EPSILON * EPSILON) {
             // All 3 points are collinear. Check if p4 is on the same line.
             if (glm::length2(glm::cross(d1, p4 - p1)) > EPSILON * EPSILON) {
@@ -231,30 +245,16 @@ namespace Urbaxio::Engine {
             }
         }
 
-        // Lines are coplanar, now find intersection point
         glm::vec3 d1_cross_d2 = glm::cross(d1, d2);
         float d1_cross_d2_lenSq = glm::length2(d1_cross_d2);
 
-        // Check if lines are parallel
-        if (d1_cross_d2_lenSq < EPSILON * EPSILON) {
-            return false; // Parallel lines, we don't handle overlapping case for now.
-        }
+        if (d1_cross_d2_lenSq < EPSILON * EPSILON) return false;
         
-        glm::vec3 p3_p1_cross_d2 = glm::cross(p3 - p1, d2);
-
-        float t = glm::dot(p3_p1_cross_d2, d1_cross_d2) / d1_cross_d2_lenSq;
-        
-        // --- NEW: Stricter bounds check to avoid intersections at endpoints ---
-        if (t < EPSILON || t > 1.0f - EPSILON) {
-            return false;
-        }
+        float t = glm::dot(glm::cross(p3 - p1, d2), d1_cross_d2) / d1_cross_d2_lenSq;
+        if (t < EPSILON || t > 1.0f - EPSILON) return false;
 
         float u = glm::dot(glm::cross(p3 - p1, d1), d1_cross_d2) / d1_cross_d2_lenSq;
-        
-        // --- NEW: Stricter bounds check to avoid intersections at endpoints ---
-        if (u < EPSILON || u > 1.0f - EPSILON) {
-            return false;
-        }
+        if (u < EPSILON || u > 1.0f - EPSILON) return false;
 
         out_intersection_point = p1 + t * d1;
         return true;
@@ -392,7 +392,8 @@ namespace Urbaxio::Engine {
                 if (new_face_obj) {
                     TopoDS_Shape* shape_copy = new TopoDS_Shape(face);
                     new_face_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(shape_copy));
-                    Urbaxio::CadKernel::MeshBuffers mesh_data = Urbaxio::CadKernel::TriangulateShape(face);
+                    UpdateObjectBoundary(new_face_obj); // <-- Sync lines
+                    Urbaxio::CadKernel::MeshBuffers mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_face_obj->get_shape());
                     if (!mesh_data.isEmpty()) {
                         new_face_obj->set_mesh_buffers(std::move(mesh_data));
                         std::cout << "Scene: Auto-created Face object: " << face_name << ". Mesh ready for GPU." << std::endl;
@@ -441,9 +442,58 @@ namespace Urbaxio::Engine {
             }
         }
     }
+    
+    // --- NEW HELPER FUNCTIONS ---
+    std::vector<std::pair<glm::vec3, glm::vec3>> Scene::ExtractEdgesFromShape(const TopoDS_Shape& shape) {
+        std::vector<std::pair<glm::vec3, glm::vec3>> edges;
+        TopExp_Explorer explorer(shape, TopAbs_EDGE);
+        for (; explorer.More(); explorer.Next()) {
+            const TopoDS_Edge& edge = TopoDS::Edge(explorer.Current());
+            TopoDS_Vertex v1, v2;
+            TopExp::Vertices(edge, v1, v2);
+            if (v1.IsNull() || v2.IsNull()) continue;
+            gp_Pnt p1 = BRep_Tool::Pnt(v1);
+            gp_Pnt p2 = BRep_Tool::Pnt(v2);
+            edges.push_back({
+                { (float)p1.X(), (float)p1.Y(), (float)p1.Z() },
+                { (float)p2.X(), (float)p2.Y(), (float)p2.Z() }
+            });
+        }
+        return edges;
+    }
 
-    // --- Push/Pull Implementation ---
+    void Scene::UpdateObjectBoundary(SceneObject* obj) {
+        if (!obj || !obj->has_shape()) return;
+        
+        auto new_edges = ExtractEdgesFromShape(*obj->get_shape());
+        std::set<uint64_t> new_boundary_line_ids;
+        std::set<uint64_t> old_line_ids_to_check = obj->boundaryLineIDs;
 
+        // Add/update lines from new edges
+        for (const auto& edge : new_edges) {
+            uint64_t line_id = AddSingleLineSegment(edge.first, edge.second);
+            if (line_id != 0) {
+                new_boundary_line_ids.insert(line_id);
+                // Remove from the set of old lines, so we know it's still needed
+                if(old_line_ids_to_check.count(line_id)) {
+                    old_line_ids_to_check.erase(line_id);
+                }
+            }
+        }
+
+        // Any line ID left in old_line_ids_to_check is no longer part of the boundary and should be removed.
+        // This handles cases where faces merge and internal edges are removed.
+        for (uint64_t dead_line_id : old_line_ids_to_check) {
+            RemoveLine(dead_line_id);
+        }
+        
+        // Update the object's list of boundary lines
+        obj->boundaryLineIDs = new_boundary_line_ids;
+    }
+    // --- END NEW HELPER FUNCTIONS ---
+
+
+    // --- PUSH/PULL (MODIFIED) ---
     TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal) {
         if (faceVertices.empty()) return TopoDS_Face();
         
@@ -616,6 +666,7 @@ namespace Urbaxio::Engine {
         std::cout << "=== END ANALYSIS ===" << std::endl << std::endl;
     }
 
+    
     bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance) {
         SceneObject* obj = get_object_by_id(objectId);
         if (!obj || !obj->has_shape() || faceTriangleIndices.empty() || std::abs(distance) < 1e-4) {
@@ -656,9 +707,7 @@ namespace Urbaxio::Engine {
             
             TopoDS_Shape newFinalShape;
             
-            // --- ROBUST BOOLEAN OPERATION LOGIC ---
-            // Determine the correct operation based on the extrusion direction relative to the solid's face
-            BRepAdaptor_Surface surfaceAdaptor(faceToExtrude, Standard_True); // Use Standard_True for natural UV mapping
+            BRepAdaptor_Surface surfaceAdaptor(faceToExtrude, Standard_True);
             gp_Pln plane = surfaceAdaptor.Plane();
             gp_Dir occtFaceNormal = plane.Axis().Direction();
             if (faceToExtrude.Orientation() == TopAbs_REVERSED) {
@@ -669,38 +718,26 @@ namespace Urbaxio::Engine {
             std::cout << "Scene: Push/Pull - Face normal dot extrusion vector = " << dotProduct << std::endl;
 
             if (originalShape->ShapeType() == TopAbs_FACE) {
-                // A standalone face is always extruded into a solid, the boolean operation is irrelevant.
                 newFinalShape = prismShape;
                 std::cout << "Scene: Push/Pull - Standalone face converted to solid." << std::endl;
 
-            } else if (dotProduct >= -1e-6) { // Use tolerance for the parallel (dot=0) case
-                // Extruding outwards from the solid, or parallel to the face -> Add material
+            } else if (dotProduct >= -1e-6) {
                 std::cout << "Scene: Push/Pull - Detected outward extrusion. Using Fuse operation." << std::endl;
                 BRepAlgoAPI_Fuse fuseAlgo(*originalShape, prismShape);
-                if (!fuseAlgo.IsDone()) {
-                    std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl;
-                    AnalyzeShape(fuseAlgo.Shape(), "FUSE FAILED SHAPE");
-                    return false;
-                }
+                if (!fuseAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl; AnalyzeShape(fuseAlgo.Shape(), "FUSE FAILED SHAPE"); return false; }
                 newFinalShape = fuseAlgo.Shape();
                 if (fuseAlgo.HasErrors()) { std::cerr << "OCCT Warning: Fuse operation has errors." << std::endl; }
                 if (fuseAlgo.HasWarnings()) { std::cout << "OCCT Info: Fuse operation has warnings." << std::endl; }
 
-            } else { // dotProduct < 0
-                // Extruding inwards into the solid -> Remove material
+            } else {
                 std::cout << "Scene: Push/Pull - Detected inward extrusion. Using Cut operation." << std::endl;
                 BRepAlgoAPI_Cut cutAlgo(*originalShape, prismShape);
-                if (!cutAlgo.IsDone()) {
-                    std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl;
-                    AnalyzeShape(cutAlgo.Shape(), "CUT FAILED SHAPE");
-                    return false;
-                }
+                if (!cutAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl; AnalyzeShape(cutAlgo.Shape(), "CUT FAILED SHAPE"); return false; }
                 newFinalShape = cutAlgo.Shape();
                 if (cutAlgo.HasErrors()) { std::cerr << "OCCT Warning: Cut operation has errors." << std::endl; }
                 if (cutAlgo.HasWarnings()) { std::cout << "OCCT Info: Cut operation has warnings." << std::endl; }
             }
             
-            // --- VALIDATION AND UPDATE ---
             AnalyzeShape(newFinalShape, "FINAL RESULT (Before Healing)");
             
             if (newFinalShape.IsNull()) {
@@ -732,8 +769,9 @@ namespace Urbaxio::Engine {
             }
             
             obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(newFinalShape)));
+            UpdateObjectBoundary(obj); // <-- Sync lines
             obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(newFinalShape));
-            obj->vao = 0; // Mark for re-upload to GPU
+            obj->vao = 0;
             
             std::cout << "Scene: Push/Pull successful. Object " << objectId << " updated." << std::endl;
 
@@ -743,6 +781,4 @@ namespace Urbaxio::Engine {
         }
         return true;
     }
-
-
 } // namespace Urbaxio

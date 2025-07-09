@@ -16,6 +16,7 @@
 class gp_Pln;
 class TopoDS_Shape;
 class TopoDS_Face;
+class TopoDS_Edge; // <-- ADDED for helper function
 
 namespace Urbaxio::Engine { class SceneObject; }
 
@@ -52,7 +53,7 @@ namespace Urbaxio::Engine {
         std::vector<const SceneObject*> get_all_objects() const;
 
         // --- Line Management ---
-        void AddUserLine(const glm::vec3& start, const glm::vec3& end); // Now returns void as it can create many lines
+        void AddUserLine(const glm::vec3& start, const glm::vec3& end);
         void ClearUserLines();
         const std::map<uint64_t, Line>& GetAllLines() const;
         glm::vec3 SplitLineAtPoint(uint64_t lineId, const glm::vec3& splitPoint);
@@ -70,15 +71,18 @@ namespace Urbaxio::Engine {
         uint64_t next_line_id_ = 1;
         std::map<glm::vec3, std::vector<uint64_t>, Urbaxio::Vec3Comparator> vertexAdjacency_;
         
-        // Internal line adding function that skips intersection checks.
         uint64_t AddSingleLineSegment(const glm::vec3& start, const glm::vec3& end);
         void RemoveLine(uint64_t lineId);
         glm::vec3 MergeOrAddVertex(const glm::vec3& p);
         
+        // --- NEW: Geometry Synchronization ---
+        std::vector<std::pair<glm::vec3, glm::vec3>> ExtractEdgesFromShape(const TopoDS_Shape& shape);
+        void UpdateObjectBoundary(SceneObject* obj);
+        
         // --- Intersection Helper ---
         static bool LineSegmentIntersection(
-            const glm::vec3& p1, const glm::vec3& p2, // Segment 1
-            const glm::vec3& p3, const glm::vec3& p4, // Segment 2
+            const glm::vec3& p1, const glm::vec3& p2,
+            const glm::vec3& p3, const glm::vec3& p4,
             glm::vec3& out_intersection_point
         );
         
