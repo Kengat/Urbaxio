@@ -746,37 +746,23 @@ namespace Urbaxio::Engine {
                 return false;
             }
 
-            // --- Unification Step ---
+            // --- HEAL FIRST ---
+            ShapeFix_Shape shapeFixer(newFinalShape);
+            shapeFixer.Perform();
+            newFinalShape = shapeFixer.Shape();
+            
+            // --- UNIFY SECOND (with correct parameters) ---
             if (!disableMerge) {
                 std::cout << "DEBUG: Attempting to unify coplanar faces..." << std::endl;
-                ShapeUpgrade_UnifySameDomain Unifier(newFinalShape);
-                Unifier.Build(); // <--- CORRECTED METHOD CALL
+                ShapeUpgrade_UnifySameDomain Unifier;
+                Unifier.Initialize(newFinalShape);
+                Unifier.SetLinearTolerance(1e-4); 
+                Unifier.SetAngularTolerance(1e-4); 
+                Unifier.AllowInternalEdges(Standard_True);
+                Unifier.Build();
                 newFinalShape = Unifier.Shape();
             } else {
                 std::cout << "DEBUG: Face unification skipped by user (Ctrl)." << std::endl;
-            }
-            
-            BRepCheck_Analyzer analyzer(newFinalShape);
-            if (!analyzer.IsValid()) {
-                std::cerr << "OCCT Warning: Result shape is not valid. Attempting to heal..." << std::endl;
-                try {
-                    ShapeFix_Shape shapeFixer(newFinalShape);
-                    shapeFixer.Perform();
-                    TopoDS_Shape healedShape = shapeFixer.Shape();
-                    
-                    BRepCheck_Analyzer healedAnalyzer(healedShape);
-                    if (healedAnalyzer.IsValid()) {
-                        std::cout << "DEBUG: Shape healing successful." << std::endl;
-                        newFinalShape = healedShape;
-                        AnalyzeShape(newFinalShape, "FINAL RESULT (After Healing)");
-                    } else {
-                        std::cout << "DEBUG: Shape healing failed, using original (invalid) result." << std::endl;
-                    }
-                } catch (const Standard_Failure& e) {
-                    std::cout << "DEBUG: Shape healing threw exception: " << e.GetMessageString() << std::endl;
-                }
-            } else {
-                std::cout << "DEBUG: Result shape is valid." << std::endl;
             }
             
             obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(newFinalShape)));
