@@ -19,8 +19,54 @@
 namespace { // Anonymous namespace for utility functions
     GLuint CompileShader(GLenum type, const char* source) { GLuint shader = glCreateShader(type); glShaderSource(shader, 1, &source, NULL); glCompileShader(shader); GLint success; GLchar infoLog[512]; glGetShaderiv(shader, GL_COMPILE_STATUS, &success); if (!success) { glGetShaderInfoLog(shader, 512, NULL, infoLog); std::cerr << "ERROR::SHADER::COMPILATION_FAILED\n" << (type == GL_VERTEX_SHADER ? "Vertex" : "Fragment") << "\n" << source << "\n" << infoLog << std::endl; glDeleteShader(shader); return 0; } return shader; }
     GLuint LinkShaderProgram(GLuint vertexShader, GLuint fragmentShader) { GLuint shaderProgram = glCreateProgram(); glAttachShader(shaderProgram, vertexShader); glAttachShader(shaderProgram, fragmentShader); glLinkProgram(shaderProgram); GLint success; GLchar infoLog[512]; glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success); if (!success) { glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog); std::cerr << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl; glDeleteProgram(shaderProgram); if (glIsShader(vertexShader)) glDeleteShader(vertexShader); if (glIsShader(fragmentShader)) glDeleteShader(fragmentShader); return 0; } glDeleteShader(vertexShader); glDeleteShader(fragmentShader); return shaderProgram; }
-    std::vector<float> GenerateGridVertices(float size, int steps, int accentStep, glm::vec4 color1m, glm::vec4 color10m) { std::vector<float> vertices; if (steps <= 0 || size <= 0.0f) return vertices; float halfSize = size / 2.0f; float stepSize = size / static_cast<float>(steps); const float epsilon = 1e-6f; for (int i = 0; i <= steps; ++i) { float pos = -halfSize + static_cast<float>(i) * stepSize; bool isAccent = (accentStep > 0 && i % accentStep == 0); glm::vec4 currentColor = isAccent ? color10m : color1m; bool isCenterLine = std::abs(pos) < epsilon; if (!isCenterLine) { vertices.push_back(-halfSize); vertices.push_back(pos); vertices.push_back(0.0f); vertices.push_back(currentColor.r); vertices.push_back(currentColor.g); vertices.push_back(currentColor.b); vertices.push_back(currentColor.a); vertices.push_back(halfSize); vertices.push_back(pos); vertices.push_back(0.0f); vertices.push_back(currentColor.r); vertices.push_back(currentColor.g); vertices.push_back(currentColor.b); vertices.push_back(currentColor.a); } if (!isCenterLine) { vertices.push_back(pos); vertices.push_back(-halfSize); vertices.push_back(0.0f); vertices.push_back(currentColor.r); vertices.push_back(currentColor.g); vertices.push_back(currentColor.b); vertices.push_back(currentColor.a); vertices.push_back(pos); vertices.push_back(halfSize); vertices.push_back(0.0f); vertices.push_back(currentColor.r); vertices.push_back(currentColor.g); vertices.push_back(currentColor.b); vertices.push_back(currentColor.a); } } return vertices; }
-    std::vector<float> GenerateAxisVertices(float length) { std::vector<float> vertices; if (length <= 0.0f) return vertices; glm::vec4 colorPosX(0.7f, 0.2f, 0.2f, 1.0f); glm::vec4 colorNegX(0.4f, 0.2f, 0.2f, 1.0f); glm::vec4 colorPosY(0.2f, 0.7f, 0.2f, 1.0f); glm::vec4 colorNegY(0.2f, 0.4f, 0.2f, 1.0f); glm::vec4 colorPosZ(0.2f, 0.2f, 0.7f, 1.0f); auto add_line = [&](glm::vec3 p1, glm::vec3 p2, glm::vec4 color) { vertices.push_back(p1.x); vertices.push_back(p1.y); vertices.push_back(p1.z); vertices.push_back(color.r); vertices.push_back(color.g); vertices.push_back(color.b); vertices.push_back(color.a); vertices.push_back(p2.x); vertices.push_back(p2.y); vertices.push_back(p2.z); vertices.push_back(color.r); vertices.push_back(color.g); vertices.push_back(color.b); vertices.push_back(color.a); }; add_line(glm::vec3(0.0f), glm::vec3(length, 0.0f, 0.0f), colorPosX); add_line(glm::vec3(0.0f), glm::vec3(-length, 0.0f, 0.0f), colorNegX); add_line(glm::vec3(0.0f), glm::vec3(0.0f, length, 0.0f), colorPosY); add_line(glm::vec3(0.0f), glm::vec3(0.0f, -length, 0.0f), colorNegY); add_line(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, length), colorPosZ); return vertices; }
+    // Modified to only generate geometry, color will be handled by shader
+    // Generates grid vertices on the XY plane (for Z-up system)
+    std::vector<float> GenerateGridVertices(float size, int steps) {
+        std::vector<float> vertices;
+        if (steps <= 0 || size <= 0.0f) return vertices;
+        float halfSize = size / 2.0f;
+        float stepSize = size / static_cast<float>(steps);
+        const float epsilon = 1e-6f;
+
+        for (int i = 0; i <= steps; ++i) {
+            float pos = -halfSize + static_cast<float>(i) * stepSize;
+            
+            // Skip center lines, as they are drawn by the axes
+            if (std::abs(pos) > epsilon) {
+                // Lines parallel to Y axis (X is constant at 'pos')
+                vertices.push_back(pos); vertices.push_back(-halfSize); vertices.push_back(0.0f);
+                vertices.push_back(pos); vertices.push_back(halfSize);  vertices.push_back(0.0f);
+
+                // Lines parallel to X axis (Y is constant at 'pos')
+                vertices.push_back(-halfSize); vertices.push_back(pos); vertices.push_back(0.0f);
+                vertices.push_back(halfSize);  vertices.push_back(pos); vertices.push_back(0.0f);
+            }
+        }
+        return vertices;
+    }
+    // Modified to return vertices for a single axis with a specific color
+    std::vector<float> GenerateSingleAxisVertices(float length, const glm::vec3& direction, const glm::vec4& color) {
+        std::vector<float> vertices;
+        if (length <= 0.0f) return vertices;
+
+        glm::vec3 p1 = direction * length;
+        glm::vec3 p2 = direction * -length;
+        
+        // Line from origin to positive end
+        vertices.push_back(0.0f); vertices.push_back(0.0f); vertices.push_back(0.0f);
+        vertices.push_back(color.r); vertices.push_back(color.g); vertices.push_back(color.b); vertices.push_back(color.a);
+        vertices.push_back(p1.x); vertices.push_back(p1.y); vertices.push_back(p1.z);
+        vertices.push_back(color.r); vertices.push_back(color.g); vertices.push_back(color.b); vertices.push_back(color.a);
+
+        // Line from origin to negative end (with reduced alpha)
+        glm::vec4 negColor = glm::vec4(color.r, color.g, color.b, color.a * 0.4f);
+        vertices.push_back(0.0f); vertices.push_back(0.0f); vertices.push_back(0.0f);
+        vertices.push_back(negColor.r); vertices.push_back(negColor.g); vertices.push_back(negColor.b); vertices.push_back(negColor.a);
+        vertices.push_back(p2.x); vertices.push_back(p2.y); vertices.push_back(p2.z);
+        vertices.push_back(negColor.r); vertices.push_back(negColor.g); vertices.push_back(negColor.b); vertices.push_back(negColor.a);
+
+        return vertices;
+    }
     std::vector<float> GenerateQuadVertices(float size) { float half = size / 2.0f; std::vector<float> vertices = { -half,-half,0.0f, 0.0f,0.0f, half,-half,0.0f, 1.0f,0.0f, half, half,0.0f, 1.0f,1.0f, -half, half,0.0f, 0.0f,1.0f }; return vertices; }
     std::vector<float> GenerateCircleVertices(int segments) { std::vector<float> vertices; vertices.push_back(0.0f); vertices.push_back(0.0f); float angleStep = 2.0f * glm::pi<float>() / static_cast<float>(segments); for (int i = 0; i <= segments; ++i) { float angle = static_cast<float>(i) * angleStep; vertices.push_back(cos(angle) * 0.5f); vertices.push_back(sin(angle) * 0.5f); } return vertices; }
     std::vector<float> GenerateDiamondVertices() { std::vector<float> vertices = { 0.0f,  0.5f, 0.5f,  0.0f, 0.0f, -0.5f, -0.5f,  0.0f }; vertices.push_back(0.0f); vertices.push_back(0.5f); return vertices; }
@@ -64,7 +110,8 @@ namespace Urbaxio {
             "    FragColor = vec4(result, overrideAlpha);\n"
             "}\n";
 
-        lineVertexShaderSource =
+        // This will be for simple lines like the rubber band and user lines
+        simpleLineVertexShaderSource =
             "#version 330 core\n"
             "layout (location = 0) in vec3 aPos;\n"
             "layout (location = 1) in vec4 aBaseColorAlpha;\n"
@@ -77,12 +124,82 @@ namespace Urbaxio {
             "    fragmentColor = aBaseColorAlpha;\n"
             "}\n";
 
-        lineFragmentShaderSource =
+        simpleLineFragmentShaderSource =
             "#version 330 core\n"
             "out vec4 FragColor;\n"
             "in vec4 fragmentColor;\n"
             "void main() {\n"
             "    FragColor = fragmentColor;\n"
+            "}\n";
+
+        gridVertexShaderSource =
+            "#version 330 core\n"
+            "layout (location = 0) in vec3 aPos;\n"
+            "uniform mat4 model;\n"
+            "uniform mat4 view;\n"
+            "uniform mat4 projection;\n"
+            "out vec3 vWorldPos;\n"
+            "void main() {\n"
+            "    vWorldPos = (model * vec4(aPos, 1.0)).xyz;\n"
+            "    gl_Position = projection * view * vec4(vWorldPos, 1.0);\n"
+            "}\n";
+
+        gridFragmentShaderSource =
+            "#version 330 core\n"
+            "out vec4 FragColor;\n"
+            "in vec3 vWorldPos;\n"
+            "uniform vec3 u_gridColor;\n"
+            "uniform vec3 u_cursorWorldPos;\n"
+            "uniform float u_cursorRadius;\n"
+            "uniform float u_intensity;\n"
+            "const float GRID_FADE_START = 10.0;\n"
+            "const float GRID_FADE_END = 40.0;\n"
+            "const float BASE_GRID_ALPHA = 0.3;\n"
+            "void main() {\n"
+            "    float distFromOrigin = length(vWorldPos.xy);\n"
+            "    float alphaFromOrigin = (1.0 - smoothstep(GRID_FADE_START, GRID_FADE_END, distFromOrigin)) * BASE_GRID_ALPHA;\n"
+            "    float distFromMouse = distance(vWorldPos.xy, u_cursorWorldPos.xy);\n"
+            "    float alphaFromMouse = (1.0 - smoothstep(0.0, u_cursorRadius, distFromMouse)) * u_intensity * 0.8;\n"
+            "    float finalAlpha = max(alphaFromOrigin, alphaFromMouse);\n"
+            "    FragColor = vec4(u_gridColor, finalAlpha);\n"
+            "}\n";
+        
+        axisVertexShaderSource =
+            "#version 330 core\n"
+            "layout (location = 0) in vec3 aPos;\n"
+            "layout (location = 1) in vec4 aBaseColorAlpha;\n"
+            "uniform mat4 model;\n"
+            "uniform mat4 view;\n"
+            "uniform mat4 projection;\n"
+            "out vec3 vWorldPos;\n"
+            "out vec4 vBaseColor;\n"
+            "void main() {\n"
+            "    vWorldPos = (model * vec4(aPos, 1.0)).xyz;\n"
+            "    vBaseColor = aBaseColorAlpha;\n"
+            "    gl_Position = projection * view * vec4(vWorldPos, 1.0);\n"
+            "}\n";
+
+        axisFragmentShaderSource =
+            "#version 330 core\n"
+            "out vec4 FragColor;\n"
+            "in vec3 vWorldPos;\n"
+            "in vec4 vBaseColor;\n"
+            "uniform vec3 u_cursorWorldPos;\n"
+            "uniform float u_cursorRadius;\n"
+            "uniform float u_intensity;\n"
+            "const vec3 WHITE = vec3(1.0, 1.0, 1.0);\n"
+            "const float FADE_DISTANCE_START = 0.5;\n"
+            "const float FADE_DISTANCE_END = 4.0;\n"
+            "void main() {\n"
+            "    float distFromOrigin = length(vWorldPos);\n"
+            "    float fadeToWhiteFactor = smoothstep(FADE_DISTANCE_START, FADE_DISTANCE_END, distFromOrigin);\n"
+            "    vec3 fadedColor = mix(vBaseColor.rgb, WHITE, fadeToWhiteFactor);\n"
+            "    float distFromMouse = distance(vWorldPos, u_cursorWorldPos);\n"
+            "    float mouseRevealFactor = (1.0 - smoothstep(0.0, u_cursorRadius, distFromMouse)) * u_intensity;\n"
+            "    vec3 finalColor = mix(fadedColor, vBaseColor.rgb, mouseRevealFactor);\n"
+            "    float finalAlpha = vBaseColor.a;\n"
+            "    finalAlpha = mix(finalAlpha, 1.0, mouseRevealFactor);\n"
+            "    FragColor = vec4(finalColor, finalAlpha);\n"
             "}\n";
 
         splatVertexShaderSource =
@@ -149,21 +266,77 @@ namespace Urbaxio {
         const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
         bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth,
         const glm::vec4& splatColor, float splatBlurStrength,
+        // New Interactive Params
+        const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
+        // Selections
         uint64_t selectedObjId,
         const std::vector<size_t>& selectedTriangleIndices,
         const std::set<uint64_t>& selectedLineIDs,
         const glm::vec3& selectionHighlightColor,
+        // Hovers
         uint64_t hoveredObjId,
         const std::vector<size_t>& hoveredFaceTriangleIndices,
         const glm::vec3& hoverHighlightColor,
+        // Tools
         bool isDrawingActive, const glm::vec3& rubberBandStart, const glm::vec3& rubberBandEnd,
         const SnapResult& currentSnap,
         ImDrawData* imguiDrawData
     ) {
         int display_w, display_h; SDL_GetWindowSize(window, &display_w, &display_h); if (display_w <= 0 || display_h <= 0) return; glm::mat4 view = camera.GetViewMatrix(); glm::mat4 projection = camera.GetProjectionMatrix((float)display_w / (float)display_h); glm::mat4 identityModel = glm::mat4(1.0f);
-        if (showGrid && gridVAO != 0 && lineShaderProgram != 0) { glLineWidth(gridLineWidth); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(gridVAO); glDrawArrays(GL_LINES, 0, gridVertexCount); glBindVertexArray(0); }
-        if (userLinesVAO != 0 && lineShaderProgram != 0 && userLinesVertexCount > 0) { glLineWidth(2.0f); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(userLinesVAO); glDrawArrays(GL_LINES, 0, userLinesVertexCount); glBindVertexArray(0); glLineWidth(1.0f); }
-        if (isDrawingActive && lineShaderProgram != 0) { glLineWidth(1.0f); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); GLuint tempVBO, tempVAO; float lineData[] = { rubberBandStart.x, rubberBandStart.y, rubberBandStart.z, userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a, rubberBandEnd.x,   rubberBandEnd.y,   rubberBandEnd.z,   userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a }; glGenVertexArrays(1, &tempVAO); glGenBuffers(1, &tempVBO); glBindVertexArray(tempVAO); glBindBuffer(GL_ARRAY_BUFFER, tempVBO); glBufferData(GL_ARRAY_BUFFER, sizeof(lineData), lineData, GL_DYNAMIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindVertexArray(tempVAO); glDrawArrays(GL_LINES, 0, 2); glBindVertexArray(0); glDeleteBuffers(1, &tempVBO); glDeleteVertexArrays(1, &tempVAO); }
+        // --- DRAW GRID (with new shader) ---
+        if (showGrid && gridVAO != 0 && gridShaderProgram != 0) {
+            glLineWidth(1.0f); // Keep grid lines thin
+            glUseProgram(gridShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(gridShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(glGetUniformLocation(gridShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(gridShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            glUniform3fv(glGetUniformLocation(gridShaderProgram, "u_gridColor"), 1, glm::value_ptr(gridColor));
+            glUniform3fv(glGetUniformLocation(gridShaderProgram, "u_cursorWorldPos"), 1, glm::value_ptr(cursorWorldPos));
+            glUniform1f(glGetUniformLocation(gridShaderProgram, "u_cursorRadius"), cursorRadius);
+            glUniform1f(glGetUniformLocation(gridShaderProgram, "u_intensity"), intensity);
+            glBindVertexArray(gridVAO);
+            glDrawArrays(GL_LINES, 0, gridVertexCount);
+            glBindVertexArray(0);
+        }
+        // --- DRAW USER LINES (can use simple shader) ---
+        if (userLinesVAO != 0 && simpleLineShaderProgram != 0 && userLinesVertexCount > 0) {
+            glLineWidth(2.0f);
+            glUseProgram(simpleLineShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            glBindVertexArray(userLinesVAO);
+            glDrawArrays(GL_LINES, 0, userLinesVertexCount);
+            glBindVertexArray(0);
+            glLineWidth(1.0f);
+        }
+        // --- DRAW RUBBER BAND LINE (using simple shader) ---
+        if (isDrawingActive && simpleLineShaderProgram != 0) {
+            glLineWidth(1.0f);
+            glUseProgram(simpleLineShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            GLuint tempVBO, tempVAO;
+            float lineData[] = {
+                rubberBandStart.x, rubberBandStart.y, rubberBandStart.z, userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a,
+                rubberBandEnd.x,   rubberBandEnd.y,   rubberBandEnd.z,   userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a
+            };
+            glGenVertexArrays(1, &tempVAO);
+            glGenBuffers(1, &tempVBO);
+            glBindVertexArray(tempVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, tempVBO);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(lineData), lineData, GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float)));
+            glEnableVertexAttribArray(1);
+            glBindVertexArray(tempVAO);
+            glDrawArrays(GL_LINES, 0, 2);
+            glBindVertexArray(0);
+            glDeleteBuffers(1, &tempVBO);
+            glDeleteVertexArrays(1, &tempVAO);
+        }
         if (objectShaderProgram != 0 && scene) { glLineWidth(1.0f); glUseProgram(objectShaderProgram); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor)); glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength); glUniform3fv(glGetUniformLocation(objectShaderProgram, "viewPos"), 1, glm::value_ptr(camera.Position)); glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
             
             // 1. Draw all objects
@@ -228,14 +401,103 @@ namespace Urbaxio {
                 glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
             }
         }
-        if (showAxes && axesVAO != 0 && lineShaderProgram != 0) {  glLineWidth(axisLineWidth); glUseProgram(lineShaderProgram); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(lineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(axesVAO); glDrawArrays(GL_LINES, 0, axesVertexCount); glBindVertexArray(0); }
+        // --- DRAW AXES (with new shader) ---
+        if (showAxes && axesVAO != 0 && axisShaderProgram != 0) {
+            glLineWidth(axisLineWidth);
+            glUseProgram(axisShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(axisShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(glGetUniformLocation(axisShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(axisShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            glUniform3fv(glGetUniformLocation(axisShaderProgram, "u_cursorWorldPos"), 1, glm::value_ptr(cursorWorldPos));
+            glUniform1f(glGetUniformLocation(axisShaderProgram, "u_cursorRadius"), cursorRadius);
+            glUniform1f(glGetUniformLocation(axisShaderProgram, "u_intensity"), intensity);
+            
+            glBindVertexArray(axesVAO);
+            // We draw all 3 axes from the same VBO, they are laid out sequentially.
+            glDrawArrays(GL_LINES, 0, axisVertexCountX + axisVertexCountY + axisVertexCountZ);
+            glBindVertexArray(0);
+        }
         if (splatShaderProgram != 0 && splatVAO != 0) { glLineWidth(1.0f); glUseProgram(splatShaderProgram); glUniform4fv(glGetUniformLocation(splatShaderProgram, "splatColor"), 1, glm::value_ptr(splatColor)); glUniform1f(glGetUniformLocation(splatShaderProgram, "blurStrength"), splatBlurStrength); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(splatVAO); glm::mat4 modelStatic = glm::translate(glm::mat4(1.0f), splatPosStatic); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelStatic)); glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0); glm::mat4 modelBillboard = glm::translate(glm::mat4(1.0f), splatPosBillboard); glm::mat3 viewRot = glm::mat3(view); glm::mat3 counterRot = glm::transpose(viewRot); modelBillboard = modelBillboard * glm::mat4(counterRot); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelBillboard)); glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0); glBindVertexArray(0); }
         glDisable(GL_DEPTH_TEST); DrawSnapMarker(currentSnap, camera, view, projection, display_w, display_h); glEnable(GL_DEPTH_TEST);
         glLineWidth(1.0f); glUseProgram(0); ImGui_ImplOpenGL3_RenderDrawData(imguiDrawData);
     }
-    bool Renderer::CreateShaderPrograms() { /* ... same ... */ { GLuint vs = CompileShader(GL_VERTEX_SHADER, objectVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, objectFragmentShaderSource); if (vs != 0 && fs != 0) objectShaderProgram = LinkShaderProgram(vs, fs); if (objectShaderProgram == 0) return false; std::cout << "Renderer: Object shader program created." << std::endl; } { GLuint vs = CompileShader(GL_VERTEX_SHADER, lineVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, lineFragmentShaderSource); if (vs != 0 && fs != 0) lineShaderProgram = LinkShaderProgram(vs, fs); if (lineShaderProgram == 0) return false; std::cout << "Renderer: Line shader program created." << std::endl; } { GLuint vs = CompileShader(GL_VERTEX_SHADER, splatVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, splatFragmentShaderSource); if (vs != 0 && fs != 0) splatShaderProgram = LinkShaderProgram(vs, fs); if (splatShaderProgram == 0) return false; std::cout << "Renderer: Splat shader program created." << std::endl; } { GLuint vs = CompileShader(GL_VERTEX_SHADER, markerVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, markerFragmentShaderSource); if (vs != 0 && fs != 0) markerShaderProgram = LinkShaderProgram(vs, fs); if (markerShaderProgram == 0) { std::cerr << "Renderer Error: Failed to link marker shader program!" << std::endl; return false; } std::cout << "Renderer: Marker shader program created." << std::endl; } return true; }
-    bool Renderer::CreateGridResources() { /* ... same ... */ std::vector<float> gridVertices = GenerateGridVertices(gridSizeF, gridSteps, gridAccentStep, gridColor1m, gridColor10m); if (gridVertices.empty()) { std::cerr << "Renderer Error: Failed to generate grid vertices!" << std::endl; return false; } gridVertexCount = static_cast<int>(gridVertices.size() / 7); glGenVertexArrays(1, &gridVAO); glGenBuffers(1, &gridVBO); glBindVertexArray(gridVAO); glBindBuffer(GL_ARRAY_BUFFER, gridVBO); glBufferData(GL_ARRAY_BUFFER, gridVertices.size() * sizeof(float), gridVertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindBuffer(GL_ARRAY_BUFFER, 0); glBindVertexArray(0); std::cout << "Renderer: Grid VAO/VBO created (" << gridVertexCount << " vertices)." << std::endl; return gridVAO != 0 && gridVBO != 0; }
-    bool Renderer::CreateAxesResources() { /* ... same ... */ std::vector<float> axesVertices = GenerateAxisVertices(axisLength); if (axesVertices.empty()) { std::cerr << "Renderer Error: Failed to generate axes vertices!" << std::endl; return false; } axesVertexCount = static_cast<int>(axesVertices.size() / 7); glGenVertexArrays(1, &axesVAO); glGenBuffers(1, &axesVBO); glBindVertexArray(axesVAO); glBindBuffer(GL_ARRAY_BUFFER, axesVBO); glBufferData(GL_ARRAY_BUFFER, axesVertices.size() * sizeof(float), axesVertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindBuffer(GL_ARRAY_BUFFER, 0); glBindVertexArray(0); std::cout << "Renderer: Axes VAO/VBO created (" << axesVertexCount << " vertices)." << std::endl; return axesVAO != 0 && axesVBO != 0; }
+    bool Renderer::CreateShaderPrograms() {
+        // Object Shader
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, objectVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, objectFragmentShaderSource); if (vs != 0 && fs != 0) objectShaderProgram = LinkShaderProgram(vs, fs); if (objectShaderProgram == 0) return false; std::cout << "Renderer: Object shader program created." << std::endl; }
+        // Simple Line Shader
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, simpleLineVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, simpleLineFragmentShaderSource); if (vs != 0 && fs != 0) simpleLineShaderProgram = LinkShaderProgram(vs, fs); if (simpleLineShaderProgram == 0) return false; std::cout << "Renderer: Simple Line shader program created." << std::endl; }
+        // Grid Shader
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, gridVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, gridFragmentShaderSource); if (vs != 0 && fs != 0) gridShaderProgram = LinkShaderProgram(vs, fs); if (gridShaderProgram == 0) return false; std::cout << "Renderer: Grid shader program created." << std::endl; }
+        // Axis Shader
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, axisVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, axisFragmentShaderSource); if (vs != 0 && fs != 0) axisShaderProgram = LinkShaderProgram(vs, fs); if (axisShaderProgram == 0) return false; std::cout << "Renderer: Axis shader program created." << std::endl; }
+        // Splat Shader
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, splatVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, splatFragmentShaderSource); if (vs != 0 && fs != 0) splatShaderProgram = LinkShaderProgram(vs, fs); if (splatShaderProgram == 0) return false; std::cout << "Renderer: Splat shader program created." << std::endl; }
+        // Marker Shader
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, markerVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, markerFragmentShaderSource); if (vs != 0 && fs != 0) markerShaderProgram = LinkShaderProgram(vs, fs); if (markerShaderProgram == 0) { std::cerr << "Renderer Error: Failed to link marker shader program!" << std::endl; return false; } std::cout << "Renderer: Marker shader program created." << std::endl; }
+        return true;
+    }
+    bool Renderer::CreateGridResources() {
+        std::vector<float> gridVertices = GenerateGridVertices(gridSizeF, gridSteps);
+        if (gridVertices.empty()) {
+            std::cerr << "Renderer Error: Failed to generate grid vertices!" << std::endl;
+            return false;
+        }
+        gridVertexCount = static_cast<int>(gridVertices.size() / 3);
+
+        glGenVertexArrays(1, &gridVAO);
+        glGenBuffers(1, &gridVBO);
+        glBindVertexArray(gridVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
+        glBufferData(GL_ARRAY_BUFFER, gridVertices.size() * sizeof(float), gridVertices.data(), GL_STATIC_DRAW);
+        // Only position attribute is needed now
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+        std::cout << "Renderer: Grid VAO/VBO created (" << gridVertexCount << " vertices)." << std::endl;
+        return gridVAO != 0 && gridVBO != 0;
+    }
+    bool Renderer::CreateAxesResources() {
+        glm::vec4 colorX(0.7f, 0.2f, 0.2f, 1.0f);
+        glm::vec4 colorY(0.2f, 0.7f, 0.2f, 1.0f);
+        glm::vec4 colorZ(0.2f, 0.2f, 0.7f, 1.0f);
+
+        std::vector<float> verticesX = GenerateSingleAxisVertices(axisLength, glm::vec3(1, 0, 0), colorX);
+        std::vector<float> verticesY = GenerateSingleAxisVertices(axisLength, glm::vec3(0, 1, 0), colorY);
+        std::vector<float> verticesZ = GenerateSingleAxisVertices(axisLength, glm::vec3(0, 0, 1), colorZ);
+
+        axisVertexCountX = verticesX.size() / 7;
+        axisVertexCountY = verticesY.size() / 7;
+        axisVertexCountZ = verticesZ.size() / 7;
+        
+        std::vector<float> allAxesVertices;
+        allAxesVertices.insert(allAxesVertices.end(), verticesX.begin(), verticesX.end());
+        allAxesVertices.insert(allAxesVertices.end(), verticesY.begin(), verticesY.end());
+        allAxesVertices.insert(allAxesVertices.end(), verticesZ.begin(), verticesZ.end());
+
+        if (allAxesVertices.empty()) {
+            std::cerr << "Renderer Error: Failed to generate axes vertices!" << std::endl;
+            return false;
+        }
+
+        glGenVertexArrays(1, &axesVAO);
+        glGenBuffers(1, &axesVBO);
+        glBindVertexArray(axesVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, axesVBO);
+        glBufferData(GL_ARRAY_BUFFER, allAxesVertices.size() * sizeof(float), allAxesVertices.data(), GL_STATIC_DRAW);
+        
+        // Position
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        // Color
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+        std::cout << "Renderer: Axes VAO/VBO created." << std::endl;
+        return axesVAO != 0 && axesVBO != 0;
+    }
     bool Renderer::CreateSplatResources() { /* ... same ... */ std::vector<float> quadVertices = GenerateQuadVertices(2.0f); unsigned int quadIndices[] = { 0, 1, 2, 0, 2, 3 }; glGenVertexArrays(1, &splatVAO); glGenBuffers(1, &splatVBO); glGenBuffers(1, &splatEBO); glBindVertexArray(splatVAO); glBindBuffer(GL_ARRAY_BUFFER, splatVBO); glBufferData(GL_ARRAY_BUFFER, quadVertices.size() * sizeof(float), quadVertices.data(), GL_STATIC_DRAW); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, splatEBO); glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(quadIndices), quadIndices, GL_STATIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindVertexArray(0); std::cout << "Renderer: Splat VAO/VBO/EBO created." << std::endl; return splatVAO != 0 && splatVBO != 0 && splatEBO != 0; }
     bool Renderer::CreateUserLinesResources() { /* ... same ... */ glGenVertexArrays(1, &userLinesVAO); glGenBuffers(1, &userLinesVBO); glBindVertexArray(userLinesVAO); glBindBuffer(GL_ARRAY_BUFFER, userLinesVBO); const size_t maxLinePoints = 400; glBufferData(GL_ARRAY_BUFFER, maxLinePoints * 7 * sizeof(float), nullptr, GL_DYNAMIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindBuffer(GL_ARRAY_BUFFER, 0); glBindVertexArray(0); std::cout << "Renderer: User Lines VAO/VBO created." << std::endl; return userLinesVAO != 0 && userLinesVBO != 0; }
     void Renderer::UpdateUserLinesBuffer(const std::map<uint64_t, Engine::Line>& lines, const std::set<uint64_t>& selectedLineIDs) {
@@ -295,7 +557,9 @@ namespace Urbaxio {
         for (auto const& [shape, vbo] : markerVBOs) { if (vbo != 0) glDeleteBuffers(1, &vbo); } markerVBOs.clear();
         markerVertexCounts.clear();
         if (objectShaderProgram != 0) glDeleteProgram(objectShaderProgram); objectShaderProgram = 0;
-        if (lineShaderProgram != 0) glDeleteProgram(lineShaderProgram); lineShaderProgram = 0;
+        if (simpleLineShaderProgram != 0) glDeleteProgram(simpleLineShaderProgram); simpleLineShaderProgram = 0;
+        if (gridShaderProgram != 0) glDeleteProgram(gridShaderProgram); gridShaderProgram = 0;
+        if (axisShaderProgram != 0) glDeleteProgram(axisShaderProgram); axisShaderProgram = 0;
         if (splatShaderProgram != 0) glDeleteProgram(splatShaderProgram); splatShaderProgram = 0;
         if (markerShaderProgram != 0) glDeleteProgram(markerShaderProgram); markerShaderProgram = 0;
         std::cout << "Renderer: Resource cleanup finished." << std::endl;

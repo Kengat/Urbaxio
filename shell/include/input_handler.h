@@ -55,6 +55,9 @@ namespace Urbaxio {
         const std::vector<size_t>& GetPushPullFaceIndices() const { return pushPull_faceIndices; }
         const glm::vec3& GetPushPullNormal() const { return pushPull_faceNormal; }
 
+        // This function is useful outside, so let's make it public
+        glm::vec3 GetCursorPointInWorld(const Camera& camera, int mouseX, int mouseY, int screenWidth, int screenHeight, const glm::vec3& fallbackPlanePoint);
+
     private:
         // Input states
         bool middleMouseButtonDown;
@@ -89,7 +92,6 @@ namespace Urbaxio {
 
         // Helpers
         void HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h);
-        glm::vec3 GetCursorPointInWorld(const Camera& camera, int mouseX, int mouseY, int screenWidth, int screenHeight, const glm::vec3& fallbackPlanePoint);
 
         // Line picking helper
         bool RayLineSegmentIntersection(

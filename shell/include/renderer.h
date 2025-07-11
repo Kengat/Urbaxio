@@ -33,6 +33,8 @@ namespace Urbaxio {
             const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
             bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth,
             const glm::vec4& splatColor, float splatBlurStrength,
+            // New Interactive Params
+            const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
             // Selections
             uint64_t selectedObjId,
             const std::vector<size_t>& selectedTriangleIndices,
@@ -55,12 +57,23 @@ namespace Urbaxio {
 
     private:
         GLuint objectShaderProgram = 0;
-        GLuint lineShaderProgram = 0;
+        // --- NEW SHADERS ---
+        GLuint gridShaderProgram = 0;
+        GLuint axisShaderProgram = 0;
+        // --- OLD SHADER (renamed for clarity, used for user lines and rubber band) ---
+        GLuint simpleLineShaderProgram = 0; 
+        
         GLuint splatShaderProgram = 0;
         GLuint markerShaderProgram = 0;
 
         GLuint gridVAO = 0, gridVBO = 0; int gridVertexCount = 0;
-        GLuint axesVAO = 0, axesVBO = 0; int axesVertexCount = 0;
+        
+        // --- MODIFIED for AXES ---
+        GLuint axesVAO = 0, axesVBO = 0;
+        int axisVertexCountX = 0;
+        int axisVertexCountY = 0;
+        int axisVertexCountZ = 0;
+
         GLuint splatVAO = 0, splatVBO = 0, splatEBO = 0;
         GLuint userLinesVAO = 0, userLinesVBO = 0; int userLinesVertexCount = 0;
         
@@ -83,8 +96,7 @@ namespace Urbaxio {
         glm::vec4 snapMarkerColorAxisY = glm::vec4(0.3f, 1.0f, 0.3f, 0.9f);
         glm::vec4 snapMarkerColorAxisZ = glm::vec4(0.4f, 0.4f, 1.0f, 0.9f);
 
-        glm::vec4 gridColor1m = glm::vec4(0.25f, 0.25f, 0.25f, 0.5f);
-        glm::vec4 gridColor10m = glm::vec4(0.35f, 0.35f, 0.35f, 0.6f);
+        glm::vec3 gridColor = glm::vec3(0.4f, 0.5f, 0.6f);
         float gridSizeF = 500.0f; int gridSteps = 500; int gridAccentStep = 10;
         float axisLength = 1000.0f;
         glm::vec3 splatPosStatic = glm::vec3(5.0f, 5.0f, 1.0f);
@@ -104,7 +116,9 @@ namespace Urbaxio {
         void DrawSnapMarker(const SnapResult& snap, const Camera& camera, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight);
 
         const char* objectVertexShaderSource; const char* objectFragmentShaderSource;
-        const char* lineVertexShaderSource; const char* lineFragmentShaderSource;
+        const char* simpleLineVertexShaderSource; const char* simpleLineFragmentShaderSource;
+        const char* gridVertexShaderSource; const char* gridFragmentShaderSource;
+        const char* axisVertexShaderSource; const char* axisFragmentShaderSource;
         const char* splatVertexShaderSource; const char* splatFragmentShaderSource;
         const char* markerVertexShaderSource; const char* markerFragmentShaderSource;
     };
