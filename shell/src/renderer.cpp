@@ -191,15 +191,40 @@ namespace Urbaxio {
             "const float FADE_DISTANCE_START = 0.5;\n"
             "const float FADE_DISTANCE_END = 4.0;\n"
             "void main() {\n"
-            "    float distFromOrigin = length(vWorldPos);\n"
-            "    float fadeToWhiteFactor = smoothstep(FADE_DISTANCE_START, FADE_DISTANCE_END, distFromOrigin);\n"
-            "    vec3 fadedColor = mix(vBaseColor.rgb, WHITE, fadeToWhiteFactor);\n"
             "    float distFromMouse = distance(vWorldPos, u_cursorWorldPos);\n"
             "    float mouseRevealFactor = (1.0 - smoothstep(0.0, u_cursorRadius, distFromMouse)) * u_intensity;\n"
-            "    vec3 finalColor = mix(fadedColor, vBaseColor.rgb, mouseRevealFactor);\n"
-            "    float finalAlpha = vBaseColor.a;\n"
-            "    finalAlpha = mix(finalAlpha, 1.0, mouseRevealFactor);\n"
-            "    FragColor = vec4(finalColor, finalAlpha);\n"
+            "    vec3 baseColor;\n"
+            "    // Use alpha to check if it's a negative axis (alpha < 0.5)\n"
+            "    if (vBaseColor.a < 0.5) { \n"
+            "        // Negative Axis: Default is white, lights up with color under cursor\n"
+            "        baseColor = mix(WHITE, vBaseColor.rgb, mouseRevealFactor);\n"
+            "    } else {\n"
+            "        // Positive Axis: Default is gradient, lights up with more color under cursor\n"
+            "        float distFromOrigin = length(vWorldPos);\n"
+            "        float fadeToWhiteFactor = smoothstep(FADE_DISTANCE_START, FADE_DISTANCE_END, distFromOrigin);\n"
+            "        vec3 fadedColor = mix(vBaseColor.rgb, WHITE, fadeToWhiteFactor);\n"
+            "        baseColor = mix(fadedColor, vBaseColor.rgb, mouseRevealFactor);\n"
+            "    }\n"
+            "    float finalAlpha = mix(vBaseColor.a, 1.0, mouseRevealFactor);\n"
+            "    FragColor = vec4(baseColor, finalAlpha);\n"
+            "}\n";
+
+        unlitVertexShaderSource =
+            "#version 330 core\n"
+            "layout (location = 0) in vec3 aPos;\n"
+            "uniform mat4 model;\n"
+            "uniform mat4 view;\n"
+            "uniform mat4 projection;\n"
+            "void main() {\n"
+            "    gl_Position = projection * view * model * vec4(aPos, 1.0);\n"
+            "}\n";
+
+        unlitFragmentShaderSource =
+            "#version 330 core\n"
+            "out vec4 FragColor;\n"
+            "uniform vec3 u_color;\n"
+            "void main() {\n"
+            "    FragColor = vec4(u_color, 1.0);\n"
             "}\n";
 
         splatVertexShaderSource =
@@ -339,9 +364,9 @@ namespace Urbaxio {
         }
         if (objectShaderProgram != 0 && scene) { glLineWidth(1.0f); glUseProgram(objectShaderProgram); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor)); glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength); glUniform3fv(glGetUniformLocation(objectShaderProgram, "viewPos"), 1, glm::value_ptr(camera.Position)); glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
             
-            // 1. Draw all objects
+            // 1. Draw lit objects (excluding CenterMarker)
             for (const auto* obj : scene->get_all_objects()) {
-                if (obj && obj->vao != 0 && obj->index_count > 0) {
+                if (obj && obj->vao != 0 && obj->index_count > 0 && obj->get_name() != "CenterMarker") { // Skip center marker
                     glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
                     glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
                     glBindVertexArray(obj->vao);
@@ -401,6 +426,29 @@ namespace Urbaxio {
                 glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
             }
         }
+
+        // --- DRAW UNLIT OBJECTS (CENTER SPHERE) ---
+        if (unlitShaderProgram != 0 && scene) {
+            glUseProgram(unlitShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            
+            Urbaxio::Engine::SceneObject* center_marker = nullptr;
+            for(auto* obj : scene->get_all_objects()){
+                if(obj && obj->get_name() == "CenterMarker") {
+                    center_marker = obj;
+                    break;
+                }
+            }
+            if (center_marker && center_marker->vao != 0) {
+                 glUniform3f(glGetUniformLocation(unlitShaderProgram, "u_color"), 1.0f, 1.0f, 1.0f); // White
+                 glBindVertexArray(center_marker->vao);
+                 glDrawElements(GL_TRIANGLES, center_marker->index_count, GL_UNSIGNED_INT, 0);
+                 glBindVertexArray(0);
+            }
+        }
+
         // --- DRAW AXES (with new shader) ---
         if (showAxes && axesVAO != 0 && axisShaderProgram != 0) {
             glLineWidth(axisLineWidth);
@@ -430,6 +478,8 @@ namespace Urbaxio {
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, gridVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, gridFragmentShaderSource); if (vs != 0 && fs != 0) gridShaderProgram = LinkShaderProgram(vs, fs); if (gridShaderProgram == 0) return false; std::cout << "Renderer: Grid shader program created." << std::endl; }
         // Axis Shader
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, axisVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, axisFragmentShaderSource); if (vs != 0 && fs != 0) axisShaderProgram = LinkShaderProgram(vs, fs); if (axisShaderProgram == 0) return false; std::cout << "Renderer: Axis shader program created." << std::endl; }
+        // Unlit Shader
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, unlitVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, unlitFragmentShaderSource); if (vs != 0 && fs != 0) unlitShaderProgram = LinkShaderProgram(vs, fs); if (unlitShaderProgram == 0) return false; std::cout << "Renderer: Unlit shader program created." << std::endl; }
         // Splat Shader
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, splatVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, splatFragmentShaderSource); if (vs != 0 && fs != 0) splatShaderProgram = LinkShaderProgram(vs, fs); if (splatShaderProgram == 0) return false; std::cout << "Renderer: Splat shader program created." << std::endl; }
         // Marker Shader
@@ -560,6 +610,7 @@ namespace Urbaxio {
         if (simpleLineShaderProgram != 0) glDeleteProgram(simpleLineShaderProgram); simpleLineShaderProgram = 0;
         if (gridShaderProgram != 0) glDeleteProgram(gridShaderProgram); gridShaderProgram = 0;
         if (axisShaderProgram != 0) glDeleteProgram(axisShaderProgram); axisShaderProgram = 0;
+        if (unlitShaderProgram != 0) glDeleteProgram(unlitShaderProgram); unlitShaderProgram = 0;
         if (splatShaderProgram != 0) glDeleteProgram(splatShaderProgram); splatShaderProgram = 0;
         if (markerShaderProgram != 0) glDeleteProgram(markerShaderProgram); markerShaderProgram = 0;
         std::cout << "Renderer: Resource cleanup finished." << std::endl;

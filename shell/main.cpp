@@ -53,7 +53,8 @@ int main(int argc, char* argv[]) {
 
     Urbaxio::Renderer renderer; if (!renderer.Initialize()) { return 1; }
     Urbaxio::Camera camera; Urbaxio::InputHandler inputHandler;
-    ImVec4 clear_color = ImVec4(0.18f, 0.18f, 0.22f, 1.00f); int object_counter = 0; glm::vec3 objectColor(0.6f, 0.7f, 0.9f); glm::vec3 lightDirection = glm::normalize(glm::vec3(0.8f, 1.0f, -0.6f)); glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f); float ambientStrength = 0.15f; float gridLineWidth = 1.0f; float axisLineWidth = 3.0f; glm::vec4 splatColor = glm::vec4(1.0f, 0.5f, 0.2f, 0.8f); float splatBlurStrength = 10.0f; bool showGrid = true; bool showAxes = true; float maxLineWidth = renderer.GetMaxLineWidth();
+    // New background color #21212E -> (33, 33, 46) -> (0.129, 0.129, 0.18)
+    ImVec4 clear_color = ImVec4(0.13f, 0.13f, 0.18f, 1.00f); int object_counter = 0; glm::vec3 objectColor(0.8f, 0.85f, 0.9f); glm::vec3 lightDirection = glm::normalize(glm::vec3(0.8f, 1.0f, -0.6f)); glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f); float ambientStrength = 0.15f; float gridLineWidth = 1.0f; float axisLineWidth = 3.0f; glm::vec4 splatColor = glm::vec4(1.0f, 0.5f, 0.2f, 0.8f); float splatBlurStrength = 10.0f; bool showGrid = true; bool showAxes = true; float maxLineWidth = renderer.GetMaxLineWidth();
     
     // --- NEW: Parameters for interactive effects ---
     float cursorRadius = 15.0f;

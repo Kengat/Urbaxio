@@ -71,6 +71,9 @@ namespace { // Anonymous namespace for utility functions
         const Urbaxio::Engine::SceneObject& object,
         size_t startTriangleBaseIndex)
     {
+        // Add a check at the beginning
+        if (object.get_name() == "CenterMarker") return {};
+        
         const float NORMAL_DOT_TOLERANCE = 0.999f; // Cosine of angle tolerance
         const float PLANE_DIST_TOLERANCE = 1e-4f;
 
@@ -264,7 +267,7 @@ namespace Urbaxio {
                         } else {
                             if (!shiftDown) selectedLineIDs.clear();
                             for (Urbaxio::Engine::SceneObject* obj_ptr : scene->get_all_objects()) {
-                                if (obj_ptr->has_mesh()) {
+                                if (obj_ptr && obj_ptr->has_mesh() && obj_ptr->get_name() != "CenterMarker") { // <-- ADD CHECK HERE
                                     const auto& mesh = obj_ptr->get_mesh_buffers();
                                     for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                                         glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]); glm::vec3 v1(mesh.vertices[mesh.indices[i+1]*3], mesh.vertices[mesh.indices[i+1]*3+1], mesh.vertices[mesh.indices[i+1]*3+2]); glm::vec3 v2(mesh.vertices[mesh.indices[i+2]*3], mesh.vertices[mesh.indices[i+2]*3+1], mesh.vertices[mesh.indices[i+2]*3+2]); float t; if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDistance) { closestHitDistance = t; hitObjectId = obj_ptr->get_id(); hitTriangleBaseIndex = i; }
@@ -328,7 +331,7 @@ namespace Urbaxio {
                 glm::vec3 rayOrigin, rayDir; Camera::ScreenToWorldRay(mouseX, mouseY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w/(float)display_h), rayOrigin, rayDir);
                 uint64_t currentHoveredObjId = 0; size_t currentHoveredTriangleIdx = 0; float closestHitDist = std::numeric_limits<float>::max();
                 for (Urbaxio::Engine::SceneObject* obj_ptr : scene->get_all_objects()) {
-                    if (obj_ptr->has_mesh()) {
+                    if (obj_ptr && obj_ptr->has_mesh() && obj_ptr->get_name() != "CenterMarker") { // <-- ADD CHECK HERE
                         const auto& mesh = obj_ptr->get_mesh_buffers();
                         for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                             glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]); glm::vec3 v1(mesh.vertices[mesh.indices[i+1]*3], mesh.vertices[mesh.indices[i+1]*3+1], mesh.vertices[mesh.indices[i+1]*3+2]); glm::vec3 v2(mesh.vertices[mesh.indices[i+2]*3], mesh.vertices[mesh.indices[i+2]*3+1], mesh.vertices[mesh.indices[i+2]*3+2]); float t; if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDist) { closestHitDist = t; currentHoveredObjId = obj_ptr->get_id(); currentHoveredTriangleIdx = i; }

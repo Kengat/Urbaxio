@@ -62,6 +62,7 @@ namespace Urbaxio {
         GLuint axisShaderProgram = 0;
         // --- OLD SHADER (renamed for clarity, used for user lines and rubber band) ---
         GLuint simpleLineShaderProgram = 0; 
+        GLuint unlitShaderProgram = 0; // <-- NEW SHADER for unlit objects
         
         GLuint splatShaderProgram = 0;
         GLuint markerShaderProgram = 0;
@@ -119,6 +120,7 @@ namespace Urbaxio {
         const char* simpleLineVertexShaderSource; const char* simpleLineFragmentShaderSource;
         const char* gridVertexShaderSource; const char* gridFragmentShaderSource;
         const char* axisVertexShaderSource; const char* axisFragmentShaderSource;
+        const char* unlitVertexShaderSource; const char* unlitFragmentShaderSource; // <-- NEW
         const char* splatVertexShaderSource; const char* splatFragmentShaderSource;
         const char* markerVertexShaderSource; const char* markerFragmentShaderSource;
     };

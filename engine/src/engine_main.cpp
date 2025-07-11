@@ -7,6 +7,10 @@
 #include <memory>                // Для std::unique_ptr
 #include <iostream>              // Для std::cerr
 #include <string>                // Для std::string
+#include <vector>                // For std::vector
+#include <cmath>                 // For sqrt
+#include <map>                   // For subdivision map
+#include <glm/glm.hpp>           // For glm::normalize
 // #include <stdlib.h> // Больше не нужен для _putenv_s
 
 // Глобальный указатель на сцену
@@ -16,6 +20,94 @@ std::unique_ptr<Urbaxio::Engine::Scene> g_scene = nullptr;
 #ifndef URBAXIO_VERSION_STRING
 #define URBAXIO_VERSION_STRING "0.0.1-dev"
 #endif
+
+namespace { // Anonymous namespace
+
+    // Helper function for icosphere subdivision
+    int get_middle_point(int p1, int p2, std::map<long long, int>& middlePointIndexCache, std::vector<glm::vec3>& vertices, float radius) {
+        bool firstIsSmaller = p1 < p2;
+        long long smallerIndex = firstIsSmaller ? p1 : p2;
+        long long greaterIndex = firstIsSmaller ? p2 : p1;
+        long long key = (smallerIndex << 32) + greaterIndex;
+
+        auto it = middlePointIndexCache.find(key);
+        if (it != middlePointIndexCache.end()) {
+            return it->second;
+        }
+
+        glm::vec3 point1 = vertices[p1];
+        glm::vec3 point2 = vertices[p2];
+        glm::vec3 middle = glm::vec3(
+            (point1.x + point2.x) / 2.0f,
+            (point1.y + point2.y) / 2.0f,
+            (point1.z + point2.z) / 2.0f
+        );
+        
+        vertices.push_back(glm::normalize(middle) * radius);
+        int i = vertices.size() - 1;
+        middlePointIndexCache[key] = i;
+        return i;
+    }
+
+    // Creates an icosphere mesh with a specified subdivision level
+    Urbaxio::CadKernel::MeshBuffers CreateIcoSphereMesh(float radius, int subdivision) {
+        Urbaxio::CadKernel::MeshBuffers mesh;
+        const float t = (1.0f + std::sqrt(5.0f)) / 2.0f;
+
+        std::vector<glm::vec3> base_vertices = {
+            {-1,  t,  0}, { 1,  t,  0}, {-1, -t,  0}, { 1, -t,  0},
+            { 0, -1,  t}, { 0,  1,  t}, { 0, -1, -t}, { 0,  1, -t},
+            { t,  0, -1}, { t,  0,  1}, {-t,  0, -1}, {-t,  0,  1}
+        };
+
+        for (auto& v : base_vertices) {
+            v = glm::normalize(v) * radius;
+        }
+
+        std::vector<unsigned int> base_indices = {
+             0, 11,  5,    0,  5,  1,    0,  1,  7,    0,  7, 10,    0, 10, 11,
+             1,  5,  9,    5, 11,  4,   11, 10,  2,   10,  7,  6,    7,  1,  8,
+             3,  9,  4,    3,  4,  2,    3,  2,  6,    3,  6,  8,    3,  8,  9,
+             4,  9,  5,    2,  4, 11,    6,  2, 10,    8,  6,  7,    9,  8,  1
+        };
+
+        std::map<long long, int> middlePointIndexCache;
+        std::vector<glm::vec3> temp_vertices_glm = base_vertices;
+
+        for (int s = 0; s < subdivision; s++) {
+            std::vector<unsigned int> new_indices;
+            for (size_t i = 0; i < base_indices.size(); i += 3) {
+                int i0 = base_indices[i];
+                int i1 = base_indices[i+1];
+                int i2 = base_indices[i+2];
+                int a = get_middle_point(i0, i1, middlePointIndexCache, temp_vertices_glm, radius);
+                int b = get_middle_point(i1, i2, middlePointIndexCache, temp_vertices_glm, radius);
+                int c = get_middle_point(i2, i0, middlePointIndexCache, temp_vertices_glm, radius);
+                new_indices.insert(new_indices.end(), { (unsigned int)i0, (unsigned int)a, (unsigned int)c });
+                new_indices.insert(new_indices.end(), { (unsigned int)i1, (unsigned int)b, (unsigned int)a });
+                new_indices.insert(new_indices.end(), { (unsigned int)i2, (unsigned int)c, (unsigned int)b });
+                new_indices.insert(new_indices.end(), { (unsigned int)a,  (unsigned int)b, (unsigned int)c });
+            }
+            base_indices = new_indices;
+        }
+
+        mesh.indices = base_indices;
+
+        mesh.vertices.clear();
+        mesh.normals.clear();
+        for(const auto& v : temp_vertices_glm) {
+            glm::vec3 norm = glm::normalize(v);
+            mesh.vertices.push_back(v.x);
+            mesh.vertices.push_back(v.y);
+            mesh.vertices.push_back(v.z);
+            mesh.normals.push_back(norm.x);
+            mesh.normals.push_back(norm.y);
+            mesh.normals.push_back(norm.z);
+        }
+        
+        return mesh;
+    }
+} // end anonymous namespace
 
 // --- Реализация функций API ---
 #ifdef __cplusplus
@@ -32,16 +124,15 @@ extern "C" {
             g_scene = std::make_unique<Urbaxio::Engine::Scene>();
             fmt::print("Engine: Scene created successfully.\n");
 
-            // Создаем тестовые объекты при старте
-            auto* obj1 = g_scene->create_object("MyFirstObject");
-            auto* obj2 = g_scene->create_object("AnotherObject");
-
-            if (obj1 && obj2) {
-                fmt::print("Engine: Created initial test object '{}' with ID {}.\n", obj1->get_name(), obj1->get_id());
-                fmt::print("Engine: Created initial test object '{}' with ID {}.\n", obj2->get_name(), obj2->get_id());
-            }
-            else {
-                fmt::print(stderr, "Engine: Error creating initial test objects!\n");
+            // --- Create Center Marker Sphere ---
+            auto* center_sphere = g_scene->create_object("CenterMarker");
+            if (center_sphere) {
+                // Subdivision level 2 gives a nicely rounded sphere
+                Urbaxio::CadKernel::MeshBuffers sphere_mesh = CreateIcoSphereMesh(0.25f, 2);
+                center_sphere->set_mesh_buffers(std::move(sphere_mesh));
+                fmt::print("Engine: Created 'CenterMarker' object.\n");
+            } else {
+                fmt::print(stderr, "Engine: Error creating 'CenterMarker' object!\n");
             }
 
         }
