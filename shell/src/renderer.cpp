@@ -187,9 +187,9 @@ namespace Urbaxio {
             "uniform vec3 u_cursorWorldPos;\n"
             "uniform float u_cursorRadius;\n"
             "uniform float u_intensity;\n"
+            "uniform float u_fadeStart;\n"
+            "uniform float u_fadeEnd;\n"
             "const vec3 WHITE = vec3(1.0, 1.0, 1.0);\n"
-            "const float FADE_DISTANCE_START = 0.5;\n"
-            "const float FADE_DISTANCE_END = 4.0;\n"
             "void main() {\n"
             "    float distFromMouse = distance(vWorldPos, u_cursorWorldPos);\n"
             "    float mouseRevealFactor = (1.0 - smoothstep(0.0, u_cursorRadius, distFromMouse)) * u_intensity;\n"
@@ -201,7 +201,7 @@ namespace Urbaxio {
             "    } else {\n"
             "        // Positive Axis: Default is gradient, lights up with more color under cursor\n"
             "        float distFromOrigin = length(vWorldPos);\n"
-            "        float fadeToWhiteFactor = smoothstep(FADE_DISTANCE_START, FADE_DISTANCE_END, distFromOrigin);\n"
+            "        float fadeToWhiteFactor = smoothstep(u_fadeStart, u_fadeEnd, distFromOrigin);\n"
             "        vec3 fadedColor = mix(vBaseColor.rgb, WHITE, fadeToWhiteFactor);\n"
             "        baseColor = mix(fadedColor, vBaseColor.rgb, mouseRevealFactor);\n"
             "    }\n"
@@ -442,7 +442,17 @@ namespace Urbaxio {
                 }
             }
             if (center_marker && center_marker->vao != 0) {
+                 // Calculate dynamic scaling based on camera distance
+                 float distanceToCamera = glm::length(camera.Position);
+                 float referenceDistance = 30.0f;
+                 // Reduce final scale by 30%
+                 float scale = (distanceToCamera / referenceDistance) * 0.7f;
+                 scale = glm::max(scale, 0.1f); // Minimum scale to prevent it from becoming too small
+
+                 glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+                 glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
                  glUniform3f(glGetUniformLocation(unlitShaderProgram, "u_color"), 1.0f, 1.0f, 1.0f); // White
+                 
                  glBindVertexArray(center_marker->vao);
                  glDrawElements(GL_TRIANGLES, center_marker->index_count, GL_UNSIGNED_INT, 0);
                  glBindVertexArray(0);
@@ -459,6 +469,15 @@ namespace Urbaxio {
             glUniform3fv(glGetUniformLocation(axisShaderProgram, "u_cursorWorldPos"), 1, glm::value_ptr(cursorWorldPos));
             glUniform1f(glGetUniformLocation(axisShaderProgram, "u_cursorRadius"), cursorRadius);
             glUniform1f(glGetUniformLocation(axisShaderProgram, "u_intensity"), intensity);
+
+            // Dynamic fade distances for axis gradient
+            float distanceToCamera = glm::length(camera.Position);
+            const float baseFadeStart = 0.5f;
+            const float baseFadeEnd = 4.0f;
+            const float referenceDistance = 30.0f;
+            float distanceScale = distanceToCamera / referenceDistance;
+            glUniform1f(glGetUniformLocation(axisShaderProgram, "u_fadeStart"), baseFadeStart * distanceScale);
+            glUniform1f(glGetUniformLocation(axisShaderProgram, "u_fadeEnd"), baseFadeEnd * distanceScale);
             
             glBindVertexArray(axesVAO);
             // We draw all 3 axes from the same VBO, they are laid out sequentially.
