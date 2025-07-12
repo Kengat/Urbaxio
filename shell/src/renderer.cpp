@@ -6,6 +6,8 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/constants.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <imgui_impl_opengl3.h>
 #include <iostream>
 #include <vector>
@@ -224,16 +226,26 @@ namespace Urbaxio {
             "uniform mat4 model;\n"
             "uniform mat4 view;\n"
             "uniform mat4 projection;\n"
+            "out vec3 vWorldPos;\n"
             "void main() {\n"
-            "    gl_Position = projection * view * model * vec4(aPos, 1.0);\n"
+            "    vWorldPos = vec3(model * vec4(aPos, 1.0));\n"
+            "    gl_Position = projection * view * vec4(vWorldPos, 1.0);\n"
             "}\n";
 
         unlitFragmentShaderSource =
             "#version 330 core\n"
             "out vec4 FragColor;\n"
-            "uniform vec3 u_color;\n"
+            "uniform vec3 u_baseColor;\n"
+            "uniform vec3 u_fadeColor;\n"
+            "uniform vec3 u_cursorWorldPos;\n"
+            "uniform float u_cursorRadius;\n"
+            "uniform float u_intensity;\n"
+            "in vec3 vWorldPos;\n"
             "void main() {\n"
-            "    FragColor = vec4(u_color, 1.0);\n"
+            "    float distFromMouse = distance(vWorldPos, u_cursorWorldPos);\n"
+            "    float mouseRevealFactor = (1.0 - smoothstep(0.0, u_cursorRadius, distFromMouse)) * u_intensity;\n"
+            "    vec3 finalColor = mix(u_fadeColor, u_baseColor, mouseRevealFactor);\n"
+            "    FragColor = vec4(finalColor, 1.0);\n"
             "}\n";
 
         splatVertexShaderSource =
@@ -299,7 +311,7 @@ namespace Urbaxio {
         // Appearance
         const glm::vec3& defaultObjectColor,
         const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
-        bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth, float negAxisLineWidth,
+        bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
         const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ,
         const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
         // Test Elements
@@ -388,9 +400,12 @@ namespace Urbaxio {
         }
         if (objectShaderProgram != 0 && scene) { glLineWidth(1.0f); glUseProgram(objectShaderProgram); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor)); glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength); glUniform3fv(glGetUniformLocation(objectShaderProgram, "viewPos"), 1, glm::value_ptr(camera.Position)); glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
             
-            // 1. Draw lit objects (excluding CenterMarker)
+            // 1. Draw lit objects (excluding all marker templates)
             for (const auto* obj : scene->get_all_objects()) {
-                if (obj && obj->vao != 0 && obj->index_count > 0 && obj->get_name() != "CenterMarker") { // Skip center marker
+                if (obj && obj->vao != 0 && obj->index_count > 0 && 
+                    obj->get_name() != "CenterMarker" && 
+                    obj->get_name() != "UnitSphereMarker" && 
+                    obj->get_name() != "UnitCapsuleMarker") { // Skip all marker templates
                     glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
                     glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
                     glBindVertexArray(obj->vao);
@@ -451,36 +466,87 @@ namespace Urbaxio {
             }
         }
 
-        // --- DRAW UNLIT OBJECTS (CENTER SPHERE) ---
+        // --- DRAW UNLIT OBJECTS (CENTER SPHERE & MARKERS) ---
         if (unlitShaderProgram != 0 && scene) {
             glUseProgram(unlitShaderProgram);
             glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-            glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniform3fv(glGetUniformLocation(unlitShaderProgram, "u_cursorWorldPos"), 1, glm::value_ptr(cursorWorldPos));
+            glUniform1f(glGetUniformLocation(unlitShaderProgram, "u_cursorRadius"), cursorRadius);
+            glUniform1f(glGetUniformLocation(unlitShaderProgram, "u_intensity"), intensity);
             
+            // Find marker templates
             Urbaxio::Engine::SceneObject* center_marker = nullptr;
+            Urbaxio::Engine::SceneObject* sphere_marker_template = nullptr;
+            Urbaxio::Engine::SceneObject* capsule_marker_template = nullptr;
+            
             for(auto* obj : scene->get_all_objects()){
                 if(obj && obj->get_name() == "CenterMarker") {
                     center_marker = obj;
-                    break;
+                } else if(obj && obj->get_name() == "UnitSphereMarker") {
+                    sphere_marker_template = obj;
+                } else if(obj && obj->get_name() == "UnitCapsuleMarker") {
+                    capsule_marker_template = obj;
                 }
             }
-            if (center_marker && center_marker->vao != 0) {
-                 // Calculate dynamic scaling based on camera distance
-                 float distanceToCamera = glm::length(camera.Position);
-                 float referenceDistance = 30.0f;
-                 // Reduce final scale by 30%
-                 float scale = (distanceToCamera / referenceDistance) * 0.7f;
-                 scale = glm::max(scale, 0.1f); // Minimum scale to prevent it from becoming too small
 
+            // Draw Center Marker (always white, no interactivity)
+            if (center_marker && center_marker->vao != 0) {
+                 float scale = (distanceToCamera / referenceDistance) * 0.7f;
+                 scale = glm::max(scale, 0.1f); 
                  glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(scale));
                  glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
-                 glUniform3f(glGetUniformLocation(unlitShaderProgram, "u_color"), 1.0f, 1.0f, 1.0f); // White
-                 
+                 glUniform3f(glGetUniformLocation(unlitShaderProgram, "u_baseColor"), 1.0f, 1.0f, 1.0f);
+                 glUniform3f(glGetUniformLocation(unlitShaderProgram, "u_fadeColor"), 1.0f, 1.0f, 1.0f);
                  glBindVertexArray(center_marker->vao);
                  glDrawElements(GL_TRIANGLES, center_marker->index_count, GL_UNSIGNED_INT, 0);
-                 glBindVertexArray(0);
             }
+
+            // Draw Axis Markers
+            if (showAxes && sphere_marker_template && sphere_marker_template->vao != 0 && capsule_marker_template && capsule_marker_template->vao != 0) {
+                const float markerBaseScale = 0.15f; // Smaller than center sphere
+                const int maxMarkerDist = 100;
+
+                struct AxisInfo { glm::vec3 dir; glm::vec4 color; };
+                std::vector<AxisInfo> axes_info = {
+                    {glm::vec3(1,0,0), axisColorX},
+                    {glm::vec3(0,1,0), axisColorY},
+                    {glm::vec3(0,0,1), axisColorZ}
+                };
+                
+                // Set fade color for all markers
+                glUniform3fv(glGetUniformLocation(unlitShaderProgram, "u_fadeColor"), 1, glm::value_ptr(glm::vec3(positiveAxisFadeColor)));
+
+                for(const auto& axis : axes_info) {
+                    glUniform3fv(glGetUniformLocation(unlitShaderProgram, "u_baseColor"), 1, glm::value_ptr(glm::vec3(axis.color)));
+                    for(int i = 5; i <= maxMarkerDist; i += 5) { // Start from 5 to exclude origin
+                        glm::vec3 position = axis.dir * (float)i;
+                        float distToMarker = glm::length(camera.Position - position);
+                        float scale = (distToMarker / referenceDistance) * markerBaseScale;
+
+                        glm::mat4 translationMatrix = glm::translate(glm::mat4(1.0f), position);
+                        glm::mat4 scaleMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+                        
+                        if (i % 10 == 0) { // Capsule at 10, 20, 30...
+                            // Capsule rotation: lay it flat on XY plane, then point it along the axis direction
+                            glm::quat rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(1,0,0)); // First, lay it flat on XY
+                            rotation = glm::angleAxis(glm::atan(axis.dir.y, axis.dir.x), glm::vec3(0,0,1)) * rotation; // Then rotate to point along the axis
+                            
+                            glm::mat4 rotationMatrix = glm::mat4_cast(rotation);
+                            glm::mat4 modelMatrix = translationMatrix * rotationMatrix * scaleMatrix;
+                            glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
+                            glBindVertexArray(capsule_marker_template->vao);
+                            glDrawElements(GL_TRIANGLES, capsule_marker_template->index_count, GL_UNSIGNED_INT, 0);
+                        } else { // Sphere at 5, 15, 25...
+                            glm::mat4 modelMatrix = translationMatrix * scaleMatrix;
+                            glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
+                            glBindVertexArray(sphere_marker_template->vao);
+                            glDrawElements(GL_TRIANGLES, sphere_marker_template->index_count, GL_UNSIGNED_INT, 0);
+                        }
+                    }
+                }
+            }
+            glBindVertexArray(0);
         }
 
         // --- DRAW AXES (with new shader) ---

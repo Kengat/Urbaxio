@@ -13,6 +13,17 @@
 #include <glm/glm.hpp>           // For glm::normalize
 // #include <stdlib.h> // Больше не нужен для _putenv_s
 
+// OpenCascade includes for capsule generation
+#include <gp_Ax2.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <TopoDS_Shape.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+
 // Глобальный указатель на сцену
 std::unique_ptr<Urbaxio::Engine::Scene> g_scene = nullptr;
 
@@ -107,6 +118,67 @@ namespace { // Anonymous namespace
         
         return mesh;
     }
+
+    // Creates a capsule mesh along the Z axis
+    Urbaxio::CadKernel::MeshBuffers CreateCapsuleMesh(float radius, float height) {
+        try {
+            // ============ АВТОМАТИЧЕСКИЕ СМЕЩЕНИЯ (зависят от размеров) ============
+            // Базовые коэффициенты для правильного отображения:
+            float cylinder_z_factor = -0.25f;  // Цилиндр смещается вниз на 25% от высоты
+            float sphere_z_factor = 0.25f;     // Сферы смещаются вверх на 25% от высоты
+            
+            // Вычисляем автоматические смещения:
+            float cylinder_offset_x = 0.0f;
+            float cylinder_offset_y = 0.0f;
+            float cylinder_offset_z = height * cylinder_z_factor;  // Зависит от высоты
+            
+            float sphere_offset_x = 0.0f;
+            float sphere_offset_y = 0.0f;
+            float sphere_offset_z = height * sphere_z_factor;      // Зависит от высоты
+            // ===================================================================
+            
+            gp_Pnt center(cylinder_offset_x, cylinder_offset_y, cylinder_offset_z);  // <-- ЦЕНТР ЦИЛИНДРА
+            gp_Dir z_dir(0, 0, 1);
+            gp_Ax2 axis(center, z_dir);
+            
+            TopoDS_Shape cylinder = BRepPrimAPI_MakeCylinder(axis, radius, height);
+
+            // Create a single sphere at the origin
+            TopoDS_Shape sphere = BRepPrimAPI_MakeSphere(gp_Pnt(0,0,0), radius);
+
+            // Create two transformations to move the sphere to the ends (независимые смещения)
+            gp_Trsf top_trsf, bot_trsf;
+            top_trsf.SetTranslation(gp_Vec(
+                cylinder_offset_x + sphere_offset_x, 
+                cylinder_offset_y + sphere_offset_y, 
+                cylinder_offset_z + sphere_offset_z + height / 2.0
+            ));
+            bot_trsf.SetTranslation(gp_Vec(
+                cylinder_offset_x + sphere_offset_x, 
+                cylinder_offset_y + sphere_offset_y, 
+                cylinder_offset_z + sphere_offset_z - height / 2.0
+            ));
+
+            // Apply transformations
+            TopoDS_Shape top_hemisphere = BRepBuilderAPI_Transform(sphere, top_trsf);
+            TopoDS_Shape bot_hemisphere = BRepBuilderAPI_Transform(sphere, bot_trsf);
+            
+            // Fuse them
+            BRepAlgoAPI_Fuse fuser(cylinder, top_hemisphere);
+            fuser.Build();
+            TopoDS_Shape result = fuser.Shape();
+            
+            BRepAlgoAPI_Fuse final_fuser(result, bot_hemisphere);
+            final_fuser.Build();
+            result = final_fuser.Shape();
+            
+            return Urbaxio::CadKernel::TriangulateShape(result);
+
+        } catch(...) {
+            std::cerr << "OCCT Exception during capsule creation!" << std::endl;
+            return Urbaxio::CadKernel::MeshBuffers();
+        }
+    }
 } // end anonymous namespace
 
 // --- Реализация функций API ---
@@ -130,9 +202,31 @@ extern "C" {
                 // Subdivision level 2 gives a nicely rounded sphere
                 Urbaxio::CadKernel::MeshBuffers sphere_mesh = CreateIcoSphereMesh(0.25f, 2);
                 center_sphere->set_mesh_buffers(std::move(sphere_mesh));
-                fmt::print("Engine: Created 'CenterMarker' object.\n");
+                fmt::print("Engine: Created 'CenterMarker' object with ID {}.\n", center_sphere->get_id());
             } else {
                 fmt::print(stderr, "Engine: Error creating 'CenterMarker' object!\n");
+            }
+
+            // --- Create Unit Sphere Marker Template ---
+            auto* sphere_marker = g_scene->create_object("UnitSphereMarker");
+            if (sphere_marker) {
+                // Low-poly sphere (subdivision 1) for performance
+                Urbaxio::CadKernel::MeshBuffers mesh = CreateIcoSphereMesh(1.0f, 1);
+                sphere_marker->set_mesh_buffers(std::move(mesh));
+                fmt::print("Engine: Created 'UnitSphereMarker' template with ID {}.\n", sphere_marker->get_id());
+            } else {
+                fmt::print(stderr, "Engine: Error creating 'UnitSphereMarker' template!\n");
+            }
+
+            // --- Create Unit Capsule Marker Template ---
+            auto* capsule_marker = g_scene->create_object("UnitCapsuleMarker");
+            if (capsule_marker) {
+                // Return radius to 1.0
+                Urbaxio::CadKernel::MeshBuffers mesh = CreateCapsuleMesh(1.0f, 2.0f);
+                capsule_marker->set_mesh_buffers(std::move(mesh));
+                fmt::print("Engine: Created 'UnitCapsuleMarker' template with ID {}.\n", capsule_marker->get_id());
+            } else {
+                fmt::print(stderr, "Engine: Error creating 'UnitCapsuleMarker' template!\n");
             }
 
         }

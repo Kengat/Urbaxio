@@ -62,14 +62,13 @@ int main(int argc, char* argv[]) {
     glm::vec3 lightColor = glm::vec3(0.618f, 0.858f, 0.844f);
     float ambientStrength = 0.267f;
     bool showGrid = true; bool showAxes = true;
-    float gridLineWidth = 1.0f;
     glm::vec3 gridColor(58.f / 255.f, 82.f / 255.f, 105.f / 255.f);
     // Positive Axes
     glm::vec4 axisColorX(223.f / 255.f, 62.f / 255.f, 86.f / 255.f, 1.0f);
     glm::vec4 axisColorY(58.f / 255.f, 223.f / 255.f, 150.f / 255.f, 1.0f);
-    glm::vec4 axisColorZ(95.f / 255.f, 115.f / 255.f, 230.f / 255.f, 1.0f);
+    glm::vec4 axisColorZ(63.f / 255.f, 56.f / 255.f, 184.f / 255.f, 1.0f);
     float axisLineWidth = 2.302f;
-    glm::vec4 positiveAxisFadeColor(142.f / 255.f, 172.f / 255.f, 175.f / 255.f, 1.0f);
+    glm::vec4 positiveAxisFadeColor(72.f / 255.f, 94.f / 255.f, 96.f / 255.f, 1.0f); // #485E60
     // Negative Axes
     float negAxisLineWidth = 1.698f;
     glm::vec4 negativeAxisFadeColor(50.f / 255.f, 81.f / 255.f, 86.f / 255.f, 102.f / 255.f);
@@ -223,6 +222,7 @@ int main(int argc, char* argv[]) {
                 ImGui::ColorEdit4("Axis Y Color", glm::value_ptr(axisColorY));
                 ImGui::ColorEdit4("Axis Z Color", glm::value_ptr(axisColorZ));
                 ImGui::ColorEdit4("Fade To Color##Positive", glm::value_ptr(positiveAxisFadeColor));
+                ImGui::SameLine(); ImGui::TextDisabled("(also used for axis markers)");
                 ImGui::SliderFloat("Width##Positive", &axisLineWidth, 1.0f, maxLineWidth);
                 ImGui::SeparatorText("Negative Axes");
                 ImGui::ColorEdit4("Fade To Color##Negative", glm::value_ptr(negativeAxisFadeColor));
@@ -246,7 +246,7 @@ int main(int argc, char* argv[]) {
         // Pass new parameters to RenderFrame
         // --- Pass all appearance variables to the renderer ---
         renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightDirection, lightColor, ambientStrength, 
-            showGrid, showAxes, gridLineWidth, axisLineWidth, negAxisLineWidth,
+            showGrid, showAxes, axisLineWidth, negAxisLineWidth,
             gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
             splatColor, splatBlurStrength, cursorWorldPos, cursorRadius, effectIntensity, 
             selectedObjId, selectedTriangleIndices, selectedLineIDs, selectionHighlightColor, 

@@ -32,7 +32,7 @@ namespace Urbaxio {
             // Appearance
             const glm::vec3& defaultObjectColor,
             const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
-            bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth, float negAxisLineWidth,
+            bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
             const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ, 
             const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
             // Test Elements
