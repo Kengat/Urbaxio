@@ -240,11 +240,16 @@ namespace Urbaxio {
             "uniform vec3 u_cursorWorldPos;\n"
             "uniform float u_cursorRadius;\n"
             "uniform float u_intensity;\n"
+            "uniform float u_fadeStart;\n"
+            "uniform float u_fadeEnd;\n"
             "in vec3 vWorldPos;\n"
             "void main() {\n"
+            "    float distFromOrigin = length(vWorldPos);\n"
+            "    float fadeToWhiteFactor = smoothstep(u_fadeStart, u_fadeEnd, distFromOrigin);\n"
+            "    vec3 fadedColor = mix(u_baseColor, u_fadeColor, fadeToWhiteFactor);\n"
             "    float distFromMouse = distance(vWorldPos, u_cursorWorldPos);\n"
             "    float mouseRevealFactor = (1.0 - smoothstep(0.0, u_cursorRadius, distFromMouse)) * u_intensity;\n"
-            "    vec3 finalColor = mix(u_fadeColor, u_baseColor, mouseRevealFactor);\n"
+            "    vec3 finalColor = mix(fadedColor, u_baseColor, mouseRevealFactor);\n"
             "    FragColor = vec4(finalColor, 1.0);\n"
             "}\n";
 
@@ -493,7 +498,10 @@ namespace Urbaxio {
             // Draw Center Marker (always white, no interactivity)
             if (center_marker && center_marker->vao != 0) {
                  float scale = (distanceToCamera / referenceDistance) * 0.7f;
-                 scale = glm::max(scale, 0.1f); 
+                 // Remove the minimum size clamp
+                 // scale = glm::max(scale, 0.1f); 
+                 glUniform1f(glGetUniformLocation(unlitShaderProgram, "u_fadeStart"), 0.0); // No gradient for center
+                 glUniform1f(glGetUniformLocation(unlitShaderProgram, "u_fadeEnd"), 0.0);   // No gradient for center
                  glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(scale));
                  glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
                  glUniform3f(glGetUniformLocation(unlitShaderProgram, "u_baseColor"), 1.0f, 1.0f, 1.0f);
@@ -506,6 +514,13 @@ namespace Urbaxio {
             if (showAxes && sphere_marker_template && sphere_marker_template->vao != 0 && capsule_marker_template && capsule_marker_template->vao != 0) {
                 const float markerBaseScale = 0.15f; // Smaller than center sphere
                 const int maxMarkerDist = 100;
+                const float maxMarkerWorldSize = 0.5f;
+
+                // Pass gradient uniforms for markers
+                const float baseFadeStart = 0.5f;
+                const float baseFadeEnd = 4.0f;
+                glUniform1f(glGetUniformLocation(unlitShaderProgram, "u_fadeStart"), baseFadeStart * distanceScale);
+                glUniform1f(glGetUniformLocation(unlitShaderProgram, "u_fadeEnd"), baseFadeEnd * distanceScale);
 
                 struct AxisInfo { glm::vec3 dir; glm::vec4 color; };
                 std::vector<AxisInfo> axes_info = {
@@ -524,13 +539,26 @@ namespace Urbaxio {
                         float distToMarker = glm::length(camera.Position - position);
                         float scale = (distToMarker / referenceDistance) * markerBaseScale;
 
+                        // Clamp max size
+                        if (scale > maxMarkerWorldSize) {
+                            scale = maxMarkerWorldSize;
+                        }
+
                         glm::mat4 translationMatrix = glm::translate(glm::mat4(1.0f), position);
                         glm::mat4 scaleMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(scale));
                         
                         if (i % 10 == 0) { // Capsule at 10, 20, 30...
-                            // Capsule rotation: lay it flat on XY plane, then point it along the axis direction
-                            glm::quat rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(1,0,0)); // First, lay it flat on XY
-                            rotation = glm::angleAxis(glm::atan(axis.dir.y, axis.dir.x), glm::vec3(0,0,1)) * rotation; // Then rotate to point along the axis
+                            glm::quat rotation;
+                            // Check if it's the Z-axis
+                            if (glm::abs(axis.dir.z) > 0.99) { // It's the Z axis
+                                // For Z-axis: first lay flat on XY plane, then rotate 45 degrees around Z
+                                rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(1,0,0));
+                                rotation = glm::angleAxis(glm::radians(45.0f), glm::vec3(0,0,1)) * rotation;
+                            } else { // X or Y axis
+                                // For X/Y axes: lay flat on XY plane, then point along axis
+                                rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(1,0,0));
+                                rotation = glm::angleAxis(glm::atan(axis.dir.y, axis.dir.x), glm::vec3(0,0,1)) * rotation;
+                            }
                             
                             glm::mat4 rotationMatrix = glm::mat4_cast(rotation);
                             glm::mat4 modelMatrix = translationMatrix * rotationMatrix * scaleMatrix;
