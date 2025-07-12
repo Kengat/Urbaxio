@@ -29,11 +29,15 @@ namespace Urbaxio {
             SDL_Window* window,
             const Urbaxio::Camera& camera,
             Urbaxio::Engine::Scene* scene,
+            // Appearance
             const glm::vec3& defaultObjectColor,
             const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
-            bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth,
+            bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth, float negAxisLineWidth,
+            const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ, 
+            const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
+            // Test Elements
             const glm::vec4& splatColor, float splatBlurStrength,
-            // New Interactive Params
+            // Interactive Effects
             const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
             // Selections
             uint64_t selectedObjId,
@@ -54,6 +58,7 @@ namespace Urbaxio {
 
         void UpdateUserLinesBuffer(const std::map<uint64_t, Engine::Line>& lines, const std::set<uint64_t>& selectedLineIDs);
         void UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance);
+        void UpdateAxesVBO(const glm::vec4& colorX, const glm::vec4& colorY, const glm::vec4& colorZ, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor);
 
     private:
         GLuint objectShaderProgram = 0;

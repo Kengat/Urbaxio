@@ -53,12 +53,35 @@ int main(int argc, char* argv[]) {
 
     Urbaxio::Renderer renderer; if (!renderer.Initialize()) { return 1; }
     Urbaxio::Camera camera; Urbaxio::InputHandler inputHandler;
-    // New background color #21212E -> (33, 33, 46) -> (0.129, 0.129, 0.18)
-    ImVec4 clear_color = ImVec4(0.13f, 0.13f, 0.18f, 1.00f); int object_counter = 0; glm::vec3 objectColor(0.8f, 0.85f, 0.9f); glm::vec3 lightDirection = glm::normalize(glm::vec3(0.273f, 0.268f, 0.259f)); glm::vec3 lightColor = glm::vec3(0.618f, 0.858f, 0.844f); float ambientStrength = 0.267f; float gridLineWidth = 1.0f; float axisLineWidth = 3.0f; glm::vec4 splatColor = glm::vec4(1.0f, 0.5f, 0.2f, 0.8f); float splatBlurStrength = 10.0f; bool showGrid = true; bool showAxes = true; float maxLineWidth = renderer.GetMaxLineWidth();
+    int object_counter = 0;
     
-    // --- NEW: Parameters for interactive effects ---
+    // --- Appearance Settings ---
+    ImVec4 clear_color = ImVec4(0.13f, 0.13f, 0.18f, 1.00f);
+    glm::vec3 objectColor(0.8f, 0.85f, 0.9f);
+    glm::vec3 lightDirection = glm::normalize(glm::vec3(0.273f, 0.268f, 0.259f));
+    glm::vec3 lightColor = glm::vec3(0.618f, 0.858f, 0.844f);
+    float ambientStrength = 0.267f;
+    bool showGrid = true; bool showAxes = true;
+    float gridLineWidth = 1.0f;
+    glm::vec3 gridColor(58.f / 255.f, 82.f / 255.f, 105.f / 255.f);
+    // Positive Axes
+    glm::vec4 axisColorX(223.f / 255.f, 62.f / 255.f, 86.f / 255.f, 1.0f);
+    glm::vec4 axisColorY(58.f / 255.f, 223.f / 255.f, 150.f / 255.f, 1.0f);
+    glm::vec4 axisColorZ(95.f / 255.f, 115.f / 255.f, 230.f / 255.f, 1.0f);
+    float axisLineWidth = 2.302f;
+    glm::vec4 positiveAxisFadeColor(142.f / 255.f, 172.f / 255.f, 175.f / 255.f, 1.0f);
+    // Negative Axes
+    float negAxisLineWidth = 1.698f;
+    glm::vec4 negativeAxisFadeColor(50.f / 255.f, 81.f / 255.f, 86.f / 255.f, 102.f / 255.f);
+    // Effects
     float cursorRadius = 15.0f;
     float effectIntensity = 0.8f;
+    
+    // --- Other Settings ---
+    glm::vec4 splatColor = glm::vec4(1.0f, 0.5f, 0.2f, 0.8f);
+    float splatBlurStrength = 10.0f;
+    float maxLineWidth = renderer.GetMaxLineWidth();
+    bool show_style_editor = false;
     // --- Selection State ---
     uint64_t selectedObjId = 0;
     std::vector<size_t> selectedTriangleIndices;
@@ -127,18 +150,19 @@ int main(int argc, char* argv[]) {
 
         ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplSDL2_NewFrame(); ImGui::NewFrame();
 
-        { // Urbaxio Controls Window
+        // --- Main Controls Window ---
+        { 
             ImGui::Begin("Urbaxio Controls");
-            // ... (FPS, Create Box, Colors, Lighting, View Options, Splat Test, Drawing - same as before) ...
-            ImGui::Text("App avg %.3f ms/f (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate); ImGui::Separator(); if (ImGui::Button("Create Box Object")) { object_counter++; std::string box_name = "Box_" + std::to_string(object_counter); Urbaxio::Engine::SceneObject* new_box = scene_ptr->create_box_object(box_name, 10.0, 20.0, 5.0); if (new_box && new_box->has_mesh()) { /* GPU upload handled by main loop now */ } else { if (!new_box) { std::cerr << "Shell: Failed to create SceneObject for '" << box_name << "'." << std::endl; } else { std::cerr << "Shell: Failed to triangulate or mesh is empty for '" << box_name << "'." << std::endl; } } } ImGui::Separator(); ImGui::ColorEdit3("Object Color", (float*)&objectColor); ImGui::ColorEdit3("Background Color", (float*)&clear_color); ImGui::Separator(); ImGui::Text("Lighting:"); ImGui::SliderFloat("Ambient Strength", &ambientStrength, 0.0f, 1.0f); static glm::vec3 lightDirInput = lightDirection; if (ImGui::SliderFloat3("Light Direction", glm::value_ptr(lightDirInput), -1.0f, 1.0f)) { if (glm::length(lightDirInput) > 1e-6f) { lightDirection = glm::normalize(lightDirInput); } } ImGui::ColorEdit3("Light Color", glm::value_ptr(lightColor)); ImGui::Separator(); ImGui::Text("View Options:"); ImGui::Checkbox("Show Grid", &showGrid); ImGui::SameLine(); ImGui::Checkbox("Show Axes", &showAxes); ImGui::SliderFloat("Axis Line Width", &axisLineWidth, 1.0f, maxLineWidth);
-            
-            // --- NEW: UI Controls for Effects ---
+            ImGui::Text("App avg %.3f ms/f (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::Separator();
-            ImGui::Text("Interactive Effects:");
-            ImGui::SliderFloat("Cursor Radius", &cursorRadius, 1.0f, 50.0f);
-            ImGui::SliderFloat("Effect Intensity", &effectIntensity, 0.1f, 2.0f);
+            if (ImGui::Button("Create Box Object")) { object_counter++; std::string box_name = "Box_" + std::to_string(object_counter); Urbaxio::Engine::SceneObject* new_box = scene_ptr->create_box_object(box_name, 10.0, 20.0, 5.0); if (new_box && new_box->has_mesh()) { /* GPU upload handled by main loop now */ } else { if (!new_box) { std::cerr << "Shell: Failed to create SceneObject for '" << box_name << "'." << std::endl; } else { std::cerr << "Shell: Failed to triangulate or mesh is empty for '" << box_name << "'." << std::endl; } } }
+            ImGui::Separator();
             
-            ImGui::Separator(); ImGui::Text("Gaussian Splat Test:"); ImGui::ColorEdit4("Splat Color", glm::value_ptr(splatColor), ImGuiColorEditFlags_AlphaBar); ImGui::SliderFloat("Splat Blur Strength", &splatBlurStrength, 1.0f, 50.0f); ImGui::Separator();
+            if (ImGui::Button("Appearance Settings")) {
+                show_style_editor = true;
+            }
+            
+            ImGui::Separator();
             ImGui::Text("Tools:");
             if (ImGui::Checkbox("Draw Line Mode", &isDrawingLineMode)) {
                 if (isDrawingLineMode) { isPushPullMode = false; isPushPullActive = false; }
@@ -174,16 +198,57 @@ int main(int argc, char* argv[]) {
             ImGui::End();
         }
 
+        // --- Appearance Settings Window ---
+        if (show_style_editor) {
+            ImGui::Begin("Appearance Settings", &show_style_editor);
+            if (ImGui::CollapsingHeader("Scene Colors")) {
+                ImGui::ColorEdit3("Background", (float*)&clear_color);
+                ImGui::ColorEdit3("Default Object", (float*)&objectColor);
+            }
+            if (ImGui::CollapsingHeader("Lighting")) {
+                ImGui::SliderFloat("Ambient Strength", &ambientStrength, 0.0f, 1.0f);
+                static glm::vec3 lightDirInput = lightDirection;
+                if (ImGui::SliderFloat3("Light Direction", glm::value_ptr(lightDirInput), -1.0f, 1.0f)) {
+                    if (glm::length(lightDirInput) > 1e-6f) {
+                        lightDirection = glm::normalize(lightDirInput);
+                    }
+                }
+                ImGui::ColorEdit3("Light Color", glm::value_ptr(lightColor));
+            }
+            if (ImGui::CollapsingHeader("Grid & Axes")) {
+                ImGui::Checkbox("Show Grid", &showGrid); ImGui::SameLine(); ImGui::Checkbox("Show Axes", &showAxes);
+                ImGui::ColorEdit3("Grid Color", glm::value_ptr(gridColor));
+                ImGui::SeparatorText("Positive Axes");
+                ImGui::ColorEdit4("Axis X Color", glm::value_ptr(axisColorX));
+                ImGui::ColorEdit4("Axis Y Color", glm::value_ptr(axisColorY));
+                ImGui::ColorEdit4("Axis Z Color", glm::value_ptr(axisColorZ));
+                ImGui::ColorEdit4("Fade To Color##Positive", glm::value_ptr(positiveAxisFadeColor));
+                ImGui::SliderFloat("Width##Positive", &axisLineWidth, 1.0f, maxLineWidth);
+                ImGui::SeparatorText("Negative Axes");
+                ImGui::ColorEdit4("Fade To Color##Negative", glm::value_ptr(negativeAxisFadeColor));
+                ImGui::SliderFloat("Width##Negative", &negAxisLineWidth, 1.0f, maxLineWidth);
+            }
+            if (ImGui::CollapsingHeader("Interactive Effects")) {
+                 ImGui::SliderFloat("Cursor Radius", &cursorRadius, 1.0f, 50.0f);
+                 ImGui::SliderFloat("Effect Intensity", &effectIntensity, 0.1f, 2.0f);
+            }
+             if (ImGui::CollapsingHeader("Test Elements")) {
+                ImGui::ColorEdit4("Splat Color", glm::value_ptr(splatColor), ImGuiColorEditFlags_AlphaBar);
+                ImGui::SliderFloat("Splat Blur Strength", &splatBlurStrength, 1.0f, 50.0f);
+            }
+            ImGui::End();
+        }
+
         ImGui::Render();
         renderer.SetViewport(0, 0, display_w, display_h);
         glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         // Pass new parameters to RenderFrame
-        renderer.RenderFrame(window, camera, scene_ptr, 
-            objectColor, lightDirection, lightColor, ambientStrength, 
-            showGrid, showAxes, gridLineWidth, axisLineWidth, 
-            splatColor, splatBlurStrength,
-            cursorWorldPos, cursorRadius, effectIntensity, // <-- NEW PARAMS
+        // --- Pass all appearance variables to the renderer ---
+        renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightDirection, lightColor, ambientStrength, 
+            showGrid, showAxes, gridLineWidth, axisLineWidth, negAxisLineWidth,
+            gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
+            splatColor, splatBlurStrength, cursorWorldPos, cursorRadius, effectIntensity, 
             selectedObjId, selectedTriangleIndices, selectedLineIDs, selectionHighlightColor, 
             hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor, 
             isPlacingSecondPoint, currentLineStartPoint, currentRubberBandEnd, currentSnap, 

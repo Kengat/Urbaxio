@@ -44,26 +44,25 @@ namespace { // Anonymous namespace for utility functions
         }
         return vertices;
     }
-    // Modified to return vertices for a single axis with a specific color
-    std::vector<float> GenerateSingleAxisVertices(float length, const glm::vec3& direction, const glm::vec4& color) {
+    // Modified to return vertices for a single axis with specific fade colors
+    std::vector<float> GenerateSingleAxisVertices(float length, const glm::vec3& direction, const glm::vec4& baseColor, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor) {
         std::vector<float> vertices;
         if (length <= 0.0f) return vertices;
 
         glm::vec3 p1 = direction * length;
         glm::vec3 p2 = direction * -length;
         
-        // Line from origin to positive end
+        // Positive part - use normal alpha 
         vertices.push_back(0.0f); vertices.push_back(0.0f); vertices.push_back(0.0f);
-        vertices.push_back(color.r); vertices.push_back(color.g); vertices.push_back(color.b); vertices.push_back(color.a);
+        vertices.push_back(baseColor.r); vertices.push_back(baseColor.g); vertices.push_back(baseColor.b); vertices.push_back(baseColor.a);
         vertices.push_back(p1.x); vertices.push_back(p1.y); vertices.push_back(p1.z);
-        vertices.push_back(color.r); vertices.push_back(color.g); vertices.push_back(color.b); vertices.push_back(color.a);
+        vertices.push_back(baseColor.r); vertices.push_back(baseColor.g); vertices.push_back(baseColor.b); vertices.push_back(baseColor.a);
 
-        // Line from origin to negative end (with reduced alpha)
-        glm::vec4 negColor = glm::vec4(color.r, color.g, color.b, color.a * 0.4f);
+        // Negative part - use negative alpha to mark it for the shader
         vertices.push_back(0.0f); vertices.push_back(0.0f); vertices.push_back(0.0f);
-        vertices.push_back(negColor.r); vertices.push_back(negColor.g); vertices.push_back(negColor.b); vertices.push_back(negColor.a);
+        vertices.push_back(baseColor.r); vertices.push_back(baseColor.g); vertices.push_back(baseColor.b); vertices.push_back(-negFadeColor.a);
         vertices.push_back(p2.x); vertices.push_back(p2.y); vertices.push_back(p2.z);
-        vertices.push_back(negColor.r); vertices.push_back(negColor.g); vertices.push_back(negColor.b); vertices.push_back(negColor.a);
+        vertices.push_back(baseColor.r); vertices.push_back(baseColor.g); vertices.push_back(baseColor.b); vertices.push_back(-negFadeColor.a);
 
         return vertices;
     }
@@ -152,6 +151,8 @@ namespace Urbaxio {
             "uniform vec3 u_cursorWorldPos;\n"
             "uniform float u_cursorRadius;\n"
             "uniform float u_intensity;\n"
+            "uniform float u_holeStart;\n"
+            "uniform float u_holeEnd;\n"
             "const float GRID_FADE_START = 10.0;\n"
             "const float GRID_FADE_END = 40.0;\n"
             "const float BASE_GRID_ALPHA = 0.3;\n"
@@ -161,7 +162,9 @@ namespace Urbaxio {
             "    float distFromMouse = distance(vWorldPos.xy, u_cursorWorldPos.xy);\n"
             "    float alphaFromMouse = (1.0 - smoothstep(0.0, u_cursorRadius, distFromMouse)) * u_intensity * 0.8;\n"
             "    float finalAlpha = max(alphaFromOrigin, alphaFromMouse);\n"
-            "    FragColor = vec4(u_gridColor, finalAlpha);\n"
+            "    // Add hole effect - fade in from center\n"
+            "    float holeVisibility = smoothstep(u_holeStart, u_holeEnd, distFromOrigin);\n"
+            "    FragColor = vec4(u_gridColor, finalAlpha * holeVisibility);\n"
             "}\n";
         
         axisVertexShaderSource =
@@ -189,24 +192,30 @@ namespace Urbaxio {
             "uniform float u_intensity;\n"
             "uniform float u_fadeStart;\n"
             "uniform float u_fadeEnd;\n"
-            "const vec3 WHITE = vec3(1.0, 1.0, 1.0);\n"
+            "uniform float u_holeStart;\n"
+            "uniform float u_holeEnd;\n"
+            "uniform vec4 u_positiveFadeColor;\n"
+            "uniform vec4 u_negativeFadeColor;\n"
             "void main() {\n"
+            "    float distFromOrigin = length(vWorldPos);\n"
             "    float distFromMouse = distance(vWorldPos, u_cursorWorldPos);\n"
             "    float mouseRevealFactor = (1.0 - smoothstep(0.0, u_cursorRadius, distFromMouse)) * u_intensity;\n"
-            "    vec3 baseColor;\n"
-            "    // Use alpha to check if it's a negative axis (alpha < 0.5)\n"
-            "    if (vBaseColor.a < 0.5) { \n"
-            "        // Negative Axis: Default is white, lights up with color under cursor\n"
-            "        baseColor = mix(WHITE, vBaseColor.rgb, mouseRevealFactor);\n"
+            "    vec3 finalColor;\n"
+            "    float finalAlpha;\n"
+            "    // Check if it's a negative axis (alpha < 0)\n"
+            "    if (vBaseColor.a < 0.0) { \n"
+            "        vec3 fadedColor = mix(vBaseColor.rgb, u_negativeFadeColor.rgb, 1.0);\n"
+            "        finalColor = mix(fadedColor, vBaseColor.rgb, mouseRevealFactor);\n"
+            "        finalAlpha = mix(abs(vBaseColor.a), 1.0, mouseRevealFactor);\n"
             "    } else {\n"
-            "        // Positive Axis: Default is gradient, lights up with more color under cursor\n"
-            "        float distFromOrigin = length(vWorldPos);\n"
             "        float fadeToWhiteFactor = smoothstep(u_fadeStart, u_fadeEnd, distFromOrigin);\n"
-            "        vec3 fadedColor = mix(vBaseColor.rgb, WHITE, fadeToWhiteFactor);\n"
-            "        baseColor = mix(fadedColor, vBaseColor.rgb, mouseRevealFactor);\n"
+            "        vec3 fadedColor = mix(vBaseColor.rgb, u_positiveFadeColor.rgb, fadeToWhiteFactor);\n"
+            "        finalColor = mix(fadedColor, vBaseColor.rgb, mouseRevealFactor);\n"
+            "        finalAlpha = mix(vBaseColor.a, 1.0, mouseRevealFactor);\n"
             "    }\n"
-            "    float finalAlpha = mix(vBaseColor.a, 1.0, mouseRevealFactor);\n"
-            "    FragColor = vec4(baseColor, finalAlpha);\n"
+            "    // Add hole effect - fade in from center\n"
+            "    float holeVisibility = smoothstep(u_holeStart, u_holeEnd, distFromOrigin);\n"
+            "    FragColor = vec4(finalColor, finalAlpha * holeVisibility);\n"
             "}\n";
 
         unlitVertexShaderSource =
@@ -287,11 +296,15 @@ namespace Urbaxio {
         SDL_Window* window,
         const Urbaxio::Camera& camera,
         Urbaxio::Engine::Scene* scene,
+        // Appearance
         const glm::vec3& defaultObjectColor,
         const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
-        bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth,
+        bool showGrid, bool showAxes, float gridLineWidth, float axisLineWidth, float negAxisLineWidth,
+        const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ,
+        const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
+        // Test Elements
         const glm::vec4& splatColor, float splatBlurStrength,
-        // New Interactive Params
+        // Interactive Effects
         const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
         // Selections
         uint64_t selectedObjId,
@@ -308,6 +321,12 @@ namespace Urbaxio {
         ImDrawData* imguiDrawData
     ) {
         int display_w, display_h; SDL_GetWindowSize(window, &display_w, &display_h); if (display_w <= 0 || display_h <= 0) return; glm::mat4 view = camera.GetViewMatrix(); glm::mat4 projection = camera.GetProjectionMatrix((float)display_w / (float)display_h); glm::mat4 identityModel = glm::mat4(1.0f);
+        
+        // Common calculations for dynamic effects
+        float distanceToCamera = glm::length(camera.Position);
+        const float referenceDistance = 30.0f;
+        float distanceScale = distanceToCamera / referenceDistance;
+        
         // --- DRAW GRID (with new shader) ---
         if (showGrid && gridVAO != 0 && gridShaderProgram != 0) {
             glLineWidth(1.0f); // Keep grid lines thin
@@ -319,6 +338,11 @@ namespace Urbaxio {
             glUniform3fv(glGetUniformLocation(gridShaderProgram, "u_cursorWorldPos"), 1, glm::value_ptr(cursorWorldPos));
             glUniform1f(glGetUniformLocation(gridShaderProgram, "u_cursorRadius"), cursorRadius);
             glUniform1f(glGetUniformLocation(gridShaderProgram, "u_intensity"), intensity);
+            // Dynamic hole effect around center
+            const float baseHoleStart = 0.25f;
+            const float baseHoleEnd = 0.75f;
+            glUniform1f(glGetUniformLocation(gridShaderProgram, "u_holeStart"), baseHoleStart * distanceScale);
+            glUniform1f(glGetUniformLocation(gridShaderProgram, "u_holeEnd"), baseHoleEnd * distanceScale);
             glBindVertexArray(gridVAO);
             glDrawArrays(GL_LINES, 0, gridVertexCount);
             glBindVertexArray(0);
@@ -461,7 +485,8 @@ namespace Urbaxio {
 
         // --- DRAW AXES (with new shader) ---
         if (showAxes && axesVAO != 0 && axisShaderProgram != 0) {
-            glLineWidth(axisLineWidth);
+            UpdateAxesVBO(axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor);
+            
             glUseProgram(axisShaderProgram);
             glUniformMatrix4fv(glGetUniformLocation(axisShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
             glUniformMatrix4fv(glGetUniformLocation(axisShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
@@ -471,17 +496,35 @@ namespace Urbaxio {
             glUniform1f(glGetUniformLocation(axisShaderProgram, "u_intensity"), intensity);
 
             // Dynamic fade distances for axis gradient
-            float distanceToCamera = glm::length(camera.Position);
             const float baseFadeStart = 0.5f;
             const float baseFadeEnd = 4.0f;
-            const float referenceDistance = 30.0f;
-            float distanceScale = distanceToCamera / referenceDistance;
             glUniform1f(glGetUniformLocation(axisShaderProgram, "u_fadeStart"), baseFadeStart * distanceScale);
             glUniform1f(glGetUniformLocation(axisShaderProgram, "u_fadeEnd"), baseFadeEnd * distanceScale);
             
+            // Dynamic hole effect around center
+            const float baseHoleStart = 0.25f;
+            const float baseHoleEnd = 0.75f;
+            glUniform1f(glGetUniformLocation(axisShaderProgram, "u_holeStart"), baseHoleStart * distanceScale);
+            glUniform1f(glGetUniformLocation(axisShaderProgram, "u_holeEnd"), baseHoleEnd * distanceScale);
+            
+            // Pass fade colors to shader
+            glUniform4fv(glGetUniformLocation(axisShaderProgram, "u_positiveFadeColor"), 1, glm::value_ptr(positiveAxisFadeColor));
+            glUniform4fv(glGetUniformLocation(axisShaderProgram, "u_negativeFadeColor"), 1, glm::value_ptr(negativeAxisFadeColor));
+            
             glBindVertexArray(axesVAO);
-            // We draw all 3 axes from the same VBO, they are laid out sequentially.
-            glDrawArrays(GL_LINES, 0, axisVertexCountX + axisVertexCountY + axisVertexCountZ);
+            
+            // Draw negative axes first with thinner lines
+            glLineWidth(negAxisLineWidth);
+            glDrawArrays(GL_LINES, 2, 2); // X neg
+            glDrawArrays(GL_LINES, 6, 2); // Y neg
+            glDrawArrays(GL_LINES, 10, 2); // Z neg
+            
+            // Draw positive axes on top with thicker lines
+            glLineWidth(axisLineWidth);
+            glDrawArrays(GL_LINES, 0, 2); // X pos
+            glDrawArrays(GL_LINES, 4, 2); // Y pos
+            glDrawArrays(GL_LINES, 8, 2); // Z pos
+
             glBindVertexArray(0);
         }
         if (splatShaderProgram != 0 && splatVAO != 0) { glLineWidth(1.0f); glUseProgram(splatShaderProgram); glUniform4fv(glGetUniformLocation(splatShaderProgram, "splatColor"), 1, glm::value_ptr(splatColor)); glUniform1f(glGetUniformLocation(splatShaderProgram, "blurStrength"), splatBlurStrength); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glBindVertexArray(splatVAO); glm::mat4 modelStatic = glm::translate(glm::mat4(1.0f), splatPosStatic); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelStatic)); glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0); glm::mat4 modelBillboard = glm::translate(glm::mat4(1.0f), splatPosBillboard); glm::mat3 viewRot = glm::mat3(view); glm::mat3 counterRot = glm::transpose(viewRot); modelBillboard = modelBillboard * glm::mat4(counterRot); glUniformMatrix4fv(glGetUniformLocation(splatShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelBillboard)); glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0); glBindVertexArray(0); }
@@ -530,14 +573,16 @@ namespace Urbaxio {
         glm::vec4 colorX(0.7f, 0.2f, 0.2f, 1.0f);
         glm::vec4 colorY(0.2f, 0.7f, 0.2f, 1.0f);
         glm::vec4 colorZ(0.2f, 0.2f, 0.7f, 1.0f);
+        glm::vec4 posFadeColor(1.0f, 1.0f, 1.0f, 1.0f);
+        glm::vec4 negFadeColor(1.0f, 1.0f, 1.0f, 0.4f);
 
-        std::vector<float> verticesX = GenerateSingleAxisVertices(axisLength, glm::vec3(1, 0, 0), colorX);
-        std::vector<float> verticesY = GenerateSingleAxisVertices(axisLength, glm::vec3(0, 1, 0), colorY);
-        std::vector<float> verticesZ = GenerateSingleAxisVertices(axisLength, glm::vec3(0, 0, 1), colorZ);
+        std::vector<float> verticesX = GenerateSingleAxisVertices(axisLength, glm::vec3(1, 0, 0), colorX, posFadeColor, negFadeColor);
+        std::vector<float> verticesY = GenerateSingleAxisVertices(axisLength, glm::vec3(0, 1, 0), colorY, posFadeColor, negFadeColor);
+        std::vector<float> verticesZ = GenerateSingleAxisVertices(axisLength, glm::vec3(0, 0, 1), colorZ, posFadeColor, negFadeColor);
 
-        axisVertexCountX = verticesX.size() / 7;
-        axisVertexCountY = verticesY.size() / 7;
-        axisVertexCountZ = verticesZ.size() / 7;
+        axisVertexCountX = 4;
+        axisVertexCountY = 4;
+        axisVertexCountZ = 4;
         
         std::vector<float> allAxesVertices;
         allAxesVertices.insert(allAxesVertices.end(), verticesX.begin(), verticesX.end());
@@ -553,7 +598,7 @@ namespace Urbaxio {
         glGenBuffers(1, &axesVBO);
         glBindVertexArray(axesVAO);
         glBindBuffer(GL_ARRAY_BUFFER, axesVBO);
-        glBufferData(GL_ARRAY_BUFFER, allAxesVertices.size() * sizeof(float), allAxesVertices.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, allAxesVertices.size() * sizeof(float), allAxesVertices.data(), GL_DYNAMIC_DRAW);
         
         // Position
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0);
@@ -708,6 +753,26 @@ namespace Urbaxio {
         previewVertexCount = previewVertices.size() / 6;
         glBindBuffer(GL_ARRAY_BUFFER, previewVBO);
         glBufferData(GL_ARRAY_BUFFER, previewVertices.size() * sizeof(float), previewVertices.data(), GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    void Renderer::UpdateAxesVBO(const glm::vec4& colorX, const glm::vec4& colorY, const glm::vec4& colorZ, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor) {
+        std::vector<float> verticesX = GenerateSingleAxisVertices(axisLength, glm::vec3(1, 0, 0), colorX, posFadeColor, negFadeColor);
+        std::vector<float> verticesY = GenerateSingleAxisVertices(axisLength, glm::vec3(0, 1, 0), colorY, posFadeColor, negFadeColor);
+        std::vector<float> verticesZ = GenerateSingleAxisVertices(axisLength, glm::vec3(0, 0, 1), colorZ, posFadeColor, negFadeColor);
+        
+        // Each axis now has 4 vertices (2 for positive, 2 for negative)
+        axisVertexCountX = 4; 
+        axisVertexCountY = 4;
+        axisVertexCountZ = 4;
+
+        std::vector<float> allAxesVertices;
+        allAxesVertices.insert(allAxesVertices.end(), verticesX.begin(), verticesX.end());
+        allAxesVertices.insert(allAxesVertices.end(), verticesY.begin(), verticesY.end());
+        allAxesVertices.insert(allAxesVertices.end(), verticesZ.begin(), verticesZ.end());
+
+        glBindBuffer(GL_ARRAY_BUFFER, axesVBO);
+        glBufferData(GL_ARRAY_BUFFER, allAxesVertices.size() * sizeof(float), allAxesVertices.data(), GL_DYNAMIC_DRAW);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
