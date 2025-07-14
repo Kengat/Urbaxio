@@ -1,8 +1,8 @@
 #include "tools/LineTool.h"
-#include <engine/scene.h>
-#include <camera.h>
-#include <renderer.h>
-#include <snapping.h>
+#include "engine/scene.h"
+#include "camera.h"
+#include "renderer.h"
+#include "snapping.h"
 #include <imgui.h>
 #include <SDL2/SDL_keyboard.h>
 #include <glm/gtx/norm.hpp>
@@ -83,7 +83,7 @@ void LineTool::reset() {
     isPlacingFirstPoint = false;
     isPlacingSecondPoint = false;
     isAxisLocked = false;
-    lockedAxisType = Urbaxio::SnapType::NONE;
+    lockedAxisType = SnapType::NONE;
     lineLengthInputBuf[0] = '\0';
 }
 
@@ -173,7 +173,9 @@ void LineTool::OnUpdate(const SnapResult& snap) {
     }
 
     // Axis locking logic (activated with Shift)
-    bool shiftDown = (SDL_GetModState() & KMOD_SHIFT);
+    const Uint8* keyboardState = SDL_GetKeyboardState(NULL);
+    bool shiftDown = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
+    
     if (!shiftDown && isAxisLocked) {
         isAxisLocked = false;
     } else if (shiftDown && !isAxisLocked) {
@@ -186,12 +188,12 @@ void LineTool::OnUpdate(const SnapResult& snap) {
         if (sVis && eVis && glm::length2(endScreenPos - startScreenPos) > SCREEN_VECTOR_MIN_LENGTH_SQ) {
             glm::vec2 rbDir = glm::normalize(endScreenPos - startScreenPos);
             float maxDot = -1.0f;
-            Urbaxio::SnapType bestAxis = Urbaxio::SnapType::NONE;
+            SnapType bestAxis = SnapType::NONE;
             glm::vec3 bestDir;
-            const std::vector<std::pair<Urbaxio::SnapType, glm::vec3>> axes = {
-                {Urbaxio::SnapType::AXIS_X, AXIS_X_DIR},
-                {Urbaxio::SnapType::AXIS_Y, AXIS_Y_DIR},
-                {Urbaxio::SnapType::AXIS_Z, AXIS_Z_DIR}
+            const std::vector<std::pair<SnapType, glm::vec3>> axes = {
+                {SnapType::AXIS_X, AXIS_X_DIR},
+                {SnapType::AXIS_Y, AXIS_Y_DIR},
+                {SnapType::AXIS_Z, AXIS_Z_DIR}
             };
             glm::vec2 oScreen;
             if(SnappingSystem::WorldToScreen(glm::vec3(0.0f), view, proj, *context.display_w, *context.display_h, oScreen)) {
@@ -204,7 +206,7 @@ void LineTool::OnUpdate(const SnapResult& snap) {
                     }
                 }
             }
-            if(bestAxis != Urbaxio::SnapType::NONE) {
+            if(bestAxis != SnapType::NONE) {
                 isAxisLocked = true;
                 lockedAxisType = bestAxis;
                 lockedAxisDir = bestDir;

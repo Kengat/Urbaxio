@@ -16,6 +16,11 @@ add_executable(Urbaxio
     src/input_handler.cpp
     src/renderer.cpp
     src/snapping.cpp
+    # Add tool source files
+    src/tools/ToolManager.cpp
+    src/tools/SelectTool.cpp
+    src/tools/LineTool.cpp
+    src/tools/PushPullTool.cpp
     # Add ImGui backend implementation files directly to the compilation
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_sdl2.cpp"
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_opengl3.cpp"
@@ -37,11 +42,10 @@ find_package(OpenGL REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 
 # --- Link the application with libraries ---
-# OCCT and glm are inherited from engine/cad_kernel now
+# The shell links against the engine, which provides OCCT and other core functionality
 target_link_libraries(Urbaxio PRIVATE
     engine          # Our engine library
     cad_kernel      # Our CAD kernel wrapper. It brings OCCT libs with it.
-    tools           # Our new tools library
     SDL2::SDL2main
     SDL2::SDL2
     glad::glad

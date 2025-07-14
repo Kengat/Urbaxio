@@ -1,13 +1,9 @@
 #pragma once
 
 #include "tools/ITool.h"
-#include <snapping.h>
+#include "snapping.h" // <-- FIX: Include header for SnapResult and SnapType
 
 namespace Urbaxio::Tools {
-
-// Bring types into scope for method signatures  
-using Urbaxio::SnapResult;
-using Urbaxio::Renderer;
 
 class LineTool : public ITool {
 public:
@@ -33,14 +29,14 @@ private:
 
     // Axis Locking State
     bool isAxisLocked = false;
-    Urbaxio::SnapType lockedAxisType = Urbaxio::SnapType::NONE;
+    SnapType lockedAxisType = SnapType::NONE;
     glm::vec3 lockedAxisDir{0.0f};
 
     // Input buffer for length
     char lineLengthInputBuf[64] = "";
     
     // The last snap result received by OnUpdate
-    Urbaxio::SnapResult lastSnapResult;
+    SnapResult lastSnapResult;
 
     void reset();
     void finalizeLine(const glm::vec3& endPoint);

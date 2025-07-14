@@ -1,13 +1,12 @@
 #include "tools/SelectTool.h"
-#include <engine/scene.h>
-#include <engine/scene_object.h>
-#include <cad_kernel/MeshBuffers.h>
-#include <camera.h>
-#include <snapping.h>
+#include "engine/scene.h"
+#include "engine/scene_object.h"
+#include "cad_kernel/MeshBuffers.h"
+#include "camera.h"
+#include "snapping.h"
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_mouse.h>
 #include <glm/glm.hpp>
-#include <glm/gtx/norm.hpp>
+#include <glm/gtx/norm.hpp> // <-- FIX: Include header for distance2 and length2
 #include <iostream>
 #include <vector>
 #include <set>
@@ -118,7 +117,7 @@ bool RayLineSegmentIntersection(
         outDistanceAlongRay = glm::dot(p1 - rayOrigin, rayDir);
         if (outDistanceAlongRay < 0) return false;
         glm::vec3 pointOnRay = rayOrigin + rayDir * outDistanceAlongRay;
-        return glm::length2(pointOnRay - p1) < pickThresholdRadius * pickThresholdRadius;
+        return glm::distance2(pointOnRay, p1) < pickThresholdRadius * pickThresholdRadius;
     }
     
     glm::vec3 segDirNormalized = glm::normalize(segDir);
@@ -150,7 +149,7 @@ bool RayLineSegmentIntersection(
     
     glm::vec3 closestPointOnRay = rayOrigin + actual_t_ray * rayDir;
     
-    if (glm::length2(closestPointOnRay - closestPointOnSegment) < pickThresholdRadius * pickThresholdRadius) {
+    if (glm::distance2(closestPointOnRay, closestPointOnSegment) < pickThresholdRadius * pickThresholdRadius) {
         outDistanceAlongRay = actual_t_ray;
         return true;
     }

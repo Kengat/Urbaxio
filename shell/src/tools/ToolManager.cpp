@@ -52,11 +52,13 @@ bool ToolManager::ShouldEnableSnapping() const {
     
     // For PushPullTool, disable snapping only when hovering (before operation starts)
     if (type == ToolType::PushPull) {
+        // We need to cast to the derived type to access its specific state.
+        // This is safe because we know the type from the enum.
         PushPullTool* pushPullTool = static_cast<PushPullTool*>(activeTool);
         return pushPullTool->IsPushPullActive(); // Only enable when operation is active
     }
     
-    // For other tools (LineTool), keep snapping enabled
+    // For other tools (LineTool), keep snapping enabled.
     return true;
 }
 

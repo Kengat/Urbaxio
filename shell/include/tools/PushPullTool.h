@@ -4,10 +4,6 @@
 
 namespace Urbaxio::Tools {
 
-// Bring types into scope for method signatures
-using Urbaxio::SnapResult;
-using Urbaxio::Renderer;
-
 class PushPullTool : public ITool {
 public:
     ToolType GetType() const override { return ToolType::PushPull; }
@@ -23,10 +19,9 @@ public:
 
     void RenderUI() override;
     void RenderPreview(Renderer& renderer, const SnapResult& snap) override;
-    
+
     // State query method for snapping control
     bool IsPushPullActive() const { return isPushPullActive; }
-
 private:
     bool isPushPullActive = false;
     

@@ -14,7 +14,7 @@ public:
     void SetTool(ToolType type);
     ITool* GetActiveTool() const;
     ToolType GetActiveToolType() const;
-    
+
     // Check if snapping should be enabled for current tool
     bool ShouldEnableSnapping() const;
 

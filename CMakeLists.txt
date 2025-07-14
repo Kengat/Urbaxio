@@ -52,9 +52,6 @@ add_subdirectory(cad_kernel)
 # Добавляем подпапку с движком
 add_subdirectory(engine)
 
-# Добавляем подпапку с инструментами
-add_subdirectory(tools)
-
 # Добавляем подпапку с исполняемым файлом приложения
 add_subdirectory(shell)
 

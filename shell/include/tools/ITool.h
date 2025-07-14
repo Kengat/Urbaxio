@@ -7,22 +7,16 @@
 #include <set>
 #include <string>
 
-// Forward declarations for types we only use as pointers
+// Forward declarations to avoid including heavy headers
 namespace Urbaxio {
     class Camera;
-    class Renderer;
     struct SnapResult;
+    class Renderer;
     namespace Engine {
         class Scene;
     }
 }
 struct SDL_Window;
-
-// Full includes for types used in virtual method signatures
-namespace Urbaxio {
-    class Renderer;
-    struct SnapResult;
-}
 
 namespace Urbaxio::Tools {
 
