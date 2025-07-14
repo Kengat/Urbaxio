@@ -306,7 +306,7 @@ namespace Urbaxio {
             "}\n";
     }
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateSplatResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateSplatResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { /* ... same ... */ if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
     
     void Renderer::RenderFrame(
@@ -319,8 +319,6 @@ namespace Urbaxio {
         bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
         const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ,
         const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
-        // Test Elements
-        const glm::vec4& splatColor, float splatBlurStrength,
         // Interactive Effects
         const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
         // Selections
@@ -333,7 +331,6 @@ namespace Urbaxio {
         const std::vector<size_t>& hoveredFaceTriangleIndices,
         const glm::vec3& hoverHighlightColor,
         // Tools
-        bool isDrawingActive, const glm::vec3& rubberBandStart, const glm::vec3& rubberBandEnd,
         const SnapResult& currentSnap,
         ImDrawData* imguiDrawData
     ) {
@@ -376,32 +373,16 @@ namespace Urbaxio {
             glBindVertexArray(0);
             glLineWidth(1.0f);
         }
-        // --- DRAW RUBBER BAND LINE (using simple shader) ---
-        if (isDrawingActive && simpleLineShaderProgram != 0) {
+        // --- DRAW PREVIEW LINE ---
+        if (previewLineEnabled && previewLineVAO != 0 && simpleLineShaderProgram != 0) {
             glLineWidth(1.0f);
             glUseProgram(simpleLineShaderProgram);
             glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
             glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-            GLuint tempVBO, tempVAO;
-            float lineData[] = {
-                rubberBandStart.x, rubberBandStart.y, rubberBandStart.z, userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a,
-                rubberBandEnd.x,   rubberBandEnd.y,   rubberBandEnd.z,   userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a
-            };
-            glGenVertexArrays(1, &tempVAO);
-            glGenBuffers(1, &tempVBO);
-            glBindVertexArray(tempVAO);
-            glBindBuffer(GL_ARRAY_BUFFER, tempVBO);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(lineData), lineData, GL_DYNAMIC_DRAW);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float)));
-            glEnableVertexAttribArray(1);
-            glBindVertexArray(tempVAO);
+            glBindVertexArray(previewLineVAO);
             glDrawArrays(GL_LINES, 0, 2);
             glBindVertexArray(0);
-            glDeleteBuffers(1, &tempVBO);
-            glDeleteVertexArrays(1, &tempVAO);
         }
         if (objectShaderProgram != 0 && scene) { glLineWidth(1.0f); glUseProgram(objectShaderProgram); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view)); glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir)); glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor)); glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength); glUniform3fv(glGetUniformLocation(objectShaderProgram, "viewPos"), 1, glm::value_ptr(camera.Position)); glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
             
@@ -761,6 +742,7 @@ namespace Urbaxio {
         if (splatVAO != 0) glDeleteVertexArrays(1, &splatVAO); splatVAO = 0; if (splatVBO != 0) glDeleteBuffers(1, &splatVBO); splatVBO = 0; if (splatEBO != 0) glDeleteBuffers(1, &splatEBO); splatEBO = 0;
         if (userLinesVAO != 0) glDeleteVertexArrays(1, &userLinesVAO); userLinesVAO = 0; if (userLinesVBO != 0) glDeleteBuffers(1, &userLinesVBO); userLinesVBO = 0;
         if (previewVAO != 0) glDeleteVertexArrays(1, &previewVAO); previewVAO = 0; if (previewVBO != 0) glDeleteBuffers(1, &previewVBO); previewVBO = 0;
+        if (previewLineVAO != 0) glDeleteVertexArrays(1, &previewLineVAO); previewLineVAO = 0; if (previewLineVBO != 0) glDeleteBuffers(1, &previewLineVBO); previewLineVBO = 0;
         for (auto const& [shape, vao] : markerVAOs) { if (vao != 0) glDeleteVertexArrays(1, &vao); } markerVAOs.clear();
         for (auto const& [shape, vbo] : markerVBOs) { if (vbo != 0) glDeleteBuffers(1, &vbo); } markerVBOs.clear();
         markerVertexCounts.clear();
@@ -790,6 +772,25 @@ namespace Urbaxio {
         glBindVertexArray(0);
         std::cout << "Renderer: Preview VAO/VBO created." << std::endl;
         return previewVAO != 0 && previewVBO != 0;
+    }
+
+    bool Renderer::CreatePreviewLineResources() {
+        glGenVertexArrays(1, &previewLineVAO);
+        glGenBuffers(1, &previewLineVBO);
+        glBindVertexArray(previewLineVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, previewLineVBO);
+        // Buffer for a single line (2 vertices, 7 floats each: position + color)
+        glBufferData(GL_ARRAY_BUFFER, 2 * 7 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+        // Position attribute
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        // Color attribute
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glBindVertexArray(0);
+        previewLineEnabled = false;
+        std::cout << "Renderer: Preview Line VAO/VBO created." << std::endl;
+        return previewLineVAO != 0 && previewLineVBO != 0;
     }
 
     void Renderer::UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance) {
@@ -847,6 +848,22 @@ namespace Urbaxio {
         previewVertexCount = previewVertices.size() / 6;
         glBindBuffer(GL_ARRAY_BUFFER, previewVBO);
         glBufferData(GL_ARRAY_BUFFER, previewVertices.size() * sizeof(float), previewVertices.data(), GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    void Renderer::UpdatePreviewLine(const glm::vec3& start, const glm::vec3& end, bool enabled) {
+        previewLineEnabled = enabled;
+        if (!enabled || previewLineVBO == 0) {
+            return;
+        }
+
+        float lineData[] = {
+            start.x, start.y, start.z, userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a,
+            end.x,   end.y,   end.z,   userLineColor.r, userLineColor.g, userLineColor.b, userLineColor.a
+        };
+
+        glBindBuffer(GL_ARRAY_BUFFER, previewLineVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(lineData), lineData, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 

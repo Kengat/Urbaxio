@@ -35,8 +35,6 @@ namespace Urbaxio {
             bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
             const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ, 
             const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
-            // Test Elements
-            const glm::vec4& splatColor, float splatBlurStrength,
             // Interactive Effects
             const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
             // Selections
@@ -49,14 +47,15 @@ namespace Urbaxio {
             const std::vector<size_t>& hoveredFaceTriangleIndices,
             const glm::vec3& hoverHighlightColor,
             // Tools
-            bool isDrawingActive, const glm::vec3& rubberBandStart, const glm::vec3& rubberBandEnd,
             const SnapResult& currentSnap,
             ImDrawData* imguiDrawData
         );
         void SetViewport(int x, int y, int width, int height);
         float GetMaxLineWidth() const { return maxLineWidth; }
 
+        // Buffer updaters for tools and scene state
         void UpdateUserLinesBuffer(const std::map<uint64_t, Engine::Line>& lines, const std::set<uint64_t>& selectedLineIDs);
+        void UpdatePreviewLine(const glm::vec3& start, const glm::vec3& end, bool enabled = true);
         void UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance);
         void UpdateAxesVBO(const glm::vec4& colorX, const glm::vec4& colorY, const glm::vec4& colorZ, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor);
 
@@ -84,8 +83,8 @@ namespace Urbaxio {
         GLuint userLinesVAO = 0, userLinesVBO = 0; int userLinesVertexCount = 0;
         
         // --- Preview Resources ---
-        GLuint previewVAO = 0, previewVBO = 0;
-        GLsizei previewVertexCount = 0;
+        GLuint previewVAO = 0, previewVBO = 0; GLsizei previewVertexCount = 0;
+        GLuint previewLineVAO = 0, previewLineVBO = 0; bool previewLineEnabled = false;
 
         std::map<MarkerShape, GLuint> markerVAOs;
         std::map<MarkerShape, GLuint> markerVBOs;
@@ -107,6 +106,8 @@ namespace Urbaxio {
         float axisLength = 1000.0f;
         glm::vec3 splatPosStatic = glm::vec3(5.0f, 5.0f, 1.0f);
         glm::vec3 splatPosBillboard = glm::vec3(-5.0f, 5.0f, 1.0f);
+        glm::vec4 splatColor = glm::vec4(0.8f, 0.4f, 0.8f, 0.5f);
+        float splatBlurStrength = 8.0f;
         float maxLineWidth = 1.0f;
         glm::vec4 userLineColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
         glm::vec4 selectedUserLineColor = glm::vec4(1.0f, 0.65f, 0.0f, 1.0f);
@@ -118,6 +119,7 @@ namespace Urbaxio {
         bool CreateUserLinesResources();
         bool CreateMarkerResources();
         bool CreatePreviewResources();
+        bool CreatePreviewLineResources();
         void Cleanup();
         void DrawSnapMarker(const SnapResult& snap, const Camera& camera, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight);
 

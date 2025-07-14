@@ -41,6 +41,7 @@ find_package(imgui CONFIG REQUIRED)
 target_link_libraries(Urbaxio PRIVATE
     engine          # Our engine library
     cad_kernel      # Our CAD kernel wrapper. It brings OCCT libs with it.
+    tools           # Our new tools library
     SDL2::SDL2main
     SDL2::SDL2
     glad::glad
