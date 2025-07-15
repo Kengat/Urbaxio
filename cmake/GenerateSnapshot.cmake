@@ -68,11 +68,10 @@ set(SOURCE_DIRS
     "${PROJECT_SOURCE_DIR}/engine/include/engine"     # Engine headers
     "${PROJECT_SOURCE_DIR}/engine/src"               # Engine sources
     "${PROJECT_SOURCE_DIR}/shell"                    # Shell root (for CMakeLists.txt)
-    "${PROJECT_SOURCE_DIR}/shell/include"            # Shell headers (NEW)
-    "${PROJECT_SOURCE_DIR}/shell/src"                # Shell sources (NEW)
-    "${PROJECT_SOURCE_DIR}/tools" # NEW
-    "${PROJECT_SOURCE_DIR}/tools/include/tools" # NEW
-    "${PROJECT_SOURCE_DIR}/tools/src" # NEW
+    "${PROJECT_SOURCE_DIR}/shell/include"            # Shell headers
+    "${PROJECT_SOURCE_DIR}/shell/src"                # Shell sources
+    "${PROJECT_SOURCE_DIR}/shell/include/tools"      # Tools headers (moved to shell)
+    "${PROJECT_SOURCE_DIR}/shell/src/tools"          # Tools sources (moved to shell)
     "${PROJECT_SOURCE_DIR}/cmake"                    # CMake helper scripts
 )
 

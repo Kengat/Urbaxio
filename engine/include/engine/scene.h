@@ -51,6 +51,7 @@ namespace Urbaxio::Engine {
         const SceneObject* get_object_by_id(uint64_t id) const;
         std::vector<SceneObject*> get_all_objects();
         std::vector<const SceneObject*> get_all_objects() const;
+        void DeleteObject(uint64_t id); // <-- NEW
 
         // --- Line Management ---
         void AddUserLine(const glm::vec3& start, const glm::vec3& end);
@@ -101,6 +102,9 @@ namespace Urbaxio::Engine {
         bool ArePointsCoplanar(const std::vector<glm::vec3>& points, gp_Pln& outPlane);
         void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
         
+        // --- Face Splitting Logic ---
+        bool TrySplitFacesWithLine(const glm::vec3& start, const glm::vec3& end); // <-- NEW
+
         // --- Push/Pull Helpers ---
         TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal);
         void AnalyzeShape(const TopoDS_Shape& shape, const std::string& label);

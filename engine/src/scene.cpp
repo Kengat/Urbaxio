@@ -21,6 +21,7 @@
 #include <gp_Vec.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pln.hxx>
+#include <GeomAbs_SurfaceType.hxx> // For checking plane type
 #include <TopoDS.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Edge.hxx>
@@ -37,9 +38,11 @@
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx> // For subtraction
+#include <BRepAlgoAPI_Splitter.hxx> // For splitting faces
+#include <BRepClass_FaceClassifier.hxx> // For checking if a point is on a face
 #include <BRepCheck_Analyzer.hxx>
 #include <ShapeFix_Shape.hxx>
-#include <TopTools_ListOfShape.hxx>
+#include <TopTools_ListOfShape.hxx> // <-- REQUIRED FOR SetArguments/SetTools
 #include <Standard_Failure.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
@@ -67,6 +70,28 @@ namespace Urbaxio::Engine {
     const SceneObject* Scene::get_object_by_id(uint64_t id) const { auto it = objects_.find(id); if (it != objects_.end()) { return it->second.get(); } return nullptr; }
     std::vector<SceneObject*> Scene::get_all_objects() { std::vector<SceneObject*> result; result.reserve(objects_.size()); for (auto const& [id, obj_ptr] : objects_) { result.push_back(obj_ptr.get()); } return result; }
     std::vector<const SceneObject*> Scene::get_all_objects() const { std::vector<const SceneObject*> result; result.reserve(objects_.size()); for (auto const& [id, obj_ptr] : objects_) { result.push_back(obj_ptr.get()); } return result; }
+    
+    // --- NEW: Delete Object ---
+    void Scene::DeleteObject(uint64_t id) {
+        auto it = objects_.find(id);
+        if (it == objects_.end()) {
+            return;
+        }
+
+        SceneObject* obj = it->second.get();
+
+        // Remove the object's boundary lines from the scene
+        // Create a copy because RemoveLine modifies the set via UpdateObjectBoundary
+        std::set<uint64_t> lines_to_remove = obj->boundaryLineIDs;
+        for (uint64_t lineId : lines_to_remove) {
+            RemoveLine(lineId);
+        }
+
+        // Erase the object from the map, which will call its destructor and free memory
+        objects_.erase(it);
+        std::cout << "Scene: Deleted object " << id << std::endl;
+    }
+
 
     // Finds an existing vertex within tolerance or returns the input point.
     // This is the core of vertex merging.
@@ -81,6 +106,16 @@ namespace Urbaxio::Engine {
 
     // Public method to add a line, which now handles intersections.
     void Scene::AddUserLine(const glm::vec3& start, const glm::vec3& end) {
+        // --- Phase 1: Attempt to split faces with the new line ---
+        bool faceWasSplit = TrySplitFacesWithLine(start, end);
+        if (faceWasSplit) {
+            // The line was consumed by the split operation.
+            // New boundary lines were created by UpdateObjectBoundary for the new faces.
+            // The job is done.
+            return;
+        }
+
+        // --- Phase 2: If no face was split, proceed with the normal line intersection and creation logic ---
         std::map<uint64_t, glm::vec3> intersections_on_existing_lines;
         std::vector<glm::vec3> split_points_on_new_line;
 
@@ -666,8 +701,104 @@ namespace Urbaxio::Engine {
         
         std::cout << "=== END ANALYSIS ===" << std::endl << std::endl;
     }
-
     
+    // --- NEW: Face Splitting ---
+    bool Scene::TrySplitFacesWithLine(const glm::vec3& start, const glm::vec3& end) {
+        std::vector<uint64_t> objectsToDelete;
+        std::vector<TopoDS_Shape> createdShapes; // Store new shapes to add later
+
+        gp_Pnt start_pnt(start.x, start.y, start.z);
+        gp_Pnt end_pnt(end.x, end.y, end.z);
+        glm::vec3 mid_glm = (start + end) * 0.5f;
+        gp_Pnt mid_pnt(mid_glm.x, mid_glm.y, mid_glm.z);
+
+        // Find all faces that this line lies on
+        for (const auto& [id, obj_ptr] : objects_) {
+            SceneObject* obj = obj_ptr.get();
+            if (!obj || !obj->has_shape() || obj->get_shape()->ShapeType() != TopAbs_FACE) {
+                continue;
+            }
+
+            const TopoDS_Face& face = TopoDS::Face(*obj->get_shape());
+            const float tol = SCENE_POINT_EQUALITY_TOLERANCE;
+
+            // Simple planarity check first
+            try {
+                BRepAdaptor_Surface surf(face, Standard_True);
+                if (surf.GetType() != GeomAbs_Plane) continue; // Only handle planar faces for now
+                gp_Pln plane = surf.Plane();
+                if (plane.Distance(start_pnt) > tol || plane.Distance(end_pnt) > tol || plane.Distance(mid_pnt) > tol) {
+                    continue;
+                }
+            } catch(...) { continue; }
+            
+            // More robust check: are the points inside the face boundaries?
+            BRepClass_FaceClassifier classifier;
+            classifier.Perform(face, start_pnt, tol);
+            if (classifier.State() != TopAbs_ON) continue;
+            classifier.Perform(face, end_pnt, tol);
+            if (classifier.State() != TopAbs_ON) continue;
+            classifier.Perform(face, mid_pnt, tol);
+            if (classifier.State() != TopAbs_IN) continue;
+            
+            // Looks like we have a candidate for splitting.
+            objectsToDelete.push_back(id);
+            
+            TopoDS_Edge cuttingEdge = BRepBuilderAPI_MakeEdge(start_pnt, end_pnt);
+            if (cuttingEdge.IsNull()) continue;
+
+            // --- FIX: Use modern BRepAlgoAPI_Splitter API ---
+            TopTools_ListOfShape faceList;
+            faceList.Append(face);
+            
+            TopTools_ListOfShape toolList;
+            toolList.Append(cuttingEdge);
+            
+            BRepAlgoAPI_Splitter splitter;
+            splitter.SetArguments(faceList);
+            splitter.SetTools(toolList);
+            // --- END FIX ---
+            
+            splitter.Build();
+            if (splitter.IsDone()) {
+                createdShapes.push_back(splitter.Shape());
+                std::cout << "Scene: Split face " << id << " successfully." << std::endl;
+            }
+        }
+        
+        if (objectsToDelete.empty()) {
+            return false; // No faces were split
+        }
+
+        // Now, perform the scene modifications
+        for (uint64_t id : objectsToDelete) {
+            DeleteObject(id);
+        }
+        
+        for (const auto& shape : createdShapes) {
+            // The result of splitter is often a compound. We need to iterate it.
+            TopExp_Explorer explorer(shape, TopAbs_FACE);
+            for (; explorer.More(); explorer.Next()) {
+                TopoDS_Face newFace = TopoDS::Face(explorer.Current());
+                // Create a new scene object from this face
+                std::string face_name = "SplitFace_" + std::to_string(next_face_id_++);
+                SceneObject* new_face_obj = create_object(face_name);
+                if (new_face_obj) {
+                    TopoDS_Shape* shape_copy = new TopoDS_Shape(newFace);
+                    new_face_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(shape_copy));
+                    UpdateObjectBoundary(new_face_obj);
+                    auto mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_face_obj->get_shape());
+                    if (!mesh_data.isEmpty()) {
+                        new_face_obj->set_mesh_buffers(std::move(mesh_data));
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+
     bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance, bool disableMerge) {
         SceneObject* obj = get_object_by_id(objectId);
         if (!obj || !obj->has_shape() || faceTriangleIndices.empty() || std::abs(distance) < 1e-4) {
