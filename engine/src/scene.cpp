@@ -27,7 +27,9 @@
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Wire.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Solid.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopAbs.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepLProp_SLProps.hxx> // For getting face properties like normal
@@ -51,6 +53,10 @@
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx> // For vertex-edge map
 #include <TopExp.hxx> // For TopExp::MapShapes
 #include <ShapeUpgrade_UnifySameDomain.hxx> // <-- THE MAGIC TOOL
+#include <Geom2d_Line.hxx> // <-- FIX: Added missing include
+#include <ShapeAnalysis_Surface.hxx> // <-- FIX: Added missing include
+#include <BOPAlgo_Splitter.hxx>
+#include <BOPAlgo_Alerts.hxx> // For DumpErrors
 
 namespace Urbaxio::Engine {
 
@@ -603,76 +609,91 @@ namespace Urbaxio::Engine {
     bool Scene::TrySplitFacesWithLine(const glm::vec3& start, const glm::vec3& end) {
         gp_Pnt start_pnt(start.x, start.y, start.z);
         gp_Pnt end_pnt(end.x, end.y, end.z);
-        
-        std::vector<uint64_t> objectsToDelete;
-        std::vector<TopoDS_Shape> createdShapes;
+        glm::vec3 mid_glm = (start + end) * 0.5f;
+        gp_Pnt mid_pnt(mid_glm.x, mid_glm.y, mid_glm.z);
 
-        std::vector<uint64_t> object_ids;
-        for(const auto& [id, obj_ptr] : objects_) object_ids.push_back(id);
+        SceneObject* hostObject = nullptr;
+        TopoDS_Face hostFace;
 
-        for (uint64_t id : object_ids) {
-            SceneObject* obj = get_object_by_id(id);
-            if (!obj || !obj->has_shape() || obj->get_shape()->ShapeType() != TopAbs_FACE) {
-                continue;
+        for (const auto& [id, obj_ptr] : objects_) {
+            SceneObject* obj = obj_ptr.get();
+            if (!obj || !obj->has_shape()) continue;
+
+            TopExp_Explorer faceExplorer(*obj->get_shape(), TopAbs_FACE);
+            for (; faceExplorer.More(); faceExplorer.Next()) {
+                const TopoDS_Face& candidateFace = TopoDS::Face(faceExplorer.Current());
+                BRepClass_FaceClassifier classifier;
+                const float tol = SCENE_POINT_EQUALITY_TOLERANCE;
+                
+                classifier.Perform(candidateFace, start_pnt, tol);
+                if (classifier.State() != TopAbs_ON && classifier.State() != TopAbs_IN) continue;
+                
+                classifier.Perform(candidateFace, end_pnt, tol);
+                if (classifier.State() != TopAbs_ON && classifier.State() != TopAbs_IN) continue;
+
+                classifier.Perform(candidateFace, mid_pnt, tol);
+                if (classifier.State() != TopAbs_IN) continue;
+
+                hostObject = obj;
+                hostFace = candidateFace;
+                break; 
             }
-
-            const TopoDS_Face& face = TopoDS::Face(*obj->get_shape());
-            BRepClass_FaceClassifier classifier;
-            const float tol = SCENE_POINT_EQUALITY_TOLERANCE;
-
-            classifier.Perform(face, start_pnt, tol);
-            if (classifier.State() != TopAbs_ON && classifier.State() != TopAbs_IN) continue;
-            classifier.Perform(face, end_pnt, tol);
-            if (classifier.State() != TopAbs_ON && classifier.State() != TopAbs_IN) continue;
-            
-            objectsToDelete.push_back(id);
-            
-            TopoDS_Edge cuttingEdge = BRepBuilderAPI_MakeEdge(start_pnt, end_pnt);
-            if (cuttingEdge.IsNull()) continue;
-
-            // --- FIX: Use modern BRepAlgoAPI_Splitter API ---
-            BRepAlgoAPI_Splitter splitter;
-            TopTools_ListOfShape aArguments, aTools;
-            aArguments.Append(face);
-            aTools.Append(cuttingEdge);
-            splitter.SetArguments(aArguments);
-            splitter.SetTools(aTools);
-            splitter.Build();
-            // --- END FIX ---
-
-            if (splitter.IsDone()) {
-                createdShapes.push_back(splitter.Shape());
-                std::cout << "Scene: Split face " << id << " successfully." << std::endl;
-            } else {
-                std::cerr << "Scene: Splitter failed for face " << id << std::endl;
-            }
+            if (hostObject) break;
         }
-        
-        if (objectsToDelete.empty()) {
+
+        if (!hostObject) {
             return false;
         }
+        
+        // --- FIX: Use simple edge creation from 3D points ---
+        TopoDS_Vertex v_start = BRepBuilderAPI_MakeVertex(start_pnt);
+        TopoDS_Vertex v_end = BRepBuilderAPI_MakeVertex(end_pnt);
+        TopoDS_Edge cuttingEdge = BRepBuilderAPI_MakeEdge(v_start, v_end);
+        if (cuttingEdge.IsNull()) return false;
+        
+        // --- FIX: Use BRepAlgoAPI_Splitter with the correct modern API ---
+        BRepAlgoAPI_Splitter splitter;
+        TopTools_ListOfShape anArguments, aTools;
+        anArguments.Append(*hostObject->get_shape());
+        aTools.Append(cuttingEdge);
+        splitter.SetArguments(anArguments);
+        splitter.SetTools(aTools);
+        splitter.Build();
 
-        for (uint64_t id_to_del : objectsToDelete) {
-            DeleteObject(id_to_del);
+        if (!splitter.IsDone()) {
+            std::cerr << "Scene Split Error: BRepAlgoAPI_Splitter failed." << std::endl;
+            return false;
         }
         
-        for (const auto& shape : createdShapes) {
-            TopExp_Explorer explorer(shape, TopAbs_FACE);
-            for (; explorer.More(); explorer.Next()) {
-                std::string face_name = "SplitFace_" + std::to_string(next_face_id_++);
-                SceneObject* new_face_obj = create_object(face_name);
-                if (new_face_obj) {
-                    TopoDS_Shape* new_shape = new TopoDS_Shape(explorer.Current());
-                    new_face_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new_shape));
-                    UpdateObjectBoundary(new_face_obj);
-                    auto mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_face_obj->get_shape());
-                    if (!mesh_data.isEmpty()) {
-                        new_face_obj->set_mesh_buffers(std::move(mesh_data));
-                    }
-                }
+        TopoDS_Shape resultShape = splitter.Shape();
+        uint64_t hostObjectId = hostObject->get_id();
+        DeleteObject(hostObjectId);
+
+        if (resultShape.ShapeType() == TopAbs_COMPOUND) {
+            for (TopExp_Explorer explorer(resultShape, TopAbs_FACE); explorer.More(); explorer.Next()) {
+                 std::string face_name = "SplitFace_" + std::to_string(next_face_id_++);
+                 SceneObject* new_face_obj = create_object(face_name);
+                 if (new_face_obj) {
+                     TopoDS_Shape* new_shape = new TopoDS_Shape(explorer.Current());
+                     new_face_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new_shape));
+                     UpdateObjectBoundary(new_face_obj);
+                     auto mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_face_obj->get_shape());
+                     if (!mesh_data.isEmpty()) {
+                         new_face_obj->set_mesh_buffers(std::move(mesh_data));
+                     }
+                 }
+            }
+        } else {
+            std::string obj_name = "SplitSolid_" + std::to_string(next_object_id_);
+            SceneObject* new_obj = create_object(obj_name);
+            if (new_obj) {
+                new_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(resultShape)));
+                UpdateObjectBoundary(new_obj);
+                new_obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(resultShape));
+                new_obj->vao = 0;
             }
         }
-
+        
         for(auto const& [line_id, line] : lines_) {
             if(!line.usedInFace) {
                 FindAndCreateFaces(line_id);
