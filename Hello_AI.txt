@@ -5,16 +5,15 @@
 Я выступаю в роли "навигатора" и конечного пользователя. Я не профессиональный C++ разработчик, поэтому твоя помощь в написании и отладке кода будет ключевой. Вся эта затея с модульностью во многом придумана для того, чтобы нам было удобнее работать вместе, учитывая ограничения контекстного окна ИИ. Мне нужно, чтобы ты мог эффективно работать с отдельными частями кода, не требуя каждый раз загрузки всего проекта.
 Как Мы Работаем (ВАЖНО!):
 Для продуктивной работы, пожалуйста, строго следуй этим правилам:
-- ПОЛНЫЕ ФАЙЛЫ: ВСЕГДА пиши файлы кода полностью. Никаких ..., // ... (остальной код) или других сокращений. Если ты изменяешь несколько файлов, предоставь полный код для каждого измененного файла.
-- МАРКЕРЫ ФАЙЛОВ: ВСЕГДА размещай маркер файла (например, --- File: path/to/file.cpp ---) перед блоком кода, к которому он относится, на отдельной строке. НЕ включай его внутрь блока кода.
-- КОММЕНТАРИИ НА АНГЛИЙСКОМ: Используй только английские комментарии в коде (// Like this comment). Пожалуйста, не используй русские комментарии.
-- ФОРМАТИРОВАНИЕ КОДА: Используй правильное форматирование кода. Избегай чрезмерно длинных строк. Используй разумные отступы и переносы строк для читаемости.
-- СТИЛЬ И СТРУКТУРА: Придерживайся существующего стиля кода и структуры проекта.
-- ПРИОРИТЕТ ПОЛЬЗОВАТЕЛЯ: Помни, что этот проект создается специально для меня. Мой комфорт, предпочтения и удобство (например, легкость копирования кода) являются главным приоритетом. Адаптируй решения соответствующим образом.
-- КОМАНДЫ ДЛЯ МЕНЯ: В конце каждого твоего ответа, содержащего код, всегда приводи стандартную последовательность команд для сборки/запуска (формат см. ниже в секции USER COMMANDS).
+ПОЛНЫЕ ФАЙЛЫ: ВСЕГДА пиши файлы кода полностью. Никаких ..., // ... (остальной код) или других сокращений. Если ты изменяешь несколько файлов, предоставь полный код для каждого измененного файла.
+МАРКЕРЫ ФАЙЛОВ: ВСЕГДА размещай маркер файла (например, --- File: path/to/file.cpp ---) перед блоком кода, к которому он относится, на отдельной строке. НЕ включай его внутрь блока кода.
+КОММЕНТАРИИ НА АНГЛИЙСКОМ: Используй только английские комментарии в коде (// Like this comment). Пожалуйста, не используй русские комментарии.
+ФОРМАТИРОВАНИЕ КОДА: Используй правильное форматирование кода. Избегай чрезмерно длинных строк. Используй разумные отступы и переносы строк для читаемости.
+СТИЛЬ И СТРУКТУРА: Придерживайся существующего стиля кода и структуры проекта.
+ПРИОРИТЕТ ПОЛЬЗОВАТЕЛЯ: Помни, что этот проект создается специально для меня. Мой комфорт, предпочтения и удобство (например, легкость копирования кода) являются главным приоритетом. Адаптируй решения соответствующим образом.
+КОМАНДЫ ДЛЯ МЕНЯ: В конце каждого твоего ответа, содержащего код, всегда приводи стандартную последовательность команд для сборки/запуска (формат см. ниже в секции USER COMMANDS).
 Контекст Проекта (Снапшот Кода):
 Чтобы ты был в курсе всего кода, я предоставлю тебе содержимое файла project_snapshot.txt. Он содержит все актуальные исходные файлы, CMake-скрипты и конфигурационные файлы проекта. В самом начале этого файла также продублированы инструкции для тебя и команды для меня.
-
 Технологический Стек:
 Язык: C++ (стандарт C++17)
 Система сборки: CMake (генерирует проекты Visual Studio 2022)
@@ -22,7 +21,6 @@
 Зависимости (установленные через vcpkg): fmt, sdl2, glad, imgui[sdl2-binding,opengl3-binding], glm, opencascade 7.8.1 (глобально)
 Графика: OpenGL 3.3+ Core Profile
 ОС: Windows x64
-
 Структура Проекта:
 cad_kernel/: Обертка над OpenCascade (статическая библиотека).
 engine/: Ядро движка (сцена, объекты, линии, грани) (статическая библиотека).
@@ -31,33 +29,32 @@ shell/include/ и shell/src/: Основные классы приложения
 shell/include/tools/ и shell/src/tools/: Система инструментов (ToolManager, SelectTool, LineTool, PushPullTool).
 cmake/: Вспомогательные скрипты CMake.
 Текущий Статус Проекта (Что уже работает):
-Система Инструментов (ToolManager): Сделан ключевой шаг к модульности. Логика ввода и рендеринга для каждого инструмента (Select, Line, Push/Pull) вынесена в отдельные классы. InputHandler теперь просто перенаправляет события активному инструменту.
-Продвинутый рендеринг: Реализованы шейдеры для создания интерактивных визуальных эффектов: подсветка сетки и осей под курсором, градиентное затухание осей на расстоянии, динамическое масштабирование маркеров.
-Управление камерой: Orbit, Pan, Zoom.
-Выбор объектов:
-Выбор граней объектов по ЛКМ (с авто-выделением смежных копланарных треугольников).
-Выбор отдельных линий по ЛКМ.
-Множественный выбор линий через Shift+ЛКМ.
-"Умные" Линии (в духе SketchUp):
-Разбиение при рисовании: Если начать рисовать линию из середины или с ребра существующей, она автоматически разбивается на два сегмента.
-Автоматическое пересечение: Если новая линия пересекает существующие, все затронутые линии автоматически разрезаются в точках пересечения.
-Синхронизация с геометрией: При создании или изменении геометрии (например, через Push/Pull) линии, описывающие ее границы, автоматически создаются, обновляются или удаляются. Свободные линии при этом не затрагиваются.
-Надежный Push/Pull: Инструмент работает стабильно. Он корректно определяет направление выдавливания (внутрь/наружу) и применяет соответствующую булеву операцию OpenCASCADE (Fuse/Cut). Работает как с базовыми примитивами, так и с гранями, созданными из линий.
-Система привязок (Snapping): Надежно работают привязки к конечным точкам, серединам, ребрам, осям, началу координат и граням объектов.
-Автоматическое создание граней: При замыкании копланарного контура линиями автоматически создается объект с геометрией TopoDS_Face.
-
-Текущий Этап - Реализация Разделения Граней (Face Splitting):
-Мы заложили весь необходимый фундамент для одной из ключевых механик SketchUp.
-Цель: Реализовать функционал, при котором рисование линии, пересекающей существующую грань (face), приводит к разделению этой грани на две или более новых, независимых граней.
-Пример: Нарисовали линию от середины одного ребра квадрата до середины противоположного. В результате исходный квадрат должен исчезнуть, а на его месте появиться два прямоугольника, каждый из которых можно будет выбрать и выдавить (Push/Pull) независимо.
-
+Стабильная основа: Управление камерой, рендеринг, система инструментов (ToolManager), выбор объектов, система привязок — все это работает надежно и составляет прочный фундамент.
+Базовое моделирование: Создание линий, автоматическое создание 2D-граней из замкнутых контуров в пустом пространстве, а также Push/Pull для простых граней работают корректно.
+Разделение граней (Face Splitting) — НЕСТАБИЛЬНО: Мы предприняли несколько попыток реализовать эту ключевую механику. Текущая реализация частично работает для простых случаев (например, разрезание 2D-прямоугольника одной линией), но показывает себя крайне нестабильно и непредсказуемо в более сложных сценариях, особенно при работе с гранями 3D-объектов. Предыдущие подходы приводили к багам: от "исчезающих" линий до создания некорректной геометрии. Это наш главный технический долг и текущий блокирующий фактор.
 Дальнейшие Направления Развития:
-- Реализация удаления геометрии (линий и граней).
-- Система отмены/повтора операций (Undo/Redo).
-- Улучшение UI/UX, добавление иконок для инструментов.
-- Расширение системы привязок (перпендикуляр, параллельность, касание).
-- Обработка более сложных случаев при создании граней (например, непланарные контуры).
-- Вынос инструментов в динамические библиотеки (DLL/SO) для достижения полной модульности.
+Надёжная реализация разделения граней (Face Splitting) — Приоритет №1.
+Нам нужен абсолютно новый, инженерный подход к этой задаче. Предыдущие попытки методом "проб и ошибок" оказались неэффективными и привели к нестабильности. Мы должны подойти к этому систематически.
+
+Новый План Действий:
+Определить и зафиксировать все сценарии: Мы должны четко описать все возможные случаи, которые наш алгоритм должен обрабатывать:
+Сценарий A: Простая линия от ребра до ребра на одной грани.
+Сценарий B: Простая линия от ребра до точки внутри грани.
+Сценарий C: Линия, полностью нарисованная внутри грани (от точки до точки).
+Сценарий D: "T-образное" пересечение, когда линия упирается в середину другой новой линии.
+Сценарий E: Создание замкнутого контура (например, прямоугольника) полностью внутри существующей грани.
+Сценарий F (негативный): Рисование линии точно вдоль существующего ребра (не должно вызывать разделение).
+Изолировать и протестировать ядро логики: Вместо того чтобы сразу интегрировать изменения в LineTool и основной цикл приложения, мы сначала создадим отдельную тестовую функцию или временный метод в Scene. Эта функция будет программно создавать тестовые объекты (куб, простую грань) и пытаться разрезать их, имитируя каждый из вышеописанных сценариев.
+Итеративная разработка: Мы будем работать над каждым сценарием по очереди. Мы не перейдем к сценарию B, пока сценарий A не будет работать на 100% предсказуемо и надежно в рамках нашего изолированного теста.
+Интеграция: Только после того, как ВСЕ сценарии будут успешно пройдены в изолированной среде, мы интегрируем этот новый, проверенный и надежный алгоритм обратно в LineTool и AddUserLine.
+Этот подход позволит нам отладить сложную логику OpenCASCADE без влияния со стороны GUI, мыши или других систем, и наконец-то создать функцию, на которую можно положиться.
+
+Долгосрочные цели (после решения проблемы со сплиттингом):
+Реализация удаления геометрии (линий и граней).
+Система отмены/повтора операций (Undo/Redo).
+Улучшение UI/UX, добавление иконок для инструментов.
+Расширение системы привязок (перпендикуляр, параллельность, касание).
+Вынос инструментов в динамические библиотеки (DLL/SO).
 
 --- AI INSTRUCTIONS ---
 
@@ -151,7 +148,7 @@ message(STATUS "Manually set OpenCASCADE include dir: ${OpenCASCADE_INCLUDE_DIR}
 # 3. Create a list of the full paths to the required OCCT library files
 set(OCCT_LIB_DIR_RELEASE "${VCPKG_INSTALLED_DIR}/lib")
 set(OCCT_LIB_DIR_DEBUG "${VCPKG_INSTALLED_DIR}/debug/lib")
-# ADDED TKBO (for BRepAlgoAPI_Fuse), TKService (for BRepCheck_Analyzer) and TKShHealing (for ShapeFix_Shape)
+# ADDED TKBO (for BRepAlgoAPI_Fuse), TKService (for BRepCheck_Analyzer), TKShHealing (for ShapeFix_Shape), and TKBOP (for BOPAlgo_Splitter)
 set(OCCT_MODULES TKernel TKMath TKPrim TKBRep TKTopAlgo TKG2d TKG3d TKMesh TKBO TKService TKShHealing)
 set(OpenCASCADE_LIBRARIES "") # Initialize an empty list
 foreach(module ${OCCT_MODULES})
@@ -690,6 +687,7 @@ namespace Urbaxio::Engine {
         const SceneObject* get_object_by_id(uint64_t id) const;
         std::vector<SceneObject*> get_all_objects();
         std::vector<const SceneObject*> get_all_objects() const;
+        void DeleteObject(uint64_t id); // <-- NEW
 
         // --- Line Management ---
         void AddUserLine(const glm::vec3& start, const glm::vec3& end);
@@ -740,6 +738,9 @@ namespace Urbaxio::Engine {
         bool ArePointsCoplanar(const std::vector<glm::vec3>& points, gp_Pln& outPlane);
         void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
         
+        // --- Face Splitting Logic ---
+        bool TrySplitFacesWithLine(const glm::vec3& start, const glm::vec3& end); // <-- NEW
+
         // --- Push/Pull Helpers ---
         TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal);
         void AnalyzeShape(const TopoDS_Shape& shape, const std::string& label);
@@ -1079,12 +1080,15 @@ ENCODINGUTF8#define GLM_ENABLE_EXPERIMENTAL
 #include <gp_Vec.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pln.hxx>
+#include <GeomAbs_SurfaceType.hxx> // For checking plane type
 #include <TopoDS.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Wire.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Solid.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopAbs.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepLProp_SLProps.hxx> // For getting face properties like normal
@@ -1095,9 +1099,11 @@ ENCODINGUTF8#define GLM_ENABLE_EXPERIMENTAL
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx> // For subtraction
+#include <BRepAlgoAPI_Splitter.hxx> // For splitting faces
+#include <BRepClass_FaceClassifier.hxx> // For checking if a point is on a face
 #include <BRepCheck_Analyzer.hxx>
 #include <ShapeFix_Shape.hxx>
-#include <TopTools_ListOfShape.hxx>
+#include <TopTools_ListOfShape.hxx> // <-- REQUIRED FOR SetArguments/SetTools
 #include <Standard_Failure.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
@@ -1106,6 +1112,10 @@ ENCODINGUTF8#define GLM_ENABLE_EXPERIMENTAL
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx> // For vertex-edge map
 #include <TopExp.hxx> // For TopExp::MapShapes
 #include <ShapeUpgrade_UnifySameDomain.hxx> // <-- THE MAGIC TOOL
+#include <Geom2d_Line.hxx> // <-- FIX: Added missing include
+#include <ShapeAnalysis_Surface.hxx> // <-- FIX: Added missing include
+#include <BOPAlgo_Splitter.hxx>
+#include <BOPAlgo_Alerts.hxx> // For DumpErrors
 
 namespace Urbaxio::Engine {
 
@@ -1125,6 +1135,28 @@ namespace Urbaxio::Engine {
     const SceneObject* Scene::get_object_by_id(uint64_t id) const { auto it = objects_.find(id); if (it != objects_.end()) { return it->second.get(); } return nullptr; }
     std::vector<SceneObject*> Scene::get_all_objects() { std::vector<SceneObject*> result; result.reserve(objects_.size()); for (auto const& [id, obj_ptr] : objects_) { result.push_back(obj_ptr.get()); } return result; }
     std::vector<const SceneObject*> Scene::get_all_objects() const { std::vector<const SceneObject*> result; result.reserve(objects_.size()); for (auto const& [id, obj_ptr] : objects_) { result.push_back(obj_ptr.get()); } return result; }
+    
+    // --- Delete Object ---
+    void Scene::DeleteObject(uint64_t id) {
+        auto it = objects_.find(id);
+        if (it == objects_.end()) {
+            return;
+        }
+
+        SceneObject* obj = it->second.get();
+
+        // Remove the object's boundary lines from the scene
+        // Create a copy because RemoveLine modifies the set via UpdateObjectBoundary
+        std::set<uint64_t> lines_to_remove = obj->boundaryLineIDs;
+        for (uint64_t lineId : lines_to_remove) {
+            RemoveLine(lineId);
+        }
+
+        // Erase the object from the map, which will call its destructor and free memory
+        objects_.erase(it);
+        std::cout << "Scene: Deleted object " << id << std::endl;
+    }
+
 
     // Finds an existing vertex within tolerance or returns the input point.
     // This is the core of vertex merging.
@@ -1139,11 +1171,19 @@ namespace Urbaxio::Engine {
 
     // Public method to add a line, which now handles intersections.
     void Scene::AddUserLine(const glm::vec3& start, const glm::vec3& end) {
+        // --- Phase 1: Try to split an existing face with the new line segment. ---
+        if (TrySplitFacesWithLine(start, end)) {
+            // The line was consumed by the split operation. Job done.
+            return;
+        }
+
+        // --- Phase 2: If no face was split, proceed with normal line intersection and creation. ---
         std::map<uint64_t, glm::vec3> intersections_on_existing_lines;
         std::vector<glm::vec3> split_points_on_new_line;
 
         // Find all intersections with existing lines
         for (const auto& [existing_id, existing_line] : lines_) {
+            if (existing_line.usedInFace) continue;
             glm::vec3 intersection_point;
             if (LineSegmentIntersection(start, end, existing_line.start, existing_line.end, intersection_point)) {
                 intersections_on_existing_lines[existing_id] = intersection_point;
@@ -1181,6 +1221,7 @@ namespace Urbaxio::Engine {
             }
         }
         
+        // This function now handles both creation and splitting
         for (uint64_t id : new_line_ids) {
             FindAndCreateFaces(id);
         }
@@ -1388,7 +1429,7 @@ namespace Urbaxio::Engine {
             auto line_it = lines_.find(lineId);
             if (line_it == lines_.end()) continue; // Should not happen
 
-            if (lineId == originatingLineId || line_it->second.usedInFace || visitedLinesDFS.count(lineId)) {
+            if (lineId == originatingLineId || visitedLinesDFS.count(lineId)) {
                 continue;
             }
 
@@ -1482,27 +1523,99 @@ namespace Urbaxio::Engine {
             finalOrderedVertices.push_back(pA);
             finalOrderedVertices.push_back(pB);
             if (!pathVerticesCollector.empty()) {
-                // The last vertex in the path collector is the same as pA, so we skip it.
                 for (size_t i = 0; i < pathVerticesCollector.size() - 1; ++i) {
                     finalOrderedVertices.push_back(pathVerticesCollector[i]);
                 }
-            } else { return; }
+            }
             if (finalOrderedVertices.size() < 3) return;
 
-            gp_Pln cyclePlane;
-            if (ArePointsCoplanar(finalOrderedVertices, cyclePlane)) {
-                CreateOCCTFace(finalOrderedVertices, cyclePlane);
+            uint64_t hostFaceId = 0;
+            TopoDS_Face hostFace;
+
+            for (const auto& [id, obj_ptr] : objects_) {
+                SceneObject* obj = obj_ptr.get();
+                if (!obj || !obj->has_shape() || obj->get_shape()->ShapeType() != TopAbs_FACE) continue;
+
+                const TopoDS_Face& candidateFace = TopoDS::Face(*obj->get_shape());
+                BRepClass_FaceClassifier classifier;
+                bool allPointsOnFace = true;
+                for (const auto& vertex : finalOrderedVertices) {
+                    classifier.Perform(candidateFace, gp_Pnt(vertex.x, vertex.y, vertex.z), SCENE_POINT_EQUALITY_TOLERANCE);
+                    if (classifier.State() != TopAbs_ON && classifier.State() != TopAbs_IN) {
+                        allPointsOnFace = false;
+                        break;
+                    }
+                }
+
+                if (allPointsOnFace) {
+                    hostFaceId = id;
+                    hostFace = candidateFace;
+                    break;
+                }
+            }
+
+            if (hostFaceId != 0) {
+                std::cout << "Scene: Detected new loop on existing face " << hostFaceId << ". Attempting to split." << std::endl;
                 
-                // Mark all lines in the loop as used
-                lines_.at(newLineId).usedInFace = true;
-                for (uint64_t lineId : pathLineIDsCollector) {
-                    lines_.at(lineId).usedInFace = true;
+                BRepBuilderAPI_MakeWire wireMaker;
+                for (size_t i = 0; i < finalOrderedVertices.size(); ++i) {
+                    const auto& p1 = finalOrderedVertices[i];
+                    const auto& p2 = finalOrderedVertices[(i + 1) % finalOrderedVertices.size()];
+                    if (!AreVec3Equal(p1, p2)) {
+                         wireMaker.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(p1.x, p1.y, p1.z), gp_Pnt(p2.x, p2.y, p2.z)));
+                    }
+                }
+
+                if (!wireMaker.IsDone() || wireMaker.Wire().IsNull()) {
+                     std::cerr << "Scene Split Error: Failed to create wire from new loop." << std::endl;
+                     return;
+                }
+                TopoDS_Wire cuttingWire = wireMaker.Wire();
+
+                // --- FIX: Use modern BRepAlgoAPI_Splitter API ---
+                BRepAlgoAPI_Splitter splitter;
+                TopTools_ListOfShape aArguments, aTools;
+                aArguments.Append(hostFace);
+                aTools.Append(cuttingWire);
+                splitter.SetArguments(aArguments);
+                splitter.SetTools(aTools);
+                splitter.Build();
+                // --- END FIX ---
+
+                if (splitter.IsDone()) {
+                    DeleteObject(hostFaceId);
+                    for (TopExp_Explorer explorer(splitter.Shape(), TopAbs_FACE); explorer.More(); explorer.Next()) {
+                        std::string face_name = "SplitFace_" + std::to_string(next_face_id_++);
+                        SceneObject* new_face_obj = create_object(face_name);
+                        if (new_face_obj) {
+                            TopoDS_Shape* new_shape = new TopoDS_Shape(explorer.Current());
+                            new_face_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new_shape));
+                            UpdateObjectBoundary(new_face_obj);
+                            auto mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_face_obj->get_shape());
+                            if (!mesh_data.isEmpty()) {
+                                new_face_obj->set_mesh_buffers(std::move(mesh_data));
+                            }
+                        }
+                    }
+                } else {
+                    std::cerr << "Scene Split Error: BRepAlgoAPI_Splitter failed." << std::endl;
+                }
+            
+            } 
+            else {
+                gp_Pln cyclePlane;
+                if (ArePointsCoplanar(finalOrderedVertices, cyclePlane)) {
+                    CreateOCCTFace(finalOrderedVertices, cyclePlane);
+                    lines_.at(newLineId).usedInFace = true;
+                    for (uint64_t lineId : pathLineIDsCollector) {
+                        lines_.at(lineId).usedInFace = true;
+                    }
                 }
             }
         }
     }
     
-    // --- NEW HELPER FUNCTIONS ---
+    // --- HELPER FUNCTIONS ---
     std::vector<std::pair<glm::vec3, glm::vec3>> Scene::ExtractEdgesFromShape(const TopoDS_Shape& shape) {
         std::vector<std::pair<glm::vec3, glm::vec3>> edges;
         TopExp_Explorer explorer(shape, TopAbs_EDGE);
@@ -1532,6 +1645,8 @@ namespace Urbaxio::Engine {
         for (const auto& edge : new_edges) {
             uint64_t line_id = AddSingleLineSegment(edge.first, edge.second);
             if (line_id != 0) {
+                // Mark these lines as 'used' so they cannot form other faces
+                lines_[line_id].usedInFace = true;
                 new_boundary_line_ids.insert(line_id);
                 // Remove from the set of old lines, so we know it's still needed
                 if(old_line_ids_to_check.count(line_id)) {
@@ -1549,8 +1664,103 @@ namespace Urbaxio::Engine {
         // Update the object's list of boundary lines
         obj->boundaryLineIDs = new_boundary_line_ids;
     }
-    // --- END NEW HELPER FUNCTIONS ---
+    
+    bool Scene::TrySplitFacesWithLine(const glm::vec3& start, const glm::vec3& end) {
+        gp_Pnt start_pnt(start.x, start.y, start.z);
+        gp_Pnt end_pnt(end.x, end.y, end.z);
+        glm::vec3 mid_glm = (start + end) * 0.5f;
+        gp_Pnt mid_pnt(mid_glm.x, mid_glm.y, mid_glm.z);
 
+        SceneObject* hostObject = nullptr;
+        TopoDS_Face hostFace;
+
+        for (const auto& [id, obj_ptr] : objects_) {
+            SceneObject* obj = obj_ptr.get();
+            if (!obj || !obj->has_shape()) continue;
+
+            TopExp_Explorer faceExplorer(*obj->get_shape(), TopAbs_FACE);
+            for (; faceExplorer.More(); faceExplorer.Next()) {
+                const TopoDS_Face& candidateFace = TopoDS::Face(faceExplorer.Current());
+                BRepClass_FaceClassifier classifier;
+                const float tol = SCENE_POINT_EQUALITY_TOLERANCE;
+                
+                classifier.Perform(candidateFace, start_pnt, tol);
+                if (classifier.State() != TopAbs_ON && classifier.State() != TopAbs_IN) continue;
+                
+                classifier.Perform(candidateFace, end_pnt, tol);
+                if (classifier.State() != TopAbs_ON && classifier.State() != TopAbs_IN) continue;
+
+                classifier.Perform(candidateFace, mid_pnt, tol);
+                if (classifier.State() != TopAbs_IN) continue;
+
+                hostObject = obj;
+                hostFace = candidateFace;
+                break; 
+            }
+            if (hostObject) break;
+        }
+
+        if (!hostObject) {
+            return false;
+        }
+        
+        // --- FIX: Use simple edge creation from 3D points ---
+        TopoDS_Vertex v_start = BRepBuilderAPI_MakeVertex(start_pnt);
+        TopoDS_Vertex v_end = BRepBuilderAPI_MakeVertex(end_pnt);
+        TopoDS_Edge cuttingEdge = BRepBuilderAPI_MakeEdge(v_start, v_end);
+        if (cuttingEdge.IsNull()) return false;
+        
+        // --- FIX: Use BRepAlgoAPI_Splitter with the correct modern API ---
+        BRepAlgoAPI_Splitter splitter;
+        TopTools_ListOfShape anArguments, aTools;
+        anArguments.Append(*hostObject->get_shape());
+        aTools.Append(cuttingEdge);
+        splitter.SetArguments(anArguments);
+        splitter.SetTools(aTools);
+        splitter.Build();
+
+        if (!splitter.IsDone()) {
+            std::cerr << "Scene Split Error: BRepAlgoAPI_Splitter failed." << std::endl;
+            return false;
+        }
+        
+        TopoDS_Shape resultShape = splitter.Shape();
+        uint64_t hostObjectId = hostObject->get_id();
+        DeleteObject(hostObjectId);
+
+        if (resultShape.ShapeType() == TopAbs_COMPOUND) {
+            for (TopExp_Explorer explorer(resultShape, TopAbs_FACE); explorer.More(); explorer.Next()) {
+                 std::string face_name = "SplitFace_" + std::to_string(next_face_id_++);
+                 SceneObject* new_face_obj = create_object(face_name);
+                 if (new_face_obj) {
+                     TopoDS_Shape* new_shape = new TopoDS_Shape(explorer.Current());
+                     new_face_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new_shape));
+                     UpdateObjectBoundary(new_face_obj);
+                     auto mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_face_obj->get_shape());
+                     if (!mesh_data.isEmpty()) {
+                         new_face_obj->set_mesh_buffers(std::move(mesh_data));
+                     }
+                 }
+            }
+        } else {
+            std::string obj_name = "SplitSolid_" + std::to_string(next_object_id_);
+            SceneObject* new_obj = create_object(obj_name);
+            if (new_obj) {
+                new_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(resultShape)));
+                UpdateObjectBoundary(new_obj);
+                new_obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(resultShape));
+                new_obj->vao = 0;
+            }
+        }
+        
+        for(auto const& [line_id, line] : lines_) {
+            if(!line.usedInFace) {
+                FindAndCreateFaces(line_id);
+            }
+        }
+
+        return true;
+    }
 
     // --- PUSH/PULL (MODIFIED) ---
     TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal) {

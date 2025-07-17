@@ -58,6 +58,33 @@
 #include <BOPAlgo_Splitter.hxx>
 #include <BOPAlgo_Alerts.hxx> // For DumpErrors
 
+namespace { // Anonymous namespace for utility functions
+    bool PointOnLineSegment(const glm::vec3& p, const glm::vec3& a, const glm::vec3& b) {
+        const float ON_SEGMENT_TOLERANCE = 1e-4f;
+        
+        // Quick check if it's one of the endpoints
+        if (glm::distance2(p, a) < ON_SEGMENT_TOLERANCE * ON_SEGMENT_TOLERANCE ||
+            glm::distance2(p, b) < ON_SEGMENT_TOLERANCE * ON_SEGMENT_TOLERANCE) {
+            return false; // It's an endpoint, no split needed
+        }
+
+        // Check for collinearity using cross product
+        glm::vec3 pa = p - a;
+        glm::vec3 ba = b - a;
+        if (glm::length2(glm::cross(pa, ba)) > ON_SEGMENT_TOLERANCE * ON_SEGMENT_TOLERANCE) {
+            return false; // Not collinear
+        }
+
+        // Check if the point is within the segment bounds
+        float dot_product = glm::dot(pa, ba);
+        if (dot_product < 0.0f || dot_product > glm::length2(ba)) {
+            return false; // Outside the segment
+        }
+
+        return true;
+    }
+}
+
 namespace Urbaxio::Engine {
 
     const float COPLANARITY_TOLERANCE_SCENE = 1e-4f;
@@ -110,21 +137,39 @@ namespace Urbaxio::Engine {
         return p;
     }
 
-    // Public method to add a line, which now handles intersections.
+
+
+    // Public method to add a line.
+    // --- NEW ARCHITECTURE ---
+    // 1. Proactively split existing lines at the new line's endpoints.
+    // This ensures the line graph is connected *before* we do anything else.
+    // 2. Find T-junction intersections between the new line segment and existing lines.
+    // 3. Add the new line, now potentially split by the T-junctions.
+    // 4. Add the new segments and check for new faces for each one.
+
     void Scene::AddUserLine(const glm::vec3& start, const glm::vec3& end) {
-        // --- Phase 1: Try to split an existing face with the new line segment. ---
-        if (TrySplitFacesWithLine(start, end)) {
-            // The line was consumed by the split operation. Job done.
-            return;
+        // 1. Proactively split existing lines at the new line's endpoints.
+        // This ensures the line graph is connected *before* we do anything else.
+        
+        // Collect lines to split to avoid iterator invalidation
+        std::vector<std::pair<uint64_t, glm::vec3>> splits_to_perform;
+        for (const auto& [line_id, line] : lines_) {
+            if (PointOnLineSegment(start, line.start, line.end)) {
+                splits_to_perform.push_back({line_id, start});
+            }
+            if (PointOnLineSegment(end, line.start, line.end)) {
+                splits_to_perform.push_back({line_id, end});
+            }
+        }
+        for(const auto& split : splits_to_perform) {
+            SplitLineAtPoint(split.first, split.second);
         }
 
-        // --- Phase 2: If no face was split, proceed with normal line intersection and creation. ---
+        // 2. Find T-junction intersections between the new line segment and existing lines.
         std::map<uint64_t, glm::vec3> intersections_on_existing_lines;
         std::vector<glm::vec3> split_points_on_new_line;
 
-        // Find all intersections with existing lines
         for (const auto& [existing_id, existing_line] : lines_) {
-            if (existing_line.usedInFace) continue;
             glm::vec3 intersection_point;
             if (LineSegmentIntersection(start, end, existing_line.start, existing_line.end, intersection_point)) {
                 intersections_on_existing_lines[existing_id] = intersection_point;
@@ -132,17 +177,16 @@ namespace Urbaxio::Engine {
             }
         }
 
-        // Split all existing lines that were intersected
+        // Split all existing lines that were T-intersected
         for (const auto& [line_id, point] : intersections_on_existing_lines) {
             SplitLineAtPoint(line_id, point);
         }
         
-        // Add the new line, potentially splitting it as well
+        // 3. Add the new line, now potentially split by the T-junctions.
         std::vector<glm::vec3> all_points = { start };
         all_points.insert(all_points.end(), split_points_on_new_line.begin(), split_points_on_new_line.end());
         all_points.push_back(end);
 
-        // Sort all points along the new line's direction
         glm::vec3 dir = end - start;
         std::sort(all_points.begin(), all_points.end(), 
             [&start, &dir](const glm::vec3& a, const glm::vec3& b) {
@@ -150,10 +194,9 @@ namespace Urbaxio::Engine {
                 return glm::dot(a - start, dir) < glm::dot(b - start, dir);
             });
             
-        // Remove duplicate points
         all_points.erase(std::unique(all_points.begin(), all_points.end(), AreVec3Equal), all_points.end());
 
-        // Add the new line as segments and trigger face finding for each new segment
+        // 4. Add the new segments and check for new faces for each one.
         std::vector<uint64_t> new_line_ids;
         for (size_t i = 0; i < all_points.size() - 1; ++i) {
             uint64_t new_id = AddSingleLineSegment(all_points[i], all_points[i+1]);
@@ -162,7 +205,6 @@ namespace Urbaxio::Engine {
             }
         }
         
-        // This function now handles both creation and splitting
         for (uint64_t id : new_line_ids) {
             FindAndCreateFaces(id);
         }
@@ -254,8 +296,8 @@ namespace Urbaxio::Engine {
         uint64_t id2 = AddSingleLineSegment(canonicalSplitPoint, originalLine.end);
         
         // 3. Now, explicitly try to find faces for the new segments
+        // We only need to check one of the new segments, as they are connected
         if(id1 != 0) FindAndCreateFaces(id1);
-        if(id2 != 0) FindAndCreateFaces(id2);
         
         // Return the canonical merged vertex for the split point
         return canonicalSplitPoint;
@@ -447,7 +489,9 @@ namespace Urbaxio::Engine {
 
     void Scene::FindAndCreateFaces(uint64_t newLineId) {
         auto line_it = lines_.find(newLineId);
-        if (line_it == lines_.end() || line_it->second.usedInFace) return;
+        if (line_it == lines_.end() || line_it->second.usedInFace) {
+            return;
+        }
         
         const Line& newLine = line_it->second;
         const glm::vec3& pA = newLine.start;
@@ -459,25 +503,30 @@ namespace Urbaxio::Engine {
         visitedLinesInCurrentDFS.insert(newLineId);
         int recursionDepth = 0;
 
-        if (PerformDFS(pA, pB, pA, pathVerticesCollector, pathLineIDsCollector, visitedLinesInCurrentDFS, newLineId, recursionDepth)) {
-            std::vector<glm::vec3> finalOrderedVertices;
-            finalOrderedVertices.push_back(pA);
-            finalOrderedVertices.push_back(pB);
-            if (!pathVerticesCollector.empty()) {
-                for (size_t i = 0; i < pathVerticesCollector.size() - 1; ++i) {
-                    finalOrderedVertices.push_back(pathVerticesCollector[i]);
-                }
+        if (!PerformDFS(pA, pB, pA, pathVerticesCollector, pathLineIDsCollector, visitedLinesInCurrentDFS, newLineId, recursionDepth)) {
+            return; // No closed loop found
+        }
+        
+        // --- A closed loop was found ---
+        std::vector<glm::vec3> finalOrderedVertices;
+        finalOrderedVertices.push_back(pA);
+        finalOrderedVertices.push_back(pB);
+        if (!pathVerticesCollector.empty()) {
+            for (size_t i = 0; i < pathVerticesCollector.size() - 1; ++i) {
+                finalOrderedVertices.push_back(pathVerticesCollector[i]);
             }
-            if (finalOrderedVertices.size() < 3) return;
+        }
+        if (finalOrderedVertices.size() < 3) return;
 
-            uint64_t hostFaceId = 0;
-            TopoDS_Face hostFace;
+        // --- NEW LOGIC: Prioritize splitting existing faces ---
+        for (const auto& [id, obj_ptr] : objects_) {
+            SceneObject* hostObject = obj_ptr.get();
+            if (!hostObject || !hostObject->has_shape()) continue;
 
-            for (const auto& [id, obj_ptr] : objects_) {
-                SceneObject* obj = obj_ptr.get();
-                if (!obj || !obj->has_shape() || obj->get_shape()->ShapeType() != TopAbs_FACE) continue;
-
-                const TopoDS_Face& candidateFace = TopoDS::Face(*obj->get_shape());
+            TopExp_Explorer faceExplorer(*hostObject->get_shape(), TopAbs_FACE);
+            for (; faceExplorer.More(); faceExplorer.Next()) {
+                const TopoDS_Face& candidateFace = TopoDS::Face(faceExplorer.Current());
+                
                 BRepClass_FaceClassifier classifier;
                 bool allPointsOnFace = true;
                 for (const auto& vertex : finalOrderedVertices) {
@@ -489,69 +538,54 @@ namespace Urbaxio::Engine {
                 }
 
                 if (allPointsOnFace) {
-                    hostFaceId = id;
-                    hostFace = candidateFace;
-                    break;
-                }
-            }
-
-            if (hostFaceId != 0) {
-                std::cout << "Scene: Detected new loop on existing face " << hostFaceId << ". Attempting to split." << std::endl;
-                
-                BRepBuilderAPI_MakeWire wireMaker;
-                for (size_t i = 0; i < finalOrderedVertices.size(); ++i) {
-                    const auto& p1 = finalOrderedVertices[i];
-                    const auto& p2 = finalOrderedVertices[(i + 1) % finalOrderedVertices.size()];
-                    if (!AreVec3Equal(p1, p2)) {
-                         wireMaker.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(p1.x, p1.y, p1.z), gp_Pnt(p2.x, p2.y, p2.z)));
-                    }
-                }
-
-                if (!wireMaker.IsDone() || wireMaker.Wire().IsNull()) {
-                     std::cerr << "Scene Split Error: Failed to create wire from new loop." << std::endl;
-                     return;
-                }
-                TopoDS_Wire cuttingWire = wireMaker.Wire();
-
-                // --- FIX: Use modern BRepAlgoAPI_Splitter API ---
-                BRepAlgoAPI_Splitter splitter;
-                TopTools_ListOfShape aArguments, aTools;
-                aArguments.Append(hostFace);
-                aTools.Append(cuttingWire);
-                splitter.SetArguments(aArguments);
-                splitter.SetTools(aTools);
-                splitter.Build();
-                // --- END FIX ---
-
-                if (splitter.IsDone()) {
-                    DeleteObject(hostFaceId);
-                    for (TopExp_Explorer explorer(splitter.Shape(), TopAbs_FACE); explorer.More(); explorer.Next()) {
-                        std::string face_name = "SplitFace_" + std::to_string(next_face_id_++);
-                        SceneObject* new_face_obj = create_object(face_name);
-                        if (new_face_obj) {
-                            TopoDS_Shape* new_shape = new TopoDS_Shape(explorer.Current());
-                            new_face_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new_shape));
-                            UpdateObjectBoundary(new_face_obj);
-                            auto mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_face_obj->get_shape());
-                            if (!mesh_data.isEmpty()) {
-                                new_face_obj->set_mesh_buffers(std::move(mesh_data));
-                            }
+                    std::cout << "Scene: Detected new loop on existing face of object " << id << ". Attempting to split." << std::endl;
+                    BRepBuilderAPI_MakeWire wireMaker;
+                    for (size_t i = 0; i < finalOrderedVertices.size(); ++i) {
+                        const auto& p1 = finalOrderedVertices[i];
+                        const auto& p2 = finalOrderedVertices[(i + 1) % finalOrderedVertices.size()];
+                        if (!AreVec3Equal(p1, p2)) {
+                             wireMaker.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(p1.x, p1.y, p1.z), gp_Pnt(p2.x, p2.y, p2.z)));
                         }
                     }
-                } else {
-                    std::cerr << "Scene Split Error: BRepAlgoAPI_Splitter failed." << std::endl;
-                }
-            
-            } 
-            else {
-                gp_Pln cyclePlane;
-                if (ArePointsCoplanar(finalOrderedVertices, cyclePlane)) {
-                    CreateOCCTFace(finalOrderedVertices, cyclePlane);
-                    lines_.at(newLineId).usedInFace = true;
-                    for (uint64_t lineId : pathLineIDsCollector) {
-                        lines_.at(lineId).usedInFace = true;
+                    if (!wireMaker.IsDone() || wireMaker.Wire().IsNull()) {
+                         std::cerr << "Scene Split Error: Failed to create wire from new loop." << std::endl;
+                         return; // Abort this face-finding attempt
                     }
+                    
+                    TopoDS_Wire cuttingWire = wireMaker.Wire();
+                    
+                    // --- CORRECTED USAGE OF BRepAlgoAPI_Splitter ---
+                    BRepAlgoAPI_Splitter splitter;
+                    TopTools_ListOfShape arguments;
+                    arguments.Append(*hostObject->get_shape());
+                    TopTools_ListOfShape tools;
+                    tools.Append(cuttingWire);
+                    splitter.SetArguments(arguments);
+                    splitter.SetTools(tools);
+                    splitter.Build();
+                    
+                    if (splitter.IsDone()) {
+                        hostObject->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(splitter.Shape())));
+                        UpdateObjectBoundary(hostObject);
+                        hostObject->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*hostObject->get_shape()));
+                        hostObject->vao = 0; // Mark for re-upload to GPU
+                        std::cout << "Scene: Object " << id << " was successfully split and updated." << std::endl;
+                    } else {
+                        std::cerr << "Scene Split Error: BRepAlgoAPI_Splitter failed." << std::endl;
+                    }
+                    // IMPORTANT: We found our host face and attempted a split. We must exit now.
+                    return; 
                 }
+            }
+        }
+        
+        // --- If we reach here, no host face was found. Create a new face in space. ---
+        gp_Pln cyclePlane;
+        if (ArePointsCoplanar(finalOrderedVertices, cyclePlane)) {
+            CreateOCCTFace(finalOrderedVertices, cyclePlane);
+            lines_.at(newLineId).usedInFace = true;
+            for (uint64_t lineId : pathLineIDsCollector) {
+                lines_.at(lineId).usedInFace = true;
             }
         }
     }
@@ -606,102 +640,7 @@ namespace Urbaxio::Engine {
         obj->boundaryLineIDs = new_boundary_line_ids;
     }
     
-    bool Scene::TrySplitFacesWithLine(const glm::vec3& start, const glm::vec3& end) {
-        gp_Pnt start_pnt(start.x, start.y, start.z);
-        gp_Pnt end_pnt(end.x, end.y, end.z);
-        glm::vec3 mid_glm = (start + end) * 0.5f;
-        gp_Pnt mid_pnt(mid_glm.x, mid_glm.y, mid_glm.z);
 
-        SceneObject* hostObject = nullptr;
-        TopoDS_Face hostFace;
-
-        for (const auto& [id, obj_ptr] : objects_) {
-            SceneObject* obj = obj_ptr.get();
-            if (!obj || !obj->has_shape()) continue;
-
-            TopExp_Explorer faceExplorer(*obj->get_shape(), TopAbs_FACE);
-            for (; faceExplorer.More(); faceExplorer.Next()) {
-                const TopoDS_Face& candidateFace = TopoDS::Face(faceExplorer.Current());
-                BRepClass_FaceClassifier classifier;
-                const float tol = SCENE_POINT_EQUALITY_TOLERANCE;
-                
-                classifier.Perform(candidateFace, start_pnt, tol);
-                if (classifier.State() != TopAbs_ON && classifier.State() != TopAbs_IN) continue;
-                
-                classifier.Perform(candidateFace, end_pnt, tol);
-                if (classifier.State() != TopAbs_ON && classifier.State() != TopAbs_IN) continue;
-
-                classifier.Perform(candidateFace, mid_pnt, tol);
-                if (classifier.State() != TopAbs_IN) continue;
-
-                hostObject = obj;
-                hostFace = candidateFace;
-                break; 
-            }
-            if (hostObject) break;
-        }
-
-        if (!hostObject) {
-            return false;
-        }
-        
-        // --- FIX: Use simple edge creation from 3D points ---
-        TopoDS_Vertex v_start = BRepBuilderAPI_MakeVertex(start_pnt);
-        TopoDS_Vertex v_end = BRepBuilderAPI_MakeVertex(end_pnt);
-        TopoDS_Edge cuttingEdge = BRepBuilderAPI_MakeEdge(v_start, v_end);
-        if (cuttingEdge.IsNull()) return false;
-        
-        // --- FIX: Use BRepAlgoAPI_Splitter with the correct modern API ---
-        BRepAlgoAPI_Splitter splitter;
-        TopTools_ListOfShape anArguments, aTools;
-        anArguments.Append(*hostObject->get_shape());
-        aTools.Append(cuttingEdge);
-        splitter.SetArguments(anArguments);
-        splitter.SetTools(aTools);
-        splitter.Build();
-
-        if (!splitter.IsDone()) {
-            std::cerr << "Scene Split Error: BRepAlgoAPI_Splitter failed." << std::endl;
-            return false;
-        }
-        
-        TopoDS_Shape resultShape = splitter.Shape();
-        uint64_t hostObjectId = hostObject->get_id();
-        DeleteObject(hostObjectId);
-
-        if (resultShape.ShapeType() == TopAbs_COMPOUND) {
-            for (TopExp_Explorer explorer(resultShape, TopAbs_FACE); explorer.More(); explorer.Next()) {
-                 std::string face_name = "SplitFace_" + std::to_string(next_face_id_++);
-                 SceneObject* new_face_obj = create_object(face_name);
-                 if (new_face_obj) {
-                     TopoDS_Shape* new_shape = new TopoDS_Shape(explorer.Current());
-                     new_face_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new_shape));
-                     UpdateObjectBoundary(new_face_obj);
-                     auto mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_face_obj->get_shape());
-                     if (!mesh_data.isEmpty()) {
-                         new_face_obj->set_mesh_buffers(std::move(mesh_data));
-                     }
-                 }
-            }
-        } else {
-            std::string obj_name = "SplitSolid_" + std::to_string(next_object_id_);
-            SceneObject* new_obj = create_object(obj_name);
-            if (new_obj) {
-                new_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(resultShape)));
-                UpdateObjectBoundary(new_obj);
-                new_obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(resultShape));
-                new_obj->vao = 0;
-            }
-        }
-        
-        for(auto const& [line_id, line] : lines_) {
-            if(!line.usedInFace) {
-                FindAndCreateFaces(line_id);
-            }
-        }
-
-        return true;
-    }
 
     // --- PUSH/PULL (MODIFIED) ---
     TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal) {
@@ -917,74 +856,199 @@ namespace Urbaxio::Engine {
             
             TopoDS_Shape newFinalShape;
             
-            BRepAdaptor_Surface surfaceAdaptor(faceToExtrude, Standard_True);
-            gp_Pln plane = surfaceAdaptor.Plane();
-            gp_Dir occtFaceNormal = plane.Axis().Direction();
-            if (faceToExtrude.Orientation() == TopAbs_REVERSED) {
-                occtFaceNormal.Reverse();
-            }
-
-            double dotProduct = extrudeVector.Dot(gp_Vec(occtFaceNormal));
-            std::cout << "Scene: Push/Pull - Face normal dot extrusion vector = " << dotProduct << std::endl;
-
             if (originalShape->ShapeType() == TopAbs_FACE) {
                 newFinalShape = prismShape;
-                std::cout << "Scene: Push/Pull - Standalone face converted to solid." << std::endl;
+                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(newFinalShape)));
+            } else if (originalShape->ShapeType() == TopAbs_COMPOUND) {
+                // Новый подход: создаём новый solid, а из исходного вырезаем грань
+                std::string solid_name = "ExtrudedSolid_" + std::to_string(next_object_id_);
+                SceneObject* newSolidObj = create_object(solid_name);
+                newSolidObj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(prismShape)));
+                UpdateObjectBoundary(newSolidObj);
+                newSolidObj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(prismShape));
+                newSolidObj->vao = 0;
 
-            } else if (dotProduct >= -1e-6) {
-                std::cout << "Scene: Push/Pull - Detected outward extrusion. Using Fuse operation." << std::endl;
-                BRepAlgoAPI_Fuse fuseAlgo(*originalShape, prismShape);
-                if (!fuseAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl; AnalyzeShape(fuseAlgo.Shape(), "FUSE FAILED SHAPE"); return false; }
-                newFinalShape = fuseAlgo.Shape();
-                if (fuseAlgo.HasErrors()) { std::cerr << "OCCT Warning: Fuse operation has errors." << std::endl; }
-                if (fuseAlgo.HasWarnings()) { std::cout << "OCCT Info: Fuse operation has warnings." << std::endl; }
-
+                BRepAlgoAPI_Cut cutter(*originalShape, faceToExtrude);
+                if (cutter.IsDone() && !cutter.Shape().IsNull()) {
+                    obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(cutter.Shape())));
+                } else {
+                    DeleteObject(objectId);
+                    return true;
+                }
             } else {
-                std::cout << "Scene: Push/Pull - Detected inward extrusion. Using Cut operation." << std::endl;
-                BRepAlgoAPI_Cut cutAlgo(*originalShape, prismShape);
-                if (!cutAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl; AnalyzeShape(cutAlgo.Shape(), "CUT FAILED SHAPE"); return false; }
-                newFinalShape = cutAlgo.Shape();
-                if (cutAlgo.HasErrors()) { std::cerr << "OCCT Warning: Cut operation has errors." << std::endl; }
-                if (cutAlgo.HasWarnings()) { std::cout << "OCCT Info: Cut operation has warnings." << std::endl; }
+                BRepAdaptor_Surface surfaceAdaptor(faceToExtrude, Standard_True);
+                gp_Pln plane = surfaceAdaptor.Plane();
+                gp_Dir occtFaceNormal = plane.Axis().Direction();
+                if (faceToExtrude.Orientation() == TopAbs_REVERSED) {
+                    occtFaceNormal.Reverse();
+                }
+                double dotProduct = extrudeVector.Dot(gp_Vec(occtFaceNormal));
+                if (dotProduct >= -1e-6) {
+                    BRepAlgoAPI_Fuse fuseAlgo(*originalShape, prismShape);
+                    if (!fuseAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl; AnalyzeShape(fuseAlgo.Shape(), "FUSE FAILED SHAPE"); return false; }
+                    newFinalShape = fuseAlgo.Shape();
+                } else {
+                    BRepAlgoAPI_Cut cutAlgo(*originalShape, prismShape);
+                    if (!cutAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl; AnalyzeShape(cutAlgo.Shape(), "CUT FAILED SHAPE"); return false; }
+                    newFinalShape = cutAlgo.Shape();
+                }
+                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(newFinalShape)));
             }
-            
-            AnalyzeShape(newFinalShape, "FINAL RESULT (Before Healing)");
-            
-            if (newFinalShape.IsNull()) {
-                std::cerr << "OCCT Error: Resulting shape is null after boolean operation!" << std::endl;
-                return false;
+            // --- HEALING AND UPDATING ---
+            if (obj && obj->has_shape()) {
+                ShapeFix_Shape shapeFixer(*obj->get_shape());
+                shapeFixer.Perform();
+                TopoDS_Shape healedShape = shapeFixer.Shape();
+                if (!disableMerge) {
+                    ShapeUpgrade_UnifySameDomain Unifier;
+                    Unifier.Initialize(healedShape);
+                    Unifier.SetLinearTolerance(1e-4); 
+                    Unifier.SetAngularTolerance(1e-4); 
+                    Unifier.AllowInternalEdges(Standard_True);
+                    Unifier.Build();
+                    healedShape = Unifier.Shape();
+                }
+                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(healedShape)));
+                UpdateObjectBoundary(obj);
+                obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*obj->get_shape()));
+                obj->vao = 0;
             }
-
-            // --- HEAL FIRST ---
-            ShapeFix_Shape shapeFixer(newFinalShape);
-            shapeFixer.Perform();
-            newFinalShape = shapeFixer.Shape();
-            
-            // --- UNIFY SECOND (with correct parameters) ---
-            if (!disableMerge) {
-                std::cout << "DEBUG: Attempting to unify coplanar faces..." << std::endl;
-                ShapeUpgrade_UnifySameDomain Unifier;
-                Unifier.Initialize(newFinalShape);
-                Unifier.SetLinearTolerance(1e-4); 
-                Unifier.SetAngularTolerance(1e-4); 
-                Unifier.AllowInternalEdges(Standard_True);
-                Unifier.Build();
-                newFinalShape = Unifier.Shape();
-            } else {
-                std::cout << "DEBUG: Face unification skipped by user (Ctrl)." << std::endl;
-            }
-            
-            obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(newFinalShape)));
-            UpdateObjectBoundary(obj); // <-- Sync lines
-            obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(newFinalShape));
-            obj->vao = 0;
-            
             std::cout << "Scene: Push/Pull successful. Object " << objectId << " updated." << std::endl;
-
         } catch (const Standard_Failure& e) {
             std::cerr << "OCCT Exception during ExtrudeFace: " << e.GetMessageString() << std::endl;
             return false;
         }
         return true;
     }
+
+    // --- NEW: Testing Infrastructure ---
+    
+    void Scene::ClearScene() {
+        // This clears the engine's state. The shell is responsible for cleaning up GPU resources.
+        objects_.clear();
+        next_object_id_ = 1;
+        next_face_id_ = 1;
+        
+        lines_.clear();
+        vertexAdjacency_.clear();
+        next_line_id_ = 1;
+
+        std::cout << "Scene: Cleared all objects and lines from engine state." << std::endl;
+    }
+    
+    // Helper to create a simple rectangular face object for testing.
+    SceneObject* Scene::CreateRectangularFace(
+        const std::string& name,
+        const gp_Pnt& p1, const gp_Pnt& p2, const gp_Pnt& p3, const gp_Pnt& p4)
+    {
+        try {
+            TopoDS_Edge edge1 = BRepBuilderAPI_MakeEdge(p1, p2);
+            TopoDS_Edge edge2 = BRepBuilderAPI_MakeEdge(p2, p3);
+            TopoDS_Edge edge3 = BRepBuilderAPI_MakeEdge(p3, p4);
+            TopoDS_Edge edge4 = BRepBuilderAPI_MakeEdge(p4, p1);
+
+            BRepBuilderAPI_MakeWire wireMaker(edge1, edge2, edge3, edge4);
+            if (!wireMaker.IsDone()) {
+                std::cerr << "CreateRectangularFace Error: Failed to create wire." << std::endl;
+                return nullptr;
+            }
+            TopoDS_Wire wire = wireMaker.Wire();
+            BRepBuilderAPI_MakeFace faceMaker(wire, Standard_True);
+            if (!faceMaker.IsDone() || faceMaker.Face().IsNull()) {
+                std::cerr << "CreateRectangularFace Error: Failed to create face." << std::endl;
+                return nullptr;
+            }
+
+            TopoDS_Face face = faceMaker.Face();
+            SceneObject* new_face_obj = this->create_object(name);
+            if (new_face_obj) {
+                new_face_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(face)));
+                UpdateObjectBoundary(new_face_obj);
+                auto mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_face_obj->get_shape());
+                if (!mesh_data.isEmpty()) {
+                    new_face_obj->set_mesh_buffers(std::move(mesh_data));
+                    std::cout << "Scene: Created test face object: " << name << std::endl;
+                }
+                return new_face_obj;
+            }
+        } catch (const Standard_Failure& e) {
+            std::cerr << "OCCT Exception in CreateRectangularFace: " << e.GetMessageString() << std::endl;
+        }
+        return nullptr;
+    }
+    
+    void Scene::TestFaceSplitting() {
+        std::cout << "\n\n--- RUNNING FACE SPLITTING TEST ---\n" << std::endl;
+        ClearScene();
+
+        // --- Test Setup: Create a large face to draw on ---
+        gp_Pnt p1(0, 0, 0);
+        gp_Pnt p2(100, 0, 0);
+        gp_Pnt p3(100, 100, 0);
+        gp_Pnt p4(0, 100, 0);
+        
+        SceneObject* testFace = CreateRectangularFace("TestFace_Base", p1, p2, p3, p4);
+        if (!testFace) {
+            std::cerr << "TEST SETUP FAILED: Could not create initial test face." << std::endl;
+            return;
+        }
+        std::cout << "Initial face created. Object count: " << objects_.size() << ". Initial lines: " << lines_.size() << std::endl;
+
+        std::cout << "\n--- SCENARIO: Drawing a 'П' shape on the face ---\n" << std::endl;
+        
+        // These are the points of the 'П' shape
+        glm::vec3 vA(20.0f, 0.0f, 0.0f);   // Start on bottom edge
+        glm::vec3 vB(20.0f, 50.0f, 0.0f);  // Go up
+        glm::vec3 vC(80.0f, 50.0f, 0.0f);  // Go right
+        glm::vec3 vD(80.0f, 0.0f, 0.0f);   // Go down to bottom edge
+
+        // We simulate a user drawing three separate lines.
+        // Each call to AddUserLine is a complete user action (click-drag-release or click-move-click).
+        // The engine's internal logic should handle the intermediate splits and the final loop detection.
+        
+        std::cout << "Step 1: Drawing line from edge to inside (A->B)..." << std::endl;
+        AddUserLine(vA, vB);
+        std::cout << "  Objects after Step 1: " << objects_.size() << ". Lines: " << lines_.size() << std::endl;
+
+
+        std::cout << "Step 2: Drawing line from point to point (B->C)..." << std::endl;
+        AddUserLine(vB, vC);
+        std::cout << "  Objects after Step 2: " << objects_.size() << ". Lines: " << lines_.size() << std::endl;
+
+
+        std::cout << "Step 3: Drawing line from point to edge (C->D) to close the loop..." << std::endl;
+        AddUserLine(vC, vD);
+        std::cout << "  Objects after Step 3: " << objects_.size() << ". Lines: " << lines_.size() << std::endl;
+
+
+        // --- FINAL VERIFICATION ---
+        // After the three lines are drawn, a 'П' shape is formed. The bottom of the 'П'
+        // is closed by the existing edge of the original face.
+        // The expected outcome is that the original face is split into two new faces:
+        // 1. The inner rectangle defined by the 'П' and the edge.
+        // 2. The outer C-shaped face.
+        // Therefore, the final number of objects in the scene should be 2.
+        std::cout << "\n--- FINAL VERIFICATION ---" << std::endl;
+        
+        size_t finalObjectCount = objects_.size();
+        bool testPassed = (finalObjectCount == 2);
+
+        if (testPassed) {
+            std::cout << "TEST PASSED: Final object count is 2, as expected." << std::endl;
+        } else {
+            std::cout << "TEST FAILED: Expected 2 final objects, but found " << finalObjectCount << "." << std::endl;
+            std::cout << "This likely indicates a failure in one of the following steps:" << std::endl;
+            std::cout << "  a) FindAndCreateFaces failed to detect the closed loop across multiple lines." << std::endl;
+            std::cout << "  b) The final splitting operation with the found loop failed." << std::endl;
+            std::cout << "  c) The loop detection logic needs improvement for complex scenarios." << std::endl;
+        }
+
+        std::cout << "\n--- Final Object Analysis ---" << std::endl;
+        for (const auto& [id, obj_ptr] : objects_) {
+            AnalyzeShape(*obj_ptr->get_shape(), "Final Object " + std::to_string(id));
+        }
+        
+        std::cout << "\n--- FACE SPLITTING TEST FINISHED ---\n" << std::endl;
+    }
+
 } // namespace Urbaxio

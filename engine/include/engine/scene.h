@@ -14,6 +14,7 @@
 
 // Forward declare OCCT types to avoid including heavy headers here
 class gp_Pln;
+class gp_Pnt; // <-- ADDED for helper function
 class TopoDS_Shape;
 class TopoDS_Face;
 class TopoDS_Edge; // <-- ADDED for helper function
@@ -63,6 +64,10 @@ namespace Urbaxio::Engine {
         // --- Geometry Modification ---
         bool ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance, bool disableMerge = false);
 
+        // --- NEW: Testing Infrastructure ---
+        void ClearScene();
+        void TestFaceSplitting();
+
     private:
         std::unordered_map<uint64_t, std::unique_ptr<SceneObject>> objects_;
         uint64_t next_object_id_ = 1;
@@ -103,11 +108,14 @@ namespace Urbaxio::Engine {
         void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
         
         // --- Face Splitting Logic ---
-        bool TrySplitFacesWithLine(const glm::vec3& start, const glm::vec3& end); // <-- NEW
+        // Removed FindHostFaceForLine - no longer needed with simplified architecture
 
         // --- Push/Pull Helpers ---
         TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal);
         void AnalyzeShape(const TopoDS_Shape& shape, const std::string& label);
+
+        // --- Test Helpers ---
+        SceneObject* CreateRectangularFace(const std::string& name, const gp_Pnt& p1, const gp_Pnt& p2, const gp_Pnt& p3, const gp_Pnt& p4);
     };
 
 }

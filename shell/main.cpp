@@ -163,6 +163,23 @@ int main(int argc, char* argv[]) {
                 selectedLineIDs.clear();
                 toolManager.SetTool(Urbaxio::Tools::ToolType::Line); // Reactivate to reset state
             }
+            ImGui::SameLine();
+            if (ImGui::Button("Run Split Test")) {
+                // 1. Clean up GPU resources for existing objects
+                if (scene_ptr) {
+                    std::vector<Urbaxio::Engine::SceneObject*> objects_to_clean = scene_ptr->get_all_objects();
+                    for (auto* obj : objects_to_clean) {
+                        if (obj) {
+                             if (obj->vao != 0) { glDeleteVertexArrays(1, &obj->vao); obj->vao = 0; }
+                             if (obj->vbo_vertices != 0) { glDeleteBuffers(1, &obj->vbo_vertices); obj->vbo_vertices = 0; }
+                             if (obj->vbo_normals != 0) { glDeleteBuffers(1, &obj->vbo_normals); obj->vbo_normals = 0; }
+                             if (obj->ebo != 0) { glDeleteBuffers(1, &obj->ebo); obj->ebo = 0; }
+                        }
+                    }
+                    // 2. Clear the scene logic and run the test
+                    scene_ptr->TestFaceSplitting(); 
+                }
+            }
             
             // --- Tool-specific UI ---
             toolManager.RenderUI();
