@@ -854,28 +854,16 @@ namespace Urbaxio::Engine {
             TopoDS_Shape prismShape = prismMaker.Shape();
             AnalyzeShape(prismShape, "CREATED PRISM");
             
-            TopoDS_Shape newFinalShape;
+            TopoDS_Shape finalShape;
             
-            if (originalShape->ShapeType() == TopAbs_FACE) {
-                newFinalShape = prismShape;
-                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(newFinalShape)));
-            } else if (originalShape->ShapeType() == TopAbs_COMPOUND) {
-                // Новый подход: создаём новый solid, а из исходного вырезаем грань
-                std::string solid_name = "ExtrudedSolid_" + std::to_string(next_object_id_);
-                SceneObject* newSolidObj = create_object(solid_name);
-                newSolidObj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(prismShape)));
-                UpdateObjectBoundary(newSolidObj);
-                newSolidObj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(prismShape));
-                newSolidObj->vao = 0;
-
-                BRepAlgoAPI_Cut cutter(*originalShape, faceToExtrude);
-                if (cutter.IsDone() && !cutter.Shape().IsNull()) {
-                    obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(cutter.Shape())));
-                } else {
-                    DeleteObject(objectId);
-                    return true;
-                }
-            } else {
+            // --- UNIVERSAL 3D BODY DETECTION ---
+            bool is3DBody = (originalShape->ShapeType() == TopAbs_SOLID || originalShape->ShapeType() == TopAbs_COMPSOLID);
+            if (!is3DBody && originalShape->ShapeType() == TopAbs_COMPOUND) {
+                TopExp_Explorer ex(*originalShape, TopAbs_SOLID);
+                if (ex.More()) is3DBody = true;
+            }
+            
+            if (is3DBody) {
                 BRepAdaptor_Surface surfaceAdaptor(faceToExtrude, Standard_True);
                 gp_Pln plane = surfaceAdaptor.Plane();
                 gp_Dir occtFaceNormal = plane.Axis().Direction();
@@ -883,16 +871,23 @@ namespace Urbaxio::Engine {
                     occtFaceNormal.Reverse();
                 }
                 double dotProduct = extrudeVector.Dot(gp_Vec(occtFaceNormal));
+                std::cout << "Scene: Push/Pull on 3D Body. Normal dot extrusion vector = " << dotProduct << std::endl;
                 if (dotProduct >= -1e-6) {
+                    std::cout << "Scene: Push/Pull - Detected outward extrusion. Using Fuse operation." << std::endl;
                     BRepAlgoAPI_Fuse fuseAlgo(*originalShape, prismShape);
-                    if (!fuseAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl; AnalyzeShape(fuseAlgo.Shape(), "FUSE FAILED SHAPE"); return false; }
-                    newFinalShape = fuseAlgo.Shape();
+                    if (!fuseAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl; return false; }
+                    finalShape = fuseAlgo.Shape();
                 } else {
+                    std::cout << "Scene: Push/Pull - Detected inward extrusion. Using Cut operation." << std::endl;
                     BRepAlgoAPI_Cut cutAlgo(*originalShape, prismShape);
-                    if (!cutAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl; AnalyzeShape(cutAlgo.Shape(), "CUT FAILED SHAPE"); return false; }
-                    newFinalShape = cutAlgo.Shape();
+                    if (!cutAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl; return false; }
+                    finalShape = cutAlgo.Shape();
                 }
-                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(newFinalShape)));
+                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
+            } else {
+                finalShape = prismShape;
+                std::cout << "Scene: Push/Pull - 2D shape converted to solid." << std::endl;
+                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
             }
             // --- HEALING AND UPDATING ---
             if (obj && obj->has_shape()) {
