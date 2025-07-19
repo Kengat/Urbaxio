@@ -54,17 +54,17 @@ target_link_libraries(Urbaxio PRIVATE
 )
 
 # --- Copy OpenCascade DLLs after build ---
-# This remains important for running the executable
-set(VCPKG_GLOBAL_BIN_DIR "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/bin")
-set(VCPKG_GLOBAL_DEBUG_BIN_DIR "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/debug/bin")
+# UPDATED to use the hardcoded path.
+set(OCCT_HARDCODED_BIN_DIR "C:/vcpkg/installed/x64-windows/bin")
+set(OCCT_HARDCODED_DEBUG_BIN_DIR "C:/vcpkg/installed/x64-windows/debug/bin")
 add_custom_command(TARGET Urbaxio POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E echo "Copying OCCT DLLs for $<CONFIG>..."
-    COMMAND $<$<CONFIG:Debug>:${CMAKE_COMMAND}> -E copy_directory_if_different "${VCPKG_GLOBAL_DEBUG_BIN_DIR}/" "$<TARGET_FILE_DIR:Urbaxio>/"
-    COMMAND $<$<CONFIG:Release>:${CMAKE_COMMAND}> -E copy_directory_if_different "${VCPKG_GLOBAL_BIN_DIR}/" "$<TARGET_FILE_DIR:Urbaxio>/"
+    COMMAND $<$<CONFIG:Debug>:${CMAKE_COMMAND}> -E copy_directory_if_different "${OCCT_HARDCODED_DEBUG_BIN_DIR}/" "$<TARGET_FILE_DIR:Urbaxio>/"
+    COMMAND $<$<CONFIG:Release>:${CMAKE_COMMAND}> -E copy_directory_if_different "${OCCT_HARDCODED_BIN_DIR}/" "$<TARGET_FILE_DIR:Urbaxio>/"
     COMMENT "Copying OpenCascade DLLs to executable directory..."
     VERBATIM
 )
-message(STATUS "Added post-build command to copy OCCT DLLs.")
+message(STATUS "Added post-build command to copy OCCT DLLs from hardcoded path.")
 
 # --- Resources configuration ---
 if(WIN32 AND RESOURCE_FILES)

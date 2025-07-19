@@ -7,7 +7,6 @@
     "sdl2",
     "glad",
     "imgui",
-    "glm",
-    "opencascade"
+    "glm"
   ]
-} 
+}

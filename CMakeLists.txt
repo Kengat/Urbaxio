@@ -4,27 +4,26 @@ cmake_minimum_required(VERSION 3.18)
 # Название проекта
 project(Urbaxio VERSION 0.0.1 LANGUAGES CXX)
 
-# --- Find OpenCASCADE (MANUAL, to bypass vcpkg/target issues) ---
-# 1. Set the root directory of the vcpkg installation for this project
-set(VCPKG_INSTALLED_DIR "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}")
+# --- Find OpenCASCADE (MANUAL, HARDCODED PATH) ---
+# We are completely bypassing vcpkg's manifest for OpenCASCADE.
+# We point directly to the files installed on your system.
+set(OCCT_INSTALL_DIR "C:/vcpkg/installed/x64-windows")
+message(STATUS "Using hardcoded OpenCASCADE path: ${OCCT_INSTALL_DIR}")
 
-# 2. Set the include directory (pointing to the 'opencascade' subdirectory) and add it to the global path
-set(OpenCASCADE_INCLUDE_DIR "${VCPKG_INSTALLED_DIR}/include/opencascade")
-include_directories(${OpenCASCADE_INCLUDE_DIR}) # Using global include for simplicity and robustness
+set(OpenCASCADE_INCLUDE_DIR "${OCCT_INSTALL_DIR}/include/opencascade")
+include_directories(${OpenCASCADE_INCLUDE_DIR})
 message(STATUS "Manually set OpenCASCADE include dir: ${OpenCASCADE_INCLUDE_DIR}")
 
-# 3. Create a list of the full paths to the required OCCT library files
-set(OCCT_LIB_DIR_RELEASE "${VCPKG_INSTALLED_DIR}/lib")
-set(OCCT_LIB_DIR_DEBUG "${VCPKG_INSTALLED_DIR}/debug/lib")
-# ADDED TKBO (for BRepAlgoAPI_Fuse), TKService (for BRepCheck_Analyzer), TKShHealing (for ShapeFix_Shape), and TKBOP (for BOPAlgo_Splitter)
-set(OCCT_MODULES TKernel TKMath TKPrim TKBRep TKTopAlgo TKG2d TKG3d TKMesh TKBO TKService TKShHealing)
-set(OpenCASCADE_LIBRARIES "") # Initialize an empty list
+set(OCCT_LIB_DIR_RELEASE "${OCCT_INSTALL_DIR}/lib")
+set(OCCT_LIB_DIR_DEBUG "${OCCT_INSTALL_DIR}/debug/lib")
+
+# List of required modules for OCCT 7.9.1. TKBOP is now TKBool.
+set(OCCT_MODULES TKernel TKMath TKPrim TKBRep TKTopAlgo TKG2d TKG3d TKMesh TKBO TKService TKShHealing TKBool)
+set(OpenCASCADE_LIBRARIES "")
 foreach(module ${OCCT_MODULES})
-    # Add both the release and debug versions of the library using generator expressions
-    # Vcpkg for OpenCascade does not add a 'd' suffix to debug library names.
     list(APPEND OpenCASCADE_LIBRARIES "optimized" "${OCCT_LIB_DIR_RELEASE}/${module}.lib" "debug" "${OCCT_LIB_DIR_DEBUG}/${module}.lib")
 endforeach()
-message(STATUS "Manually located OpenCASCADE libraries.")
+message(STATUS "Manually located OpenCASCADE libraries from hardcoded path.")
 # --- End OpenCASCADE Find ---
 
 
