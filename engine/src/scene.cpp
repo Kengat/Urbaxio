@@ -63,6 +63,8 @@
 #include <ShapeBuild_ReShape.hxx> // For tracking sub-shapes after healing
 #include <TopTools_ListOfShape.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx> 
+#include <ShapeFix_Wire.hxx> // NEW: Include for wire healing
+#include <ShapeExtend_Status.hxx> // NEW: Include for status flags
 
 
 namespace { // Anonymous namespace for utility functions
@@ -500,8 +502,7 @@ namespace Urbaxio::Engine {
         const Line& newLine = line_it->second;
         const glm::vec3& pA = newLine.start;
         const glm::vec3& pB = newLine.end;
-
-        // 1. Сборка уникальных топологических вершин (по порядку обхода цикла)
+        
         std::vector<glm::vec3> pathVerticesCollector;
         std::vector<uint64_t> pathLineIDsCollector;
         std::set<uint64_t> visitedLinesInCurrentDFS;
@@ -511,60 +512,152 @@ namespace Urbaxio::Engine {
         if (!PerformDFS(pA, pB, pA, pathVerticesCollector, pathLineIDsCollector, visitedLinesInCurrentDFS, newLineId, recursionDepth)) {
             return;
         }
-
-        // 2. Формируем строго упорядоченный список уникальных вершин цикла
-        std::vector<glm::vec3> orderedVertices;
-        orderedVertices.push_back(pA);
-        orderedVertices.push_back(pB);
+        
+        std::vector<glm::vec3> finalOrderedVertices;
+        finalOrderedVertices.push_back(pA);
+        finalOrderedVertices.push_back(pB);
         if (!pathVerticesCollector.empty()) {
             for (size_t i = 0; i < pathVerticesCollector.size() - 1; ++i) {
-                orderedVertices.push_back(pathVerticesCollector[i]);
+                finalOrderedVertices.push_back(pathVerticesCollector[i]);
             }
         }
-        if (orderedVertices.size() < 3) return;
+        if (finalOrderedVertices.size() < 3) return;
 
-        // 3. Создаем полностью определенные ребра (TopoDS_Edge) по этим вершинам
-        std::vector<TopoDS_Edge> edges;
-        for (size_t i = 0; i < orderedVertices.size(); ++i) {
-            gp_Pnt p1(orderedVertices[i].x, orderedVertices[i].y, orderedVertices[i].z);
-            gp_Pnt p2(orderedVertices[(i + 1) % orderedVertices.size()].x, orderedVertices[(i + 1) % orderedVertices.size()].y, orderedVertices[(i + 1) % orderedVertices.size()].z);
-            if (p1.IsEqual(p2, SCENE_POINT_EQUALITY_TOLERANCE)) continue;
-            TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(p1, p2);
-            if (!edge.IsNull()) {
-                edges.push_back(edge);
-            }
-        }
-        if (edges.size() < 3) return;
-
-        // 4. Сборка каркаса (TopoDS_Wire)
-        BRepBuilderAPI_MakeWire wireMaker;
-        for (const auto& edge : edges) wireMaker.Add(edge);
-        if (!wireMaker.IsDone() || wireMaker.Wire().IsNull()) return;
-        TopoDS_Wire wire = wireMaker.Wire();
-
-        // 5. Определяем плоскость цикла
+        SceneObject* hostObject = nullptr;
+        TopoDS_Face originalHostFace;
+        
         gp_Pln cyclePlane;
-        if (!ArePointsCoplanar(orderedVertices, cyclePlane)) return;
-
-        // 6. Создаем face по каноническому процессу
-        BRepBuilderAPI_MakeFace faceMaker(cyclePlane, wire, Standard_True);
-        if (!faceMaker.IsDone() || faceMaker.Face().IsNull()) return;
-        TopoDS_Face face = faceMaker.Face();
-
-        // 7. Создаем объект сцены для новой грани
-        std::string face_name = "AutoFace_" + std::to_string(next_face_id_++);
-        SceneObject* new_face_obj = create_object(face_name);
-        if (new_face_obj) {
-            new_face_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(face)));
-            UpdateObjectBoundary(new_face_obj);
-            Urbaxio::CadKernel::MeshBuffers mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_face_obj->get_shape());
-            if (!mesh_data.isEmpty()) {
-                new_face_obj->set_mesh_buffers(std::move(mesh_data));
+        if (ArePointsCoplanar(finalOrderedVertices, cyclePlane)) {
+            gp_Dir normalDir = cyclePlane.Axis().Direction();
+            glm::vec3 loopNormal(normalDir.X(), normalDir.Y(), normalDir.Z());
+            
+            for (const auto& [id, obj_ptr] : objects_) {
+                if (obj_ptr && obj_ptr->has_shape()) {
+                    TopoDS_Face foundFace = FindOriginalFace(*obj_ptr->get_shape(), finalOrderedVertices, loopNormal);
+                    if (!foundFace.IsNull()) {
+                        hostObject = obj_ptr.get();
+                        originalHostFace = foundFace;
+                        break; 
+                    }
+                }
             }
         }
-        lines_.at(newLineId).usedInFace = true;
-        for (uint64_t lineId : pathLineIDsCollector) {
-            lines_.at(lineId).usedInFace = true;
+
+        if (hostObject && !originalHostFace.IsNull()) {
+            std::cout << "Scene: Detected new loop on existing face of object " << hostObject->get_id() << ". Attempting PARAMETRIC split." << std::endl;
+            try {
+                ShapeFix_Shape shapeFixer(*hostObject->get_shape());
+                shapeFixer.Perform();
+                TopoDS_Shape healedShape = shapeFixer.Shape();
+                
+                Handle(ShapeBuild_ReShape) context = shapeFixer.Context();
+                TopoDS_Shape healedFaceShape = context->Apply(originalHostFace);
+                if (healedFaceShape.IsNull() || healedFaceShape.ShapeType() != TopAbs_FACE) {
+                     throw Standard_Failure("Could not re-find host face after healing.");
+                }
+                TopoDS_Face healedHostFace = TopoDS::Face(healedFaceShape);
+                
+                Handle(Geom_Surface) hostSurface = BRep_Tool::Surface(healedHostFace);
+                if (hostSurface.IsNull()) {
+                    throw Standard_Failure("Host face has no underlying surface.");
+                }
+                Handle(ShapeAnalysis_Surface) analysis = new ShapeAnalysis_Surface(hostSurface);
+
+                // --- Step 2: Create a list of topologically sound edges ---
+                TopTools_ListOfShape edgeList;
+                Standard_Real umin, umax, vmin, vmax;
+                hostSurface->Bounds(umin, umax, vmin, vmax);
+
+                for (size_t i = 0; i < finalOrderedVertices.size(); ++i) {
+                    const glm::vec3& v1_glm = finalOrderedVertices[i];
+                    const glm::vec3& v2_glm = finalOrderedVertices[(i + 1) % finalOrderedVertices.size()];
+                    
+                    gp_Pnt p1_3d(v1_glm.x, v1_glm.y, v1_glm.z);
+                    gp_Pnt p2_3d(v2_glm.x, v2_glm.y, v2_glm.z);
+                    if (p1_3d.IsEqual(p2_3d, Precision::Confusion())) continue;
+                    
+                    gp_Pnt2d uv1 = analysis->ValueOfUV(p1_3d, Precision::Confusion());
+                    gp_Pnt2d uv2 = analysis->ValueOfUV(p2_3d, Precision::Confusion());
+
+                    // Clamp UV coordinates to surface bounds to avoid floating point errors at the boundary
+                    uv1.SetX(std::max(umin, std::min(umax, uv1.X())));
+                    uv1.SetY(std::max(vmin, std::min(vmax, uv1.Y())));
+                    uv2.SetX(std::max(umin, std::min(umax, uv2.X())));
+                    uv2.SetY(std::max(vmin, std::min(vmax, uv2.Y())));
+                    
+                    if (uv1.IsEqual(uv2, Precision::Confusion())) continue;
+
+                    Handle(Geom2d_Line) pcurve = new Geom2d_Line(uv1, gp_Dir2d(uv2.X() - uv1.X(), uv2.Y() - uv1.Y()));
+                    // Use the constructor that takes parameters
+                    Standard_Real u_start = 0.0;
+                    Standard_Real u_end = uv1.Distance(uv2);
+                    BRepBuilderAPI_MakeEdge edgeMaker(pcurve, hostSurface, u_start, u_end);
+                    if (!edgeMaker.IsDone()) {
+                         std::stringstream ss;
+                         ss << "BRepBuilderAPI_MakeEdge failed for segment " << i << ". "
+                            << "From UV(" << uv1.X() << ", " << uv1.Y() << ") to UV(" << uv2.X() << ", " << uv2.Y() << ").";
+                         throw Standard_Failure(ss.str().c_str());
+                    }
+                    edgeList.Append(edgeMaker.Edge());
+                }
+                
+                // --- Step 3: Reliable Wire Assembly using ShapeFix_Wire ---
+                BRepBuilderAPI_MakeWire tempWireMaker;
+                tempWireMaker.Add(edgeList);
+
+                if (tempWireMaker.Wire().IsNull()) {
+                    throw Standard_Failure("BRepBuilderAPI_MakeWire failed to create even a disconnected wire.");
+                }
+
+                Handle(ShapeFix_Wire) wireFixer = new ShapeFix_Wire();
+                wireFixer->Init(tempWireMaker.Wire(), healedHostFace, Precision::Confusion());
+                if (!wireFixer->Perform()) {
+                    throw Standard_Failure("ShapeFix_Wire::Perform() returned false, indicating a critical failure.");
+                }
+
+                if (wireFixer->LastFixStatus(ShapeExtend_FAIL)) {
+                    throw Standard_Failure("ShapeFix_Wire could not fix all problems in the wire (e.g., gaps are too large).");
+                }
+
+                TopoDS_Wire cuttingWire = wireFixer->Wire();
+                if (cuttingWire.IsNull() || !BRep_Tool::IsClosed(cuttingWire)) {
+                    throw Standard_Failure("The final wire created by ShapeFix_Wire is not a single, closed loop.");
+                }
+
+                // --- CORRECTED SPLITTER LOGIC ---
+                BOPAlgo_Splitter splitter;
+                
+                TopTools_ListOfShape arguments;
+                arguments.Append(healedShape);
+                splitter.SetArguments(arguments);
+
+                TopTools_ListOfShape tools;
+                tools.Append(cuttingWire);
+                splitter.SetTools(tools);
+
+                splitter.Perform();
+
+                if (splitter.HasErrors()) {
+                    splitter.GetReport()->Dump(std::cout);
+                    throw Standard_Failure("BOPAlgo_Splitter failed to perform operation.");
+                }
+                hostObject->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(splitter.Shape())));
+                UpdateObjectBoundary(hostObject);
+                hostObject->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*hostObject->get_shape()));
+                hostObject->vao = 0;
+                std::cout << "Scene: Object " << hostObject->get_id() << " was successfully split and updated." << std::endl;
+            } catch (const Standard_Failure& e) {
+                std::cerr << "OCCT Exception during parametric split: " << e.GetMessageString() << std::endl;
+            }
+        } else {
+            // Fallback: This loop was not on an existing face. Create a new one.
+            // This is the logic for creating faces from sketches in empty space.
+            std::cout << "FindAndCreateFaces: Loop detected, but no suitable host face found. Creating a new independent face object." << std::endl;
+            CreateOCCTFace(finalOrderedVertices, cyclePlane);
+            lines_.at(newLineId).usedInFace = true;
+            for (uint64_t lineId : pathLineIDsCollector) {
+                lines_.at(lineId).usedInFace = true;
+            }
         }
     }
     
@@ -649,9 +742,15 @@ namespace Urbaxio::Engine {
                 bool allPointsOnFace = true;
                 for(const auto& v : faceVertices) {
                     BRepClass_FaceClassifier classifier;
-                    classifier.Perform(candidateFace, gp_Pnt(v.x, v.y, v.z), 1e-5);
-                    if(classifier.State() != TopAbs_ON && classifier.State() != TopAbs_IN) {
+                    classifier.Perform(candidateFace, gp_Pnt(v.x, v.y, v.z), 1e-4); // Increased tolerance
+                    TopAbs_State state = classifier.State();
+                    if(state != TopAbs_ON && state != TopAbs_IN) {
                         allPointsOnFace = false;
+                        // --- DEBUG PRINT ---
+                        std::cout << "FindOriginalFace DEBUG: Point (" << v.x << "," << v.y << "," << v.z 
+                                  << ") classified as " << state 
+                                  << " (ON=2, IN=1, OUT=0) relative to a candidate face. Rejecting face." << std::endl;
+                        // --- END DEBUG PRINT ---
                         break;
                     }
                 }

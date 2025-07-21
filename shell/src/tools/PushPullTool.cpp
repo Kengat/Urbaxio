@@ -21,19 +21,19 @@
 namespace { // Anonymous namespace for helpers
 
 // Re-using FindCoplanarAdjacentTriangles from SelectTool's anonymous namespace is tricky.
-// So, we'll just copy it here. In a real large-scale project, this would go into a shared utility header.
+// Так что просто копируем сюда улучшенную версию.
 std::vector<size_t> FindCoplanarAdjacentTriangles_ForPushPull(
     const Urbaxio::Engine::SceneObject& object,
     size_t startTriangleBaseIndex)
 {
     const auto& name = object.get_name();
     if (name == "CenterMarker" || name == "UnitSphereMarker" || name == "UnitCapsuleMarker") {
-        return {};
+        return { startTriangleBaseIndex };
     }
     const float NORMAL_DOT_TOLERANCE = 0.999f;
     const float PLANE_DIST_TOLERANCE = 1e-4f;
     const auto& mesh = object.get_mesh_buffers();
-    if (!object.has_mesh() || startTriangleBaseIndex + 2 >= mesh.indices.size()) { return {}; }
+    if (!object.has_mesh() || startTriangleBaseIndex + 2 >= mesh.indices.size()) { return { startTriangleBaseIndex }; }
     std::map<std::pair<unsigned int, unsigned int>, std::vector<size_t>> edgeToTriangles;
     for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
         unsigned int v_indices[3] = { mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2] };
