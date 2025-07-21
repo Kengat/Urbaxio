@@ -712,11 +712,16 @@ namespace Urbaxio::Engine {
     TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal) {
         if (faceVertices.empty()) return TopoDS_Face();
         
-        gp_Dir targetNormal(faceNormal.x, faceNormal.y, faceNormal.z);
+        // Find center of user-provided points
+        glm::vec3 targetCenter(0.0f);
+        for(const auto& v : faceVertices) {
+            targetCenter += v;
+        }
+        targetCenter /= (float)faceVertices.size();
         
         struct FaceCandidate {
             TopoDS_Face face;
-            float score = 0.0f;
+            float distance = std::numeric_limits<float>::max();
         };
         
         std::vector<FaceCandidate> candidates;
@@ -729,36 +734,26 @@ namespace Urbaxio::Engine {
                 BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_False);
                 if(surfaceAdaptor.GetType() != GeomAbs_Plane) continue;
 
-                // 1. Check Normal
-                gp_Pln plane = surfaceAdaptor.Plane();
-                gp_Dir occtNormal = plane.Axis().Direction();
-                if (candidateFace.Orientation() == TopAbs_REVERSED) {
-                    occtNormal.Reverse();
-                }
-                
-                bool normalMatches = occtNormal.IsParallel(targetNormal, 0.1); 
-                
-                // 2. Check if all loop points are on or inside the face
+                // Check if all loop points are on or inside the face
                 bool allPointsOnFace = true;
                 for(const auto& v : faceVertices) {
                     BRepClass_FaceClassifier classifier;
-                    classifier.Perform(candidateFace, gp_Pnt(v.x, v.y, v.z), 1e-4); // Increased tolerance
+                    // Use a slightly larger tolerance for classification
+                    classifier.Perform(candidateFace, gp_Pnt(v.x, v.y, v.z), 1e-4); 
                     TopAbs_State state = classifier.State();
                     if(state != TopAbs_ON && state != TopAbs_IN) {
                         allPointsOnFace = false;
-                        // --- DEBUG PRINT ---
-                        std::cout << "FindOriginalFace DEBUG: Point (" << v.x << "," << v.y << "," << v.z 
-                                  << ") classified as " << state 
-                                  << " (ON=2, IN=1, OUT=0) relative to a candidate face. Rejecting face." << std::endl;
-                        // --- END DEBUG PRINT ---
                         break;
                     }
                 }
                 
                 if (allPointsOnFace) {
-                    float score = 1.0f; // Base score for being a valid host
-                    if (normalMatches) score += 1.0f; // Bonus for normal match
-                    candidates.push_back({candidateFace, score});
+                    // This is a valid candidate, calculate its distance to the target
+                    GProp_GProps props;
+                    BRepGProp::SurfaceProperties(candidateFace, props);
+                    gp_Pnt center = props.CentreOfMass();
+                    float dist = (float)center.Distance(gp_Pnt(targetCenter.x, targetCenter.y, targetCenter.z));
+                    candidates.push_back({candidateFace, dist});
                 }
             } catch (const Standard_Failure&) {
                 continue;
@@ -769,8 +764,9 @@ namespace Urbaxio::Engine {
             return TopoDS_Face();
         }
         
+        // Sort candidates by distance, closest first
         std::sort(candidates.begin(), candidates.end(), [](const FaceCandidate& a, const FaceCandidate& b) {
-            return a.score > b.score;
+            return a.distance < b.distance;
         });
         
         return candidates[0].face;
@@ -866,7 +862,29 @@ namespace Urbaxio::Engine {
         }
 
         try {
-            gp_Vec extrudeVector(direction.x * distance, direction.y * distance, direction.z * distance);
+            // --- CORRECTED LOGIC ---
+            // 1. Get the mathematical normal of the face's underlying surface
+            BRepAdaptor_Surface surfaceAdaptor(faceToExtrude, Standard_True);
+            gp_Pln plane = surfaceAdaptor.Plane();
+            gp_Dir occtFaceNormal = plane.Axis().Direction();
+            
+            // 2. Adjust for the face's orientation
+            if (faceToExtrude.Orientation() == TopAbs_REVERSED) {
+                occtFaceNormal.Reverse();
+            }
+
+            // 3. Compare with the user's intended direction
+            gp_Dir userDirection(direction.x, direction.y, direction.z);
+            float dotProductWithUserDir = occtFaceNormal.Dot(userDirection);
+
+            // 4. Create the final extrusion vector. If user direction is opposite to the face normal,
+            // we must extrude in the opposite direction of the normal to achieve the user's goal.
+            gp_Vec extrudeVector(occtFaceNormal.XYZ());
+            if (dotProductWithUserDir < 0) {
+                extrudeVector.Reverse();
+            }
+            extrudeVector *= distance;
+            
             BRepPrimAPI_MakePrism prismMaker(faceToExtrude, extrudeVector);
             
             if (!prismMaker.IsDone()) {
