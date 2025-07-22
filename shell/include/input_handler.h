@@ -3,10 +3,12 @@
 #include <SDL2/SDL_events.h>
 #include <SDL2/SDL_video.h>
 #include <glm/glm.hpp>
+#include <engine/scene.h> // <-- FIX: Include the full definition instead of forward declaring
 
 // Forward declarations
 namespace Urbaxio { 
-    class Camera; 
+    class Camera;
+    // namespace Urbaxio::Engine { class Scene; } // No longer needed
     namespace Tools { class ToolManager; }
 }
 
@@ -22,7 +24,9 @@ namespace Urbaxio {
             bool& should_quit,
             SDL_Window* window,
             // The tool manager to forward events to
-            Tools::ToolManager& toolManager
+            Tools::ToolManager& toolManager,
+            // Scene for global actions like Undo/Redo
+            Urbaxio::Engine::Scene* scene
         );
         
         // This function is useful for getting a fallback cursor position

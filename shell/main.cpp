@@ -109,7 +109,7 @@ int main(int argc, char* argv[]) {
         }
         
         // --- Process Input ---
-        inputHandler.ProcessEvents(camera, should_quit, window, toolManager);
+        inputHandler.ProcessEvents(camera, should_quit, window, toolManager, scene_ptr);
 
         // --- Update Active Tool ---
         toolManager.OnUpdate(currentSnap);

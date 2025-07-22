@@ -17,6 +17,8 @@
 #include <set>
 #include <map>
 #include <list>
+#include "engine/commands/PushPullCommand.h"
+#include <memory> // For std::make_unique
 
 namespace { // Anonymous namespace for helpers
 
@@ -250,7 +252,19 @@ void PushPullTool::OnUpdate(const SnapResult& snap) {
 
 void PushPullTool::finalizePushPull(bool ctrl) {
     if (context.scene && pushPull_objId != 0) {
-        context.scene->ExtrudeFace(pushPull_objId, pushPull_faceIndices, pushPull_faceNormal, pushPullCurrentDistance, ctrl);
+        // Don't create a command for a zero-distance operation
+        if (std::abs(pushPullCurrentDistance) > 1e-4) {
+            // Create and execute the command instead of calling ExtrudeFace directly
+            auto command = std::make_unique<Engine::PushPullCommand>(
+                context.scene, 
+                pushPull_objId, 
+                pushPull_faceIndices, 
+                pushPull_faceNormal, 
+                pushPullCurrentDistance,
+                ctrl // This is the 'disableMerge' flag
+            );
+            context.scene->getCommandManager()->ExecuteCommand(std::move(command));
+        }
     }
     reset();
 }

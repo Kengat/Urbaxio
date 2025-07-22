@@ -11,6 +11,7 @@
 #include <set> // For visited segments in DFS
 #include <glm/glm.hpp>
 #include "engine/line.h" // Include the new Line struct
+#include "engine/commands/CommandManager.h" // <-- NEW
 
 // Forward declare OCCT types to avoid including heavy headers here
 class gp_Pln;
@@ -68,6 +69,13 @@ namespace Urbaxio::Engine {
         void ClearScene();
         void TestFaceSplitting();
 
+        // --- Undo/Redo System ---
+        CommandManager* getCommandManager();
+
+        // --- Geometry Synchronization ---
+        // Needs to be public so that commands can trigger an update after modifying a shape.
+        void UpdateObjectBoundary(SceneObject* obj);
+
     private:
         std::unordered_map<uint64_t, std::unique_ptr<SceneObject>> objects_;
         uint64_t next_object_id_ = 1;
@@ -83,7 +91,6 @@ namespace Urbaxio::Engine {
         
         // --- NEW: Geometry Synchronization ---
         std::vector<std::pair<glm::vec3, glm::vec3>> ExtractEdgesFromShape(const TopoDS_Shape& shape);
-        void UpdateObjectBoundary(SceneObject* obj);
         
         // --- Intersection Helper ---
         static bool LineSegmentIntersection(
@@ -116,6 +123,9 @@ namespace Urbaxio::Engine {
 
         // --- Test Helpers ---
         SceneObject* CreateRectangularFace(const std::string& name, const gp_Pnt& p1, const gp_Pnt& p2, const gp_Pnt& p3, const gp_Pnt& p4);
+
+        // --- NEW: Command Manager ---
+        std::unique_ptr<CommandManager> commandManager_;
     };
 
 }

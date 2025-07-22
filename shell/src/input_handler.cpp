@@ -38,7 +38,8 @@ namespace Urbaxio {
         Urbaxio::Camera& camera,
         bool& should_quit,
         SDL_Window* window,
-        Tools::ToolManager& toolManager
+        Tools::ToolManager& toolManager,
+        Urbaxio::Engine::Scene* scene // <-- FIX: Added missing parameter to match declaration
     ) {
         SDL_Event event; 
         ImGuiIO& io = ImGui::GetIO();
@@ -76,16 +77,24 @@ namespace Urbaxio {
                 }
                 
                 case SDL_KEYDOWN:
-                    shiftDown = event.key.keysym.mod & KMOD_SHIFT;
-                    ctrlDown = event.key.keysym.mod & KMOD_CTRL;
+                    // DO NOT update modifier states from event.key.keysym.mod here.
+                    // The keyboardState check at the top of ProcessEvents is more reliable.
                     if (!wantCaptureKeyboard) {
-                        toolManager.OnKeyDown(event.key.keysym.sym, shiftDown, ctrlDown);
+                        // --- Undo/Redo ---
+                        if (ctrlDown && event.key.keysym.sym == SDLK_z) {
+                            scene->getCommandManager()->Undo();
+                        } else if (ctrlDown && event.key.keysym.sym == SDLK_y) {
+                            scene->getCommandManager()->Redo();
+                        } else {
+                            // Forward other key presses to the active tool
+                            toolManager.OnKeyDown(event.key.keysym.sym, shiftDown, ctrlDown);
+                        }
                     }
                     break;
 
                 case SDL_KEYUP:
-                    shiftDown = event.key.keysym.mod & KMOD_SHIFT;
-                    ctrlDown = event.key.keysym.mod & KMOD_CTRL;
+                    // We don't need to do anything here anymore, the state will be re-evaluated
+                    // at the start of the next frame.
                     break;
                 
                 case SDL_MOUSEBUTTONDOWN:

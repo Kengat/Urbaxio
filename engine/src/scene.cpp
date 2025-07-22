@@ -103,8 +103,14 @@ namespace Urbaxio::Engine {
         return glm::all(glm::epsilonEqual(a, b, Urbaxio::SCENE_POINT_EQUALITY_TOLERANCE));
     }
 
-    Scene::Scene() {}
+    Scene::Scene() {
+        commandManager_ = std::make_unique<CommandManager>();
+    }
     Scene::~Scene() = default;
+
+    CommandManager* Scene::getCommandManager() {
+        return commandManager_.get();
+    }
 
     SceneObject* Scene::create_object(const std::string& name) { uint64_t new_id = next_object_id_++; auto result = objects_.emplace(new_id, std::make_unique<SceneObject>(new_id, name)); if (result.second) { return result.first->second.get(); } else { std::cerr << "Scene: Failed to insert new object with ID " << new_id << " into map." << std::endl; next_object_id_--; return nullptr; } }
     SceneObject* Scene::create_box_object(const std::string& name, double dx, double dy, double dz) { SceneObject* new_obj = create_object(name); if (!new_obj) { return nullptr; } Urbaxio::CadKernel::OCCT_ShapeUniquePtr box_shape_ptr = Urbaxio::CadKernel::create_box(dx, dy, dz); if (!box_shape_ptr) { return nullptr; } const TopoDS_Shape* shape_to_triangulate = box_shape_ptr.get(); if (!shape_to_triangulate || shape_to_triangulate->IsNull()) { return nullptr; } new_obj->set_shape(std::move(box_shape_ptr)); UpdateObjectBoundary(new_obj); Urbaxio::CadKernel::MeshBuffers mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_obj->get_shape()); if (!mesh_data.isEmpty()) { new_obj->set_mesh_buffers(std::move(mesh_data)); } else { std::cerr << "Scene: Warning - Triangulation failed for box '" << name << "'." << std::endl; } return new_obj; }
@@ -967,8 +973,10 @@ namespace Urbaxio::Engine {
         lines_.clear();
         vertexAdjacency_.clear();
         next_line_id_ = 1;
+        
+        commandManager_->ClearHistory(); // <-- NEW
 
-        std::cout << "Scene: Cleared all objects and lines from engine state." << std::endl;
+        std::cout << "Scene: Cleared all objects, lines and command history from engine state." << std::endl;
     }
     
     // Helper to create a simple rectangular face object for testing.
