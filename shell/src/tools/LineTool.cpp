@@ -11,6 +11,8 @@
 #include <string>
 #include <cstring>
 #include <iostream>
+#include "engine/commands/CreateLineCommand.h" // <-- NEW
+#include <memory> // For std::make_unique
 
 namespace { // Anonymous namespace for helpers
 
@@ -230,8 +232,18 @@ void LineTool::OnUpdate(const SnapResult& snap) {
 
 void LineTool::finalizeLine(const glm::vec3& endPoint) {
     if (glm::distance2(currentLineStartPoint, endPoint) > 1e-6f) {
-        context.scene->AddUserLine(currentLineStartPoint, endPoint);
+        // OLD WAY:
+        // context.scene->AddUserLine(currentLineStartPoint, endPoint);
+        
+        // NEW WAY: Create and execute a command
+        auto command = std::make_unique<Engine::CreateLineCommand>(
+            context.scene, 
+            currentLineStartPoint, 
+            endPoint
+        );
+        context.scene->getCommandManager()->ExecuteCommand(std::move(command));
     }
+    // Reset for the next line
     isPlacingSecondPoint = false;
     isPlacingFirstPoint = true;
     isAxisLocked = false;

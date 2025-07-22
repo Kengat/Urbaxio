@@ -66,6 +66,9 @@
 #include <ShapeFix_Wire.hxx> // NEW: Include for wire healing
 #include <ShapeExtend_Status.hxx> // NEW: Include for status flags
 
+#include <sstream> // For stringstream
+#include <BinTools.hxx> // For serialization
+
 
 namespace { // Anonymous namespace for utility functions
     bool PointOnLineSegment(const glm::vec3& p, const glm::vec3& a, const glm::vec3& b) {
@@ -110,6 +113,87 @@ namespace Urbaxio::Engine {
 
     CommandManager* Scene::getCommandManager() {
         return commandManager_.get();
+    }
+
+    // --- NEW: Scene Memento Implementation ---
+    std::unique_ptr<SceneState> Scene::CaptureState() {
+        auto state = std::make_unique<SceneState>();
+        
+        // Capture simple map states
+        state->lines = lines_;
+        state->vertexAdjacency = vertexAdjacency_;
+        state->nextLineId = next_line_id_;
+        
+        // Capture object geometry by serializing shapes
+        for (const auto& [id, obj_ptr] : objects_) {
+            if (obj_ptr && obj_ptr->has_shape()) {
+                const TopoDS_Shape* shape = obj_ptr->get_shape();
+                if (shape && !shape->IsNull()) {
+                    std::stringstream ss;
+                    try {
+                        BinTools::Write(*shape, ss);
+                        std::string const& s = ss.str();
+                        state->serializedObjects[id] = std::vector<char>(s.begin(), s.end());
+                    } catch (...) {
+                        std::cerr << "Scene::CaptureState: Failed to serialize shape for object " << id << std::endl;
+                    }
+                }
+            }
+        }
+        return state;
+    }
+    
+    void Scene::RestoreState(const SceneState& state) {
+        // Restore simple map states
+        lines_ = state.lines;
+        vertexAdjacency_ = state.vertexAdjacency;
+        next_line_id_ = state.nextLineId;
+
+        // Restore objects. This is more complex.
+        // We need to delete objects that are no longer in the state,
+        // add new ones, and update existing ones.
+        
+        // 1. Collect IDs from the new state
+        std::set<uint64_t> newStateObjectIds;
+        for (const auto& [id, data] : state.serializedObjects) {
+            newStateObjectIds.insert(id);
+        }
+
+        // 2. Remove objects that are in the current scene but not in the new state
+        for (auto it = objects_.begin(); it != objects_.end(); ) {
+            if (newStateObjectIds.find(it->first) == newStateObjectIds.end()) {
+                it = objects_.erase(it); // Erase and advance iterator
+            } else {
+                ++it;
+            }
+        }
+        
+        // 3. Update existing objects and add new ones
+        for (const auto& [id, data] : state.serializedObjects) {
+            SceneObject* obj = get_object_by_id(id);
+            if (!obj) {
+                // This object didn't exist, so we assume it was an auto-created face.
+                // We'll create a placeholder object. Name is lost, but geometry is preserved.
+                obj = create_object("RestoredObject_" + std::to_string(id));
+            }
+
+            if (obj) {
+                TopoDS_Shape restoredShape;
+                std::stringstream ss(std::string(data.begin(), data.end()));
+                try {
+                    BinTools::Read(restoredShape, ss);
+                    obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(restoredShape)));
+                    obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*obj->get_shape()));
+                    obj->vao = 0; // Mark for GPU re-upload
+                    
+                    // The boundary lines are implicitly restored via the lines_ map,
+                    // but we should still sync the object's internal set of line IDs.
+                    UpdateObjectBoundary(obj);
+                } catch(...) {
+                    std::cerr << "Scene::RestoreState: Failed to deserialize shape for object " << id << std::endl;
+                }
+            }
+        }
     }
 
     SceneObject* Scene::create_object(const std::string& name) { uint64_t new_id = next_object_id_++; auto result = objects_.emplace(new_id, std::make_unique<SceneObject>(new_id, name)); if (result.second) { return result.first->second.get(); } else { std::cerr << "Scene: Failed to insert new object with ID " << new_id << " into map." << std::endl; next_object_id_--; return nullptr; } }

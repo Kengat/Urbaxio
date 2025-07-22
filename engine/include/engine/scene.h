@@ -8,17 +8,17 @@
 #include <vector>
 #include <map>
 #include <utility>
-#include <set> // For visited segments in DFS
+#include <set>
 #include <glm/glm.hpp>
-#include "engine/line.h" // Include the new Line struct
-#include "engine/commands/CommandManager.h" // <-- NEW
+#include "engine/line.h"
+#include "engine/commands/CommandManager.h"
 
-// Forward declare OCCT types to avoid including heavy headers here
+// Forward declare OCCT types
 class gp_Pln;
-class gp_Pnt; // <-- ADDED for helper function
+class gp_Pnt;
 class TopoDS_Shape;
 class TopoDS_Face;
-class TopoDS_Edge; // <-- ADDED for helper function
+class TopoDS_Edge;
 
 namespace Urbaxio::Engine { class SceneObject; }
 
@@ -37,6 +37,15 @@ namespace Urbaxio {
 
 namespace Urbaxio::Engine {
 
+    // Memento for capturing the topological state of the scene.
+    // Full definition is here.
+    struct SceneState {
+        std::map<uint64_t, Line> lines;
+        std::map<glm::vec3, std::vector<uint64_t>, Urbaxio::Vec3Comparator> vertexAdjacency;
+        std::unordered_map<uint64_t, std::vector<char>> serializedObjects;
+        uint64_t nextLineId;
+    };
+
     class Scene {
     public:
         Scene();
@@ -53,7 +62,12 @@ namespace Urbaxio::Engine {
         const SceneObject* get_object_by_id(uint64_t id) const;
         std::vector<SceneObject*> get_all_objects();
         std::vector<const SceneObject*> get_all_objects() const;
-        void DeleteObject(uint64_t id); // <-- NEW
+        void DeleteObject(uint64_t id);
+
+        // --- Undo/Redo System ---
+        CommandManager* getCommandManager();
+        std::unique_ptr<SceneState> CaptureState();
+        void RestoreState(const SceneState& state);
 
         // --- Line Management ---
         void AddUserLine(const glm::vec3& start, const glm::vec3& end);
@@ -61,45 +75,39 @@ namespace Urbaxio::Engine {
         const std::map<uint64_t, Line>& GetAllLines() const;
         glm::vec3 SplitLineAtPoint(uint64_t lineId, const glm::vec3& splitPoint);
 
-
         // --- Geometry Modification ---
         bool ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance, bool disableMerge = false);
 
-        // --- NEW: Testing Infrastructure ---
+        // --- Geometry Synchronization ---
+        void UpdateObjectBoundary(SceneObject* obj);
+
+        // --- Testing Infrastructure ---
         void ClearScene();
         void TestFaceSplitting();
-
-        // --- Undo/Redo System ---
-        CommandManager* getCommandManager();
-
-        // --- Geometry Synchronization ---
-        // Needs to be public so that commands can trigger an update after modifying a shape.
-        void UpdateObjectBoundary(SceneObject* obj);
 
     private:
         std::unordered_map<uint64_t, std::unique_ptr<SceneObject>> objects_;
         uint64_t next_object_id_ = 1;
-        int next_face_id_ = 1; // For naming created faces
+        int next_face_id_ = 1;
 
         std::map<uint64_t, Line> lines_;
         uint64_t next_line_id_ = 1;
         std::map<glm::vec3, std::vector<uint64_t>, Urbaxio::Vec3Comparator> vertexAdjacency_;
         
+        std::unique_ptr<CommandManager> commandManager_;
+
         uint64_t AddSingleLineSegment(const glm::vec3& start, const glm::vec3& end);
         void RemoveLine(uint64_t lineId);
         glm::vec3 MergeOrAddVertex(const glm::vec3& p);
         
-        // --- NEW: Geometry Synchronization ---
         std::vector<std::pair<glm::vec3, glm::vec3>> ExtractEdgesFromShape(const TopoDS_Shape& shape);
         
-        // --- Intersection Helper ---
         static bool LineSegmentIntersection(
             const glm::vec3& p1, const glm::vec3& p2,
             const glm::vec3& p3, const glm::vec3& p4,
             glm::vec3& out_intersection_point
         );
         
-        // --- Face Creation Logic ---
         void FindAndCreateFaces(uint64_t newLineId);
         bool PerformDFS(
             const glm::vec3& startNode,
@@ -114,18 +122,10 @@ namespace Urbaxio::Engine {
         bool ArePointsCoplanar(const std::vector<glm::vec3>& points, gp_Pln& outPlane);
         void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
         
-        // --- Face Splitting Logic ---
-        // Removed FindHostFaceForLine - no longer needed with simplified architecture
-
-        // --- Push/Pull Helpers ---
         TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal);
         void AnalyzeShape(const TopoDS_Shape& shape, const std::string& label);
 
-        // --- Test Helpers ---
         SceneObject* CreateRectangularFace(const std::string& name, const gp_Pnt& p1, const gp_Pnt& p2, const gp_Pnt& p3, const gp_Pnt& p4);
-
-        // --- NEW: Command Manager ---
-        std::unique_ptr<CommandManager> commandManager_;
     };
 
 }
