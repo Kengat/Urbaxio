@@ -39,10 +39,17 @@ namespace Urbaxio::Engine {
 
     // Memento for capturing the topological state of the scene.
     // Full definition is here.
+    struct ObjectState {
+        uint64_t id;
+        std::string name;
+        std::vector<char> serializedShape; // Empty if object has no shape
+    };
+    
     struct SceneState {
         std::map<uint64_t, Line> lines;
         std::map<glm::vec3, std::vector<uint64_t>, Urbaxio::Vec3Comparator> vertexAdjacency;
-        std::unordered_map<uint64_t, std::vector<char>> serializedObjects;
+        std::map<uint64_t, ObjectState> objects; // Changed to a map of a new struct
+        uint64_t nextObjectId;
         uint64_t nextLineId;
     };
 
@@ -76,7 +83,10 @@ namespace Urbaxio::Engine {
         glm::vec3 SplitLineAtPoint(uint64_t lineId, const glm::vec3& splitPoint);
 
         // --- Geometry Modification ---
+        // Old version for direct calls (e.g. from tests or tools not using commands)
         bool ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance, bool disableMerge = false);
+        // NEW robust version for commands, using geometric data. This will be the main implementation.
+        bool ExtrudeFace(uint64_t objectId, const std::vector<glm::vec3>& faceVertices, const glm::vec3& direction, float distance, bool disableMerge = false);
 
         // --- Geometry Synchronization ---
         void UpdateObjectBoundary(SceneObject* obj);
@@ -84,6 +94,10 @@ namespace Urbaxio::Engine {
         // --- Testing Infrastructure ---
         void ClearScene();
         void TestFaceSplitting();
+
+        // --- Finders ---
+        // Public helper to find an object containing a specific face
+        SceneObject* FindObjectByFace(const std::vector<glm::vec3>& faceVertices);
 
     private:
         std::unordered_map<uint64_t, std::unique_ptr<SceneObject>> objects_;

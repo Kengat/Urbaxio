@@ -252,16 +252,34 @@ void PushPullTool::OnUpdate(const SnapResult& snap) {
 
 void PushPullTool::finalizePushPull(bool ctrl) {
     if (context.scene && pushPull_objId != 0) {
-        // Don't create a command for a zero-distance operation
         if (std::abs(pushPullCurrentDistance) > 1e-4) {
-            // Create and execute the command instead of calling ExtrudeFace directly
-            auto command = std::make_unique<Engine::PushPullCommand>(
+            
+            Urbaxio::Engine::SceneObject* obj = context.scene->get_object_by_id(pushPull_objId);
+            if (!obj) { reset(); return; }
+            
+            const auto& mesh = obj->get_mesh_buffers();
+            std::set<unsigned int> uniqueVertIndices;
+            for (size_t baseIdx : pushPull_faceIndices) {
+                uniqueVertIndices.insert(mesh.indices[baseIdx]);
+                uniqueVertIndices.insert(mesh.indices[baseIdx + 1]);
+                uniqueVertIndices.insert(mesh.indices[baseIdx + 2]);
+            }
+            
+            std::vector<glm::vec3> faceVertices;
+            for (unsigned int vIdx : uniqueVertIndices) {
+                faceVertices.push_back({
+                    mesh.vertices[vIdx * 3],
+                    mesh.vertices[vIdx * 3 + 1],
+                    mesh.vertices[vIdx * 3 + 2]
+                });
+            }
+
+            auto command = std::make_unique<Urbaxio::Engine::PushPullCommand>(
                 context.scene, 
-                pushPull_objId, 
-                pushPull_faceIndices, 
-                pushPull_faceNormal, 
+                faceVertices,
+                pushPull_faceNormal,
                 pushPullCurrentDistance,
-                ctrl // This is the 'disableMerge' flag
+                ctrl
             );
             context.scene->getCommandManager()->ExecuteCommand(std::move(command));
         }

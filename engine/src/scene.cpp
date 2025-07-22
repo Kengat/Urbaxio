@@ -119,79 +119,70 @@ namespace Urbaxio::Engine {
     std::unique_ptr<SceneState> Scene::CaptureState() {
         auto state = std::make_unique<SceneState>();
         
-        // Capture simple map states
-        state->lines = lines_;
-        state->vertexAdjacency = vertexAdjacency_;
-        state->nextLineId = next_line_id_;
+        state->lines = this->lines_;
+        state->vertexAdjacency = this->vertexAdjacency_;
+        state->nextObjectId = this->next_object_id_;
+        state->nextLineId = this->next_line_id_;
         
-        // Capture object geometry by serializing shapes
-        for (const auto& [id, obj_ptr] : objects_) {
-            if (obj_ptr && obj_ptr->has_shape()) {
+        for (const auto& [id, obj_ptr] : this->objects_) {
+            ObjectState objState;
+            objState.id = id;
+            objState.name = obj_ptr->get_name();
+            if (obj_ptr->has_shape()) {
                 const TopoDS_Shape* shape = obj_ptr->get_shape();
                 if (shape && !shape->IsNull()) {
                     std::stringstream ss;
                     try {
                         BinTools::Write(*shape, ss);
                         std::string const& s = ss.str();
-                        state->serializedObjects[id] = std::vector<char>(s.begin(), s.end());
-                    } catch (...) {
-                        std::cerr << "Scene::CaptureState: Failed to serialize shape for object " << id << std::endl;
-                    }
+                        objState.serializedShape = std::vector<char>(s.begin(), s.end());
+                    } catch (...) { /* error */ }
                 }
             }
+            state->objects[id] = objState;
         }
         return state;
     }
     
     void Scene::RestoreState(const SceneState& state) {
-        // Restore simple map states
-        lines_ = state.lines;
-        vertexAdjacency_ = state.vertexAdjacency;
-        next_line_id_ = state.nextLineId;
+        this->lines_ = state.lines;
+        this->vertexAdjacency_ = state.vertexAdjacency;
+        this->next_object_id_ = state.nextObjectId;
+        this->next_line_id_ = state.nextLineId;
 
-        // Restore objects. This is more complex.
-        // We need to delete objects that are no longer in the state,
-        // add new ones, and update existing ones.
-        
-        // 1. Collect IDs from the new state
         std::set<uint64_t> newStateObjectIds;
-        for (const auto& [id, data] : state.serializedObjects) {
+        for (const auto& [id, objState] : state.objects) {
             newStateObjectIds.insert(id);
         }
 
-        // 2. Remove objects that are in the current scene but not in the new state
-        for (auto it = objects_.begin(); it != objects_.end(); ) {
+        for (auto it = this->objects_.begin(); it != this->objects_.end(); ) {
             if (newStateObjectIds.find(it->first) == newStateObjectIds.end()) {
-                it = objects_.erase(it); // Erase and advance iterator
-            } else {
-                ++it;
-            }
+                it = this->objects_.erase(it);
+            } else { ++it; }
         }
         
-        // 3. Update existing objects and add new ones
-        for (const auto& [id, data] : state.serializedObjects) {
-            SceneObject* obj = get_object_by_id(id);
+        for (const auto& [id, objState] : state.objects) {
+            SceneObject* obj = this->get_object_by_id(id);
             if (!obj) {
-                // This object didn't exist, so we assume it was an auto-created face.
-                // We'll create a placeholder object. Name is lost, but geometry is preserved.
-                obj = create_object("RestoredObject_" + std::to_string(id));
+                obj = this->create_object(objState.name);
+                // Note: create_object assigns a new ID, but for undo/redo we want to preserve the original ID.
+                // This would require a custom object creation for full fidelity, but for now we ensure the object exists.
             }
 
-            if (obj) {
+            if (!objState.serializedShape.empty()) {
                 TopoDS_Shape restoredShape;
-                std::stringstream ss(std::string(data.begin(), data.end()));
+                std::stringstream ss(std::string(objState.serializedShape.begin(), objState.serializedShape.end()));
                 try {
                     BinTools::Read(restoredShape, ss);
                     obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(restoredShape)));
                     obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*obj->get_shape()));
-                    obj->vao = 0; // Mark for GPU re-upload
-                    
-                    // The boundary lines are implicitly restored via the lines_ map,
-                    // but we should still sync the object's internal set of line IDs.
-                    UpdateObjectBoundary(obj);
-                } catch(...) {
-                    std::cerr << "Scene::RestoreState: Failed to deserialize shape for object " << id << std::endl;
-                }
+                    obj->vao = 0;
+                    this->UpdateObjectBoundary(obj);
+                } catch(...) { /* error */ }
+            } else if (obj->has_shape()) {
+                obj->set_shape(nullptr);
+                obj->set_mesh_buffers({});
+                obj->vao = 0;
             }
         }
     }
@@ -926,14 +917,11 @@ namespace Urbaxio::Engine {
     
     bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance, bool disableMerge) {
         SceneObject* obj = get_object_by_id(objectId);
-        if (!obj || !obj->has_shape() || faceTriangleIndices.empty() || std::abs(distance) < 1e-4) {
+        if (!obj || !obj->has_shape() || faceTriangleIndices.empty()) {
             return false;
         }
 
         const auto& mesh = obj->get_mesh_buffers();
-        const TopoDS_Shape* originalShape = obj->get_shape();
-        AnalyzeShape(*originalShape, "ORIGINAL SHAPE");
-
         std::set<unsigned int> faceVertexIndicesSet;
         for (size_t baseIdx : faceTriangleIndices) {
             faceVertexIndicesSet.insert(mesh.indices[baseIdx]);
@@ -945,6 +933,20 @@ namespace Urbaxio::Engine {
             faceVertices.push_back({mesh.vertices[idx * 3], mesh.vertices[idx * 3 + 1], mesh.vertices[idx * 3 + 2]});
         }
         
+        return ExtrudeFace(objectId, faceVertices, direction, distance, disableMerge);
+    }
+
+    bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<glm::vec3>& faceVertices, const glm::vec3& direction, float distance, bool disableMerge) {
+        SceneObject* obj = get_object_by_id(objectId);
+        if (!obj || !obj->has_shape() || faceVertices.empty()) {
+            return false;
+        }
+        if (std::abs(distance) < 1e-4) {
+            return true;
+        }
+
+        const TopoDS_Shape* originalShape = obj->get_shape();
+        
         TopoDS_Face faceToExtrude = FindOriginalFace(*originalShape, faceVertices, direction);
         if (faceToExtrude.IsNull()) {
             std::cerr << "ExtrudeFace Error: Could not find corresponding B-Rep face." << std::endl;
@@ -952,23 +954,17 @@ namespace Urbaxio::Engine {
         }
 
         try {
-            // --- CORRECTED LOGIC ---
-            // 1. Get the mathematical normal of the face's underlying surface
             BRepAdaptor_Surface surfaceAdaptor(faceToExtrude, Standard_True);
             gp_Pln plane = surfaceAdaptor.Plane();
             gp_Dir occtFaceNormal = plane.Axis().Direction();
             
-            // 2. Adjust for the face's orientation
             if (faceToExtrude.Orientation() == TopAbs_REVERSED) {
                 occtFaceNormal.Reverse();
             }
 
-            // 3. Compare with the user's intended direction
             gp_Dir userDirection(direction.x, direction.y, direction.z);
             float dotProductWithUserDir = occtFaceNormal.Dot(userDirection);
 
-            // 4. Create the final extrusion vector. If user direction is opposite to the face normal,
-            // we must extrude in the opposite direction of the normal to achieve the user's goal.
             gp_Vec extrudeVector(occtFaceNormal.XYZ());
             if (dotProductWithUserDir < 0) {
                 extrudeVector.Reverse();
@@ -982,11 +978,9 @@ namespace Urbaxio::Engine {
                 return false;
             }
             TopoDS_Shape prismShape = prismMaker.Shape();
-            AnalyzeShape(prismShape, "CREATED PRISM");
             
             TopoDS_Shape finalShape;
             
-            // --- UNIVERSAL 3D BODY DETECTION ---
             bool is3DBody = (originalShape->ShapeType() == TopAbs_SOLID || originalShape->ShapeType() == TopAbs_COMPSOLID);
             if (!is3DBody && originalShape->ShapeType() == TopAbs_COMPOUND) {
                 TopExp_Explorer ex(*originalShape, TopAbs_SOLID);
@@ -994,33 +988,23 @@ namespace Urbaxio::Engine {
             }
             
             if (is3DBody) {
-                BRepAdaptor_Surface surfaceAdaptor(faceToExtrude, Standard_True);
-                gp_Pln plane = surfaceAdaptor.Plane();
-                gp_Dir occtFaceNormal = plane.Axis().Direction();
-                if (faceToExtrude.Orientation() == TopAbs_REVERSED) {
-                    occtFaceNormal.Reverse();
-                }
                 double dotProduct = extrudeVector.Dot(gp_Vec(occtFaceNormal));
-                std::cout << "Scene: Push/Pull on 3D Body. Normal dot extrusion vector = " << dotProduct << std::endl;
                 if (dotProduct >= -1e-6) {
-                    std::cout << "Scene: Push/Pull - Detected outward extrusion. Using Fuse operation." << std::endl;
                     BRepAlgoAPI_Fuse fuseAlgo(*originalShape, prismShape);
                     if (!fuseAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Fuse failed." << std::endl; return false; }
                     finalShape = fuseAlgo.Shape();
                 } else {
-                    std::cout << "Scene: Push/Pull - Detected inward extrusion. Using Cut operation." << std::endl;
                     BRepAlgoAPI_Cut cutAlgo(*originalShape, prismShape);
                     if (!cutAlgo.IsDone()) { std::cerr << "OCCT Error: BRepAlgoAPI_Cut failed." << std::endl; return false; }
                     finalShape = cutAlgo.Shape();
                 }
-                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
             } else {
                 finalShape = prismShape;
-                std::cout << "Scene: Push/Pull - 2D shape converted to solid." << std::endl;
-                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
             }
-            // --- HEALING AND UPDATING ---
-            if (obj && obj->has_shape()) {
+            
+            obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
+
+            if (obj->has_shape()) {
                 ShapeFix_Shape shapeFixer(*obj->get_shape());
                 shapeFixer.Perform();
                 TopoDS_Shape healedShape = shapeFixer.Shape();
@@ -1038,7 +1022,6 @@ namespace Urbaxio::Engine {
                 obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*obj->get_shape()));
                 obj->vao = 0;
             }
-            std::cout << "Scene: Push/Pull successful. Object " << objectId << " updated." << std::endl;
         } catch (const Standard_Failure& e) {
             std::cerr << "OCCT Exception during ExtrudeFace: " << e.GetMessageString() << std::endl;
             return false;
@@ -1183,6 +1166,19 @@ namespace Urbaxio::Engine {
         }
         
         std::cout << "\n--- FACE SPLITTING TEST FINISHED ---\n" << std::endl;
+    }
+
+    SceneObject* Scene::FindObjectByFace(const std::vector<glm::vec3>& faceVertices) {
+        if (faceVertices.empty()) return nullptr;
+        
+        for (auto* obj : get_all_objects()) {
+            if (!obj || !obj->has_shape()) continue;
+            TopoDS_Face foundFace = FindOriginalFace(*obj->get_shape(), faceVertices, glm::vec3(0,0,1));
+            if (!foundFace.IsNull()) {
+                return obj;
+            }
+        }
+        return nullptr;
     }
 
 } // namespace Urbaxio
