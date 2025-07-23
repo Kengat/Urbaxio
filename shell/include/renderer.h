@@ -67,6 +67,7 @@ namespace Urbaxio {
         // --- OLD SHADER (renamed for clarity, used for user lines and rubber band) ---
         GLuint simpleLineShaderProgram = 0; 
         GLuint unlitShaderProgram = 0; // <-- NEW SHADER for unlit objects
+        GLuint dashedLineShaderProgram = 0; // <-- NEW SHADER for dashed lines
         
         GLuint splatShaderProgram = 0;
         GLuint markerShaderProgram = 0;
@@ -85,6 +86,7 @@ namespace Urbaxio {
         // --- Preview Resources ---
         GLuint previewVAO = 0, previewVBO = 0; GLsizei previewVertexCount = 0;
         GLuint previewLineVAO = 0, previewLineVBO = 0; bool previewLineEnabled = false;
+        GLuint previewOutlineVAO = 0, previewOutlineVBO = 0; GLsizei previewOutlineVertexCount = 0; // <-- NEW for dashed outline
 
         std::map<MarkerShape, GLuint> markerVAOs;
         std::map<MarkerShape, GLuint> markerVBOs;
@@ -120,6 +122,7 @@ namespace Urbaxio {
         bool CreateMarkerResources();
         bool CreatePreviewResources();
         bool CreatePreviewLineResources();
+        bool CreatePreviewOutlineResources(); // <-- NEW
         void Cleanup();
         void DrawSnapMarker(const SnapResult& snap, const Camera& camera, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight);
 
@@ -130,5 +133,6 @@ namespace Urbaxio {
         const char* unlitVertexShaderSource; const char* unlitFragmentShaderSource; // <-- NEW
         const char* splatVertexShaderSource; const char* splatFragmentShaderSource;
         const char* markerVertexShaderSource; const char* markerFragmentShaderSource;
+        const char* dashedLineVertexShaderSource; const char* dashedLineFragmentShaderSource; // <-- NEW
     };
 }

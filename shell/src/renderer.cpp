@@ -304,9 +304,42 @@ namespace Urbaxio {
             "void main() {\n"
             "    FragColor = u_Color;\n"
             "}\n";
+
+        dashedLineVertexShaderSource =
+            "#version 330 core\n"
+            "layout (location = 0) in vec3 aPos;\n"
+            "layout (location = 1) in float aDist;\n" // Distance from start of line
+            "uniform mat4 model;\n"
+            "uniform mat4 view;\n"
+            "uniform mat4 projection;\n"
+            "out float vDist;\n"
+            "void main() {\n"
+            "    gl_Position = projection * view * model * vec4(aPos, 1.0);\n"
+            "    vDist = aDist;\n"
+            "}\n";
+        
+        dashedLineFragmentShaderSource =
+            "#version 330 core\n"
+            "out vec4 FragColor;\n"
+            "in float vDist;\n"
+            "uniform vec4 u_Color;\n"
+            "uniform float u_DashSize;\n"
+            "uniform float u_GapSize;\n"
+            "void main() {\n"
+            "    float patternLength = u_DashSize + u_GapSize;\n"
+            "    if (patternLength < 0.001) {\n"
+            "        FragColor = u_Color;\n"
+            "        return;\n"
+            "    }\n"
+            "    float modularDist = mod(vDist, patternLength);\n"
+            "    if (modularDist > u_DashSize) {\n"
+            "        discard;\n"
+            "    }\n"
+            "    FragColor = u_Color;\n"
+            "}\n";
     }
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateSplatResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateSplatResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { /* ... same ... */ if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
     
     void Renderer::RenderFrame(
@@ -439,7 +472,7 @@ namespace Urbaxio {
                 }
             }
             
-            // 4. Draw Push/Pull Preview
+            // 4. Draw Push/Pull Preview (Transparent Fill)
             if (previewVertexCount > 0) {
                 glDepthMask(GL_FALSE); // Disable writing to depth buffer for transparency
                 glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(hoverHighlightColor));
@@ -450,6 +483,22 @@ namespace Urbaxio {
                 glDepthMask(GL_TRUE); // Re-enable depth writing
                 glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
             }
+        }
+
+        // 5. Draw Push/Pull Preview (Dashed Outline)
+        if (previewOutlineVertexCount > 0) {
+            glLineWidth(1.5f);
+            glUseProgram(dashedLineShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(dashedLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(glGetUniformLocation(dashedLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(dashedLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            glUniform4f(glGetUniformLocation(dashedLineShaderProgram, "u_Color"), 1.0f, 1.0f, 1.0f, 0.8f);
+            glUniform1f(glGetUniformLocation(dashedLineShaderProgram, "u_DashSize"), 0.2f);
+            glUniform1f(glGetUniformLocation(dashedLineShaderProgram, "u_GapSize"), 0.1f);
+            glBindVertexArray(previewOutlineVAO);
+            glDrawArrays(GL_LINES, 0, previewOutlineVertexCount);
+            glBindVertexArray(0);
+            glLineWidth(1.0f);
         }
 
         // --- DRAW UNLIT OBJECTS (CENTER SPHERE & MARKERS) ---
@@ -621,6 +670,8 @@ namespace Urbaxio {
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, splatVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, splatFragmentShaderSource); if (vs != 0 && fs != 0) splatShaderProgram = LinkShaderProgram(vs, fs); if (splatShaderProgram == 0) return false; std::cout << "Renderer: Splat shader program created." << std::endl; }
         // Marker Shader
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, markerVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, markerFragmentShaderSource); if (vs != 0 && fs != 0) markerShaderProgram = LinkShaderProgram(vs, fs); if (markerShaderProgram == 0) { std::cerr << "Renderer Error: Failed to link marker shader program!" << std::endl; return false; } std::cout << "Renderer: Marker shader program created." << std::endl; }
+        // Dashed Line Shader
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, dashedLineVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, dashedLineFragmentShaderSource); if (vs != 0 && fs != 0) dashedLineShaderProgram = LinkShaderProgram(vs, fs); if (dashedLineShaderProgram == 0) return false; std::cout << "Renderer: Dashed Line shader program created." << std::endl; }
         return true;
     }
     bool Renderer::CreateGridResources() {
@@ -743,6 +794,7 @@ namespace Urbaxio {
         if (userLinesVAO != 0) glDeleteVertexArrays(1, &userLinesVAO); userLinesVAO = 0; if (userLinesVBO != 0) glDeleteBuffers(1, &userLinesVBO); userLinesVBO = 0;
         if (previewVAO != 0) glDeleteVertexArrays(1, &previewVAO); previewVAO = 0; if (previewVBO != 0) glDeleteBuffers(1, &previewVBO); previewVBO = 0;
         if (previewLineVAO != 0) glDeleteVertexArrays(1, &previewLineVAO); previewLineVAO = 0; if (previewLineVBO != 0) glDeleteBuffers(1, &previewLineVBO); previewLineVBO = 0;
+        if (previewOutlineVAO != 0) glDeleteVertexArrays(1, &previewOutlineVAO); previewOutlineVAO = 0; if (previewOutlineVBO != 0) glDeleteBuffers(1, &previewOutlineVBO); previewOutlineVBO = 0;
         for (auto const& [shape, vao] : markerVAOs) { if (vao != 0) glDeleteVertexArrays(1, &vao); } markerVAOs.clear();
         for (auto const& [shape, vbo] : markerVBOs) { if (vbo != 0) glDeleteBuffers(1, &vbo); } markerVBOs.clear();
         markerVertexCounts.clear();
@@ -753,6 +805,7 @@ namespace Urbaxio {
         if (unlitShaderProgram != 0) glDeleteProgram(unlitShaderProgram); unlitShaderProgram = 0;
         if (splatShaderProgram != 0) glDeleteProgram(splatShaderProgram); splatShaderProgram = 0;
         if (markerShaderProgram != 0) glDeleteProgram(markerShaderProgram); markerShaderProgram = 0;
+        if (dashedLineShaderProgram != 0) glDeleteProgram(dashedLineShaderProgram); dashedLineShaderProgram = 0;
         std::cout << "Renderer: Resource cleanup finished." << std::endl;
     }
 
@@ -793,20 +846,41 @@ namespace Urbaxio {
         return previewLineVAO != 0 && previewLineVBO != 0;
     }
 
+    bool Renderer::CreatePreviewOutlineResources() {
+        glGenVertexArrays(1, &previewOutlineVAO);
+        glGenBuffers(1, &previewOutlineVBO);
+        glBindVertexArray(previewOutlineVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, previewOutlineVBO);
+        // Allocate a large buffer for dynamic drawing. 4 floats per vertex (pos.xyz, dist.w)
+        glBufferData(GL_ARRAY_BUFFER, 10000 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+        // Position attribute (vec3)
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        // Distance attribute (float)
+        glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glBindVertexArray(0);
+        std::cout << "Renderer: Preview Outline VAO/VBO created." << std::endl;
+        return previewOutlineVAO != 0 && previewOutlineVBO != 0;
+    }
+
     void Renderer::UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance) {
         // 1. Initial checks
         if (faceIndices.empty() || std::abs(distance) < 1e-4) {
             previewVertexCount = 0;
+            previewOutlineVertexCount = 0;
             return;
         }
         const auto& mesh = object.get_mesh_buffers();
         if (!object.has_mesh()) {
             previewVertexCount = 0;
+            previewOutlineVertexCount = 0;
             return;
         }
 
-        // 2. Find boundary edges of the selected face patch
+        // 2. Find boundary edges and vertices of the selected face patch
         std::map<std::pair<unsigned int, unsigned int>, int> edgeCounts;
+        std::set<unsigned int> boundaryVertexIndices;
         for (size_t baseIndex : faceIndices) {
             if (baseIndex + 2 >= mesh.indices.size()) continue;
 
@@ -814,7 +888,7 @@ namespace Urbaxio {
             for (int j = 0; j < 3; ++j) {
                 unsigned int v1_idx = v_indices[j];
                 unsigned int v2_idx = v_indices[(j + 1) % 3];
-                if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx); // Canonical edge
+                if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
                 edgeCounts[{v1_idx, v2_idx}]++;
             }
         }
@@ -823,63 +897,76 @@ namespace Urbaxio {
         for (const auto& [edge, count] : edgeCounts) {
             if (count == 1) {
                 boundaryEdges.push_back(edge);
+                boundaryVertexIndices.insert(edge.first);
+                boundaryVertexIndices.insert(edge.second);
             }
         }
 
-        // 3. Generate preview vertices
-        std::vector<float> previewVertices;
+        // 3. Generate preview vertices for both solid fill and dashed outline
+        std::vector<float> solidVertices;
+        std::vector<float> outlineVertices;
         glm::vec3 offset = direction * distance;
         
-        // 3a. Generate top cap (the extruded face)
+        // 3a. Generate top cap (for solid fill)
         for (size_t baseIndex : faceIndices) {
             if (baseIndex + 2 >= mesh.indices.size()) continue;
-
-            unsigned int i0 = mesh.indices[baseIndex];
-            unsigned int i1 = mesh.indices[baseIndex + 1];
-            unsigned int i2 = mesh.indices[baseIndex + 2];
-
-            glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
-            glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
-            glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
-
-            glm::vec3 v0d = v0 + offset;
-            glm::vec3 v1d = v1 + offset;
-            glm::vec3 v2d = v2 + offset;
-            
-            previewVertices.insert(previewVertices.end(), {v0d.x, v0d.y, v0d.z, direction.x, direction.y, direction.z});
-            previewVertices.insert(previewVertices.end(), {v1d.x, v1d.y, v1d.z, direction.x, direction.y, direction.z});
-            previewVertices.insert(previewVertices.end(), {v2d.x, v2d.y, v2d.z, direction.x, direction.y, direction.z});
+            unsigned int i0 = mesh.indices[baseIndex], i1 = mesh.indices[baseIndex+1], i2 = mesh.indices[baseIndex+2];
+            glm::vec3 v0d = glm::vec3(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]) + offset;
+            glm::vec3 v1d = glm::vec3(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]) + offset;
+            glm::vec3 v2d = glm::vec3(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]) + offset;
+            solidVertices.insert(solidVertices.end(), {v0d.x, v0d.y, v0d.z, direction.x, direction.y, direction.z});
+            solidVertices.insert(solidVertices.end(), {v1d.x, v1d.y, v1d.z, direction.x, direction.y, direction.z});
+            solidVertices.insert(solidVertices.end(), {v2d.x, v2d.y, v2d.z, direction.x, direction.y, direction.z});
         }
 
-        // 3b. Generate side walls from boundary edges only
+        // 3b. Generate side walls (solid fill) from boundary edges
         for (const auto& edge : boundaryEdges) {
-            unsigned int i1 = edge.first;
-            unsigned int i2 = edge.second;
-
-            glm::vec3 p1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
-            glm::vec3 p2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
-
-            glm::vec3 p1d = p1 + offset;
-            glm::vec3 p2d = p2 + offset;
-
+            glm::vec3 p1(mesh.vertices[edge.first*3], mesh.vertices[edge.first*3+1], mesh.vertices[edge.first*3+2]);
+            glm::vec3 p2(mesh.vertices[edge.second*3], mesh.vertices[edge.second*3+1], mesh.vertices[edge.second*3+2]);
+            glm::vec3 p1d = p1 + offset; glm::vec3 p2d = p2 + offset;
             glm::vec3 sideNormal = glm::normalize(glm::cross(p2 - p1, direction));
-
-            // First triangle of the side quad
-            previewVertices.insert(previewVertices.end(), {p1.x, p1.y, p1.z, sideNormal.x, sideNormal.y, sideNormal.z});
-            previewVertices.insert(previewVertices.end(), {p2.x, p2.y, p2.z, sideNormal.x, sideNormal.y, sideNormal.z});
-            previewVertices.insert(previewVertices.end(), {p1d.x, p1d.y, p1d.z, sideNormal.x, sideNormal.y, sideNormal.z});
-            
-            // Second triangle of the side quad
-            previewVertices.insert(previewVertices.end(), {p1d.x, p1d.y, p1d.z, sideNormal.x, sideNormal.y, sideNormal.z});
-            previewVertices.insert(previewVertices.end(), {p2.x, p2.y, p2.z, sideNormal.x, sideNormal.y, sideNormal.z});
-            previewVertices.insert(previewVertices.end(), {p2d.x, p2d.y, p2d.z, sideNormal.x, sideNormal.y, sideNormal.z});
+            solidVertices.insert(solidVertices.end(), {p1.x, p1.y, p1.z, sideNormal.x, sideNormal.y, sideNormal.z});
+            solidVertices.insert(solidVertices.end(), {p2.x, p2.y, p2.z, sideNormal.x, sideNormal.y, sideNormal.z});
+            solidVertices.insert(solidVertices.end(), {p1d.x, p1d.y, p1d.z, sideNormal.x, sideNormal.y, sideNormal.z});
+            solidVertices.insert(solidVertices.end(), {p1d.x, p1d.y, p1d.z, sideNormal.x, sideNormal.y, sideNormal.z});
+            solidVertices.insert(solidVertices.end(), {p2.x, p2.y, p2.z, sideNormal.x, sideNormal.y, sideNormal.z});
+            solidVertices.insert(solidVertices.end(), {p2d.x, p2d.y, p2d.z, sideNormal.x, sideNormal.y, sideNormal.z});
+        }
+        
+        // 3c. Generate outline edges (dashed)
+        // Top and bottom outlines
+        for (const auto& edge : boundaryEdges) {
+            glm::vec3 p1(mesh.vertices[edge.first*3], mesh.vertices[edge.first*3+1], mesh.vertices[edge.first*3+2]);
+            glm::vec3 p2(mesh.vertices[edge.second*3], mesh.vertices[edge.second*3+1], mesh.vertices[edge.second*3+2]);
+            float len = glm::distance(p1, p2);
+            // Bottom edge
+            outlineVertices.insert(outlineVertices.end(), {p1.x, p1.y, p1.z, 0.0f});
+            outlineVertices.insert(outlineVertices.end(), {p2.x, p2.y, p2.z, len});
+            // Top edge
+            glm::vec3 p1d = p1 + offset; glm::vec3 p2d = p2 + offset;
+            outlineVertices.insert(outlineVertices.end(), {p1d.x, p1d.y, p1d.z, 0.0f});
+            outlineVertices.insert(outlineVertices.end(), {p2d.x, p2d.y, p2d.z, len});
+        }
+        // Vertical corner outlines
+        float verticalLen = std::abs(distance);
+        for (unsigned int v_idx : boundaryVertexIndices) {
+            glm::vec3 p(mesh.vertices[v_idx*3], mesh.vertices[v_idx*3+1], mesh.vertices[v_idx*3+2]);
+            glm::vec3 pd = p + offset;
+            outlineVertices.insert(outlineVertices.end(), {p.x, p.y, p.z, 0.0f});
+            outlineVertices.insert(outlineVertices.end(), {pd.x, pd.y, pd.z, verticalLen});
         }
 
         // 4. Update GPU buffers
-        previewVertexCount = previewVertices.size() / 6;
+        previewVertexCount = solidVertices.size() / 6;
         if (previewVertexCount > 0) {
             glBindBuffer(GL_ARRAY_BUFFER, previewVBO);
-            glBufferSubData(GL_ARRAY_BUFFER, 0, previewVertices.size() * sizeof(float), previewVertices.data());
+            glBufferData(GL_ARRAY_BUFFER, solidVertices.size() * sizeof(float), solidVertices.data(), GL_DYNAMIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+        previewOutlineVertexCount = outlineVertices.size() / 4;
+        if (previewOutlineVertexCount > 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, previewOutlineVBO);
+            glBufferData(GL_ARRAY_BUFFER, outlineVertices.size() * sizeof(float), outlineVertices.data(), GL_DYNAMIC_DRAW);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
     }
