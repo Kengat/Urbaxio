@@ -73,6 +73,8 @@ set(SOURCE_DIRS
     "${PROJECT_SOURCE_DIR}/shell/include/tools"      # Tools headers (moved to shell)
     "${PROJECT_SOURCE_DIR}/shell/src/tools"          # Tools sources (moved to shell)
     "${PROJECT_SOURCE_DIR}/cmake"                    # CMake helper scripts
+    "${PROJECT_SOURCE_DIR}/engine/include/engine/commands" # <-- NEW
+    "${PROJECT_SOURCE_DIR}/engine/src/commands"           # <-- NEW
 )
 
 # --- File Extensions/Names to Include ---

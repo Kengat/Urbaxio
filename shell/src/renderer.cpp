@@ -794,21 +794,46 @@ namespace Urbaxio {
     }
 
     void Renderer::UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance) {
+        // 1. Initial checks
         if (faceIndices.empty() || std::abs(distance) < 1e-4) {
             previewVertexCount = 0;
             return;
         }
-
         const auto& mesh = object.get_mesh_buffers();
         if (!object.has_mesh()) {
             previewVertexCount = 0;
             return;
         }
-        
+
+        // 2. Find boundary edges of the selected face patch
+        std::map<std::pair<unsigned int, unsigned int>, int> edgeCounts;
+        for (size_t baseIndex : faceIndices) {
+            if (baseIndex + 2 >= mesh.indices.size()) continue;
+
+            unsigned int v_indices[3] = { mesh.indices[baseIndex], mesh.indices[baseIndex + 1], mesh.indices[baseIndex + 2] };
+            for (int j = 0; j < 3; ++j) {
+                unsigned int v1_idx = v_indices[j];
+                unsigned int v2_idx = v_indices[(j + 1) % 3];
+                if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx); // Canonical edge
+                edgeCounts[{v1_idx, v2_idx}]++;
+            }
+        }
+
+        std::vector<std::pair<unsigned int, unsigned int>> boundaryEdges;
+        for (const auto& [edge, count] : edgeCounts) {
+            if (count == 1) {
+                boundaryEdges.push_back(edge);
+            }
+        }
+
+        // 3. Generate preview vertices
         std::vector<float> previewVertices;
         glm::vec3 offset = direction * distance;
-
+        
+        // 3a. Generate top cap (the extruded face)
         for (size_t baseIndex : faceIndices) {
+            if (baseIndex + 2 >= mesh.indices.size()) continue;
+
             unsigned int i0 = mesh.indices[baseIndex];
             unsigned int i1 = mesh.indices[baseIndex + 1];
             unsigned int i2 = mesh.indices[baseIndex + 2];
@@ -816,39 +841,47 @@ namespace Urbaxio {
             glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
             glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
             glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
-            
-            // --- Top Cap ---
+
             glm::vec3 v0d = v0 + offset;
             glm::vec3 v1d = v1 + offset;
             glm::vec3 v2d = v2 + offset;
+            
             previewVertices.insert(previewVertices.end(), {v0d.x, v0d.y, v0d.z, direction.x, direction.y, direction.z});
             previewVertices.insert(previewVertices.end(), {v1d.x, v1d.y, v1d.z, direction.x, direction.y, direction.z});
             previewVertices.insert(previewVertices.end(), {v2d.x, v2d.y, v2d.z, direction.x, direction.y, direction.z});
-            
-            // --- Sides (3 quads) ---
-            glm::vec3 p[3] = {v0, v1, v2};
-            for(int i=0; i<3; ++i) {
-                glm::vec3 p1 = p[i];
-                glm::vec3 p2 = p[(i+1)%3];
-                glm::vec3 p1d = p1 + offset;
-                glm::vec3 p2d = p2 + offset;
-
-                glm::vec3 sideNormal = glm::normalize(glm::cross(p2-p1, direction));
-                
-                previewVertices.insert(previewVertices.end(), {p1.x, p1.y, p1.z, sideNormal.x, sideNormal.y, sideNormal.z});
-                previewVertices.insert(previewVertices.end(), {p2.x, p2.y, p2.z, sideNormal.x, sideNormal.y, sideNormal.z});
-                previewVertices.insert(previewVertices.end(), {p1d.x, p1d.y, p1d.z, sideNormal.x, sideNormal.y, sideNormal.z});
-
-                previewVertices.insert(previewVertices.end(), {p1d.x, p1d.y, p1d.z, sideNormal.x, sideNormal.y, sideNormal.z});
-                previewVertices.insert(previewVertices.end(), {p2.x, p2.y, p2.z, sideNormal.x, sideNormal.y, sideNormal.z});
-                previewVertices.insert(previewVertices.end(), {p2d.x, p2d.y, p2d.z, sideNormal.x, sideNormal.y, sideNormal.z});
-            }
         }
 
+        // 3b. Generate side walls from boundary edges only
+        for (const auto& edge : boundaryEdges) {
+            unsigned int i1 = edge.first;
+            unsigned int i2 = edge.second;
+
+            glm::vec3 p1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+            glm::vec3 p2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+
+            glm::vec3 p1d = p1 + offset;
+            glm::vec3 p2d = p2 + offset;
+
+            glm::vec3 sideNormal = glm::normalize(glm::cross(p2 - p1, direction));
+
+            // First triangle of the side quad
+            previewVertices.insert(previewVertices.end(), {p1.x, p1.y, p1.z, sideNormal.x, sideNormal.y, sideNormal.z});
+            previewVertices.insert(previewVertices.end(), {p2.x, p2.y, p2.z, sideNormal.x, sideNormal.y, sideNormal.z});
+            previewVertices.insert(previewVertices.end(), {p1d.x, p1d.y, p1d.z, sideNormal.x, sideNormal.y, sideNormal.z});
+            
+            // Second triangle of the side quad
+            previewVertices.insert(previewVertices.end(), {p1d.x, p1d.y, p1d.z, sideNormal.x, sideNormal.y, sideNormal.z});
+            previewVertices.insert(previewVertices.end(), {p2.x, p2.y, p2.z, sideNormal.x, sideNormal.y, sideNormal.z});
+            previewVertices.insert(previewVertices.end(), {p2d.x, p2d.y, p2d.z, sideNormal.x, sideNormal.y, sideNormal.z});
+        }
+
+        // 4. Update GPU buffers
         previewVertexCount = previewVertices.size() / 6;
-        glBindBuffer(GL_ARRAY_BUFFER, previewVBO);
-        glBufferData(GL_ARRAY_BUFFER, previewVertices.size() * sizeof(float), previewVertices.data(), GL_DYNAMIC_DRAW);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        if (previewVertexCount > 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, previewVBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, previewVertices.size() * sizeof(float), previewVertices.data());
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
     }
 
     void Renderer::UpdatePreviewLine(const glm::vec3& start, const glm::vec3& end, bool enabled) {
