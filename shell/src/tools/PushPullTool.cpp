@@ -29,7 +29,7 @@ std::vector<size_t> FindCoplanarAdjacentTriangles_ForPushPull(
     size_t startTriangleBaseIndex)
 {
     const auto& name = object.get_name();
-    if (name == "CenterMarker" || name == "UnitSphereMarker" || name == "UnitCapsuleMarker") {
+    if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") {
         return { startTriangleBaseIndex };
     }
     const float NORMAL_DOT_TOLERANCE = 0.999f;
@@ -300,7 +300,7 @@ void PushPullTool::updateHover(int mouseX, int mouseY) {
 
     for (Urbaxio::Engine::SceneObject* obj_ptr : context.scene->get_all_objects()) {
         const auto& name = obj_ptr->get_name();
-        if (obj_ptr && obj_ptr->has_mesh() && name != "CenterMarker" && name != "UnitSphereMarker" && name != "UnitCapsuleMarker") {
+        if (obj_ptr && obj_ptr->has_mesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
             const auto& mesh = obj_ptr->get_mesh_buffers();
             for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                 glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]);

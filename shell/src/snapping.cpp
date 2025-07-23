@@ -117,9 +117,12 @@ SnapResult SnappingSystem::FindSnapPoint(
     // 3. Scene Object Vertices and Faces
     std::vector<const Engine::SceneObject*> objects = scene.get_all_objects();
     for (const auto* obj : objects) {
-        const auto& name = obj->get_name();
-        if (obj && obj->has_mesh() && 
-            name != "CenterMarker" && name != "UnitSphereMarker" && name != "UnitCapsuleMarker") {
+        if (obj && obj->has_mesh()) {
+            // --- FIX: Ignore marker template objects for snapping ---
+            const auto& name = obj->get_name();
+            if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") {
+                continue; // Skip this object
+            }
             const auto& mesh = obj->get_mesh_buffers();
             const auto& vertices_obj = mesh.vertices;
             // Vertex Snapping

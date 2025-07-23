@@ -20,6 +20,8 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/norm.hpp>
 
+#include <fmt/core.h> // <-- FIX: Added missing include for fmt library
+
 #include <iostream>
 #include <string>
 #include <vector>
@@ -28,6 +30,60 @@
 #include <set>
 #include <map>
 #include <cstdint>
+
+// --- NEW: OCCT includes for capsule generation (moved from engine) ---
+#include <gp_Ax2.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <TopoDS_Shape.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+
+namespace { // Anonymous namespace for helpers
+
+    // --- NEW: Capsule generation logic is now in the shell ---
+    Urbaxio::CadKernel::MeshBuffers CreateCapsuleMesh(float radius, float height) {
+        try {
+            // --- FIX: Offset the cylinder's base down by half its height to center it ---
+            gp_Pnt center(0.0, 0.0, -height / 2.0);
+            gp_Dir z_dir(0, 0, 1);
+            gp_Ax2 axis(center, z_dir);
+            
+            TopoDS_Shape cylinder = BRepPrimAPI_MakeCylinder(axis, radius, height);
+
+            // Create a single sphere at the origin, to be moved
+            TopoDS_Shape sphere = BRepPrimAPI_MakeSphere(gp_Pnt(0,0,0), radius);
+
+            // Transformations to move the sphere to the ends of the cylinder body
+            gp_Trsf top_trsf, bot_trsf;
+            top_trsf.SetTranslation(gp_Vec(0, 0, height / 2.0));
+            bot_trsf.SetTranslation(gp_Vec(0, 0, -height / 2.0));
+
+            // Apply transformations
+            TopoDS_Shape top_hemisphere = BRepBuilderAPI_Transform(sphere, top_trsf);
+            TopoDS_Shape bot_hemisphere = BRepBuilderAPI_Transform(sphere, bot_trsf);
+            
+            // Fuse them
+            BRepAlgoAPI_Fuse fuser(cylinder, top_hemisphere);
+            fuser.Build();
+            TopoDS_Shape result = fuser.Shape();
+            
+            BRepAlgoAPI_Fuse final_fuser(result, bot_hemisphere);
+            final_fuser.Build();
+            result = final_fuser.Shape();
+            
+            return Urbaxio::CadKernel::TriangulateShape(result);
+
+        } catch(...) {
+            std::cerr << "OCCT Exception during capsule creation!" << std::endl;
+            return Urbaxio::CadKernel::MeshBuffers();
+        }
+    }
+
+} // end anonymous namespace
 
 // --- GPU Mesh Upload Helper ---
 bool UploadMeshToGPU(Urbaxio::Engine::SceneObject& object) { /* ... */ const Urbaxio::CadKernel::MeshBuffers& mesh = object.get_mesh_buffers(); if (mesh.isEmpty() || mesh.normals.empty()) { if (mesh.normals.empty() && !mesh.vertices.empty()) { std::cerr << "UploadMeshToGPU: Mesh for object " << object.get_id() << " is missing normals!" << std::endl; } return false; } if (object.vao != 0) glDeleteVertexArrays(1, &object.vao); if (object.vbo_vertices != 0) glDeleteBuffers(1, &object.vbo_vertices); if (object.vbo_normals != 0) glDeleteBuffers(1, &object.vbo_normals); if (object.ebo != 0) glDeleteBuffers(1, &object.ebo); object.vao = object.vbo_vertices = object.vbo_normals = object.ebo = 0; object.index_count = 0; glGenVertexArrays(1, &object.vao); if (object.vao == 0) return false; glBindVertexArray(object.vao); glGenBuffers(1, &object.vbo_vertices); if (object.vbo_vertices == 0) { glDeleteVertexArrays(1, &object.vao); object.vao = 0; return false; } glBindBuffer(GL_ARRAY_BUFFER, object.vbo_vertices); glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(float), mesh.vertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glGenBuffers(1, &object.vbo_normals); if (object.vbo_normals == 0) { glDeleteBuffers(1, &object.vbo_vertices); glDeleteVertexArrays(1, &object.vao); object.vao = object.vbo_vertices = 0; return false; } glBindBuffer(GL_ARRAY_BUFFER, object.vbo_normals); glBufferData(GL_ARRAY_BUFFER, mesh.normals.size() * sizeof(float), mesh.normals.data(), GL_STATIC_DRAW); glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0); glEnableVertexAttribArray(1); glGenBuffers(1, &object.ebo); if (object.ebo == 0) { glDeleteBuffers(1, &object.vbo_normals); glDeleteBuffers(1, &object.vbo_vertices); glDeleteVertexArrays(1, &object.vao); object.vao = object.vbo_vertices = object.vbo_normals = 0; return false; } glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, object.ebo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(unsigned int), mesh.indices.data(), GL_STATIC_DRAW); object.index_count = static_cast<GLsizei>(mesh.indices.size()); glBindVertexArray(0); glBindBuffer(GL_ARRAY_BUFFER, 0); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0); std::cout << "UploadMeshToGPU: Successfully uploaded mesh for object " << object.get_id() << std::endl; return true; }
@@ -91,6 +147,30 @@ int main(int argc, char* argv[]) {
     toolContext.hoveredFaceTriangleIndices = &hoveredFaceTriangleIndices;
     
     Urbaxio::Tools::ToolManager toolManager(toolContext);
+
+    // --- NEW: Marker settings ---
+    static float capsuleRadius = 0.5f;
+    static float capsuleHeight10m = 3.2f;
+    static float capsuleHeight5m = 1.4f;
+
+    // --- NEW: Create shell-specific markers ---
+    auto* capsule_marker_10m = scene_ptr->create_object("UnitCapsuleMarker10m");
+    if (capsule_marker_10m) {
+        Urbaxio::CadKernel::MeshBuffers mesh = CreateCapsuleMesh(capsuleRadius, capsuleHeight10m);
+        capsule_marker_10m->set_mesh_buffers(std::move(mesh));
+        fmt::print("Shell: Created 'UnitCapsuleMarker10m' template with ID {}.\n", capsule_marker_10m->get_id());
+    } else {
+        fmt::print(stderr, "Shell: Error creating 'UnitCapsuleMarker10m' template!\n");
+    }
+    
+    auto* capsule_marker_5m = scene_ptr->create_object("UnitCapsuleMarker5m");
+    if (capsule_marker_5m) {
+        Urbaxio::CadKernel::MeshBuffers mesh = CreateCapsuleMesh(capsuleRadius, capsuleHeight5m);
+        capsule_marker_5m->set_mesh_buffers(std::move(mesh));
+        fmt::print("Shell: Created 'UnitCapsuleMarker5m' template with ID {}.\n", capsule_marker_5m->get_id());
+    } else {
+        fmt::print(stderr, "Shell: Error creating 'UnitCapsuleMarker5m' template!\n");
+    }
 
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
     while (!should_quit) {
@@ -202,6 +282,29 @@ int main(int argc, char* argv[]) {
             if (ImGui::CollapsingHeader("Lighting")) { ImGui::SliderFloat("Ambient Strength", &ambientStrength, 0.0f, 1.0f); static glm::vec3 lightDirInput = lightDirection; if (ImGui::SliderFloat3("Light Direction", glm::value_ptr(lightDirInput), -1.0f, 1.0f)) { if (glm::length(lightDirInput) > 1e-6f) { lightDirection = glm::normalize(lightDirInput); } } ImGui::ColorEdit3("Light Color", glm::value_ptr(lightColor)); }
             if (ImGui::CollapsingHeader("Grid & Axes")) { ImGui::Checkbox("Show Grid", &showGrid); ImGui::SameLine(); ImGui::Checkbox("Show Axes", &showAxes); ImGui::ColorEdit3("Grid Color", glm::value_ptr(gridColor)); ImGui::SeparatorText("Positive Axes"); ImGui::ColorEdit4("Axis X Color", glm::value_ptr(axisColorX)); ImGui::ColorEdit4("Axis Y Color", glm::value_ptr(axisColorY)); ImGui::ColorEdit4("Axis Z Color", glm::value_ptr(axisColorZ)); ImGui::ColorEdit4("Fade To Color##Positive", glm::value_ptr(positiveAxisFadeColor)); ImGui::SameLine(); ImGui::TextDisabled("(also used for axis markers)"); ImGui::SliderFloat("Width##Positive", &axisLineWidth, 1.0f, maxLineWidth); ImGui::SeparatorText("Negative Axes"); ImGui::ColorEdit4("Fade To Color##Negative", glm::value_ptr(negativeAxisFadeColor)); ImGui::SliderFloat("Width##Negative", &negAxisLineWidth, 1.0f, maxLineWidth); }
             if (ImGui::CollapsingHeader("Interactive Effects")) { ImGui::SliderFloat("Cursor Radius", &cursorRadius, 1.0f, 50.0f); ImGui::SliderFloat("Effect Intensity", &effectIntensity, 0.1f, 2.0f); }
+            
+            if (ImGui::CollapsingHeader("Markers")) {
+                bool radius_changed = ImGui::SliderFloat("Capsule Radius", &capsuleRadius, 0.1f, 2.0f);
+                bool height10m_changed = ImGui::SliderFloat("10m Capsule Height", &capsuleHeight10m, 0.2f, 5.0f);
+                bool height5m_changed = ImGui::SliderFloat("5m Capsule Height", &capsuleHeight5m, 0.2f, 5.0f);
+
+                if (radius_changed || height10m_changed) {
+                    Urbaxio::Engine::SceneObject* marker = scene_ptr->get_object_by_id(capsule_marker_10m->get_id());
+                    if (marker) {
+                        Urbaxio::CadKernel::MeshBuffers new_mesh = CreateCapsuleMesh(capsuleRadius, capsuleHeight10m);
+                        marker->set_mesh_buffers(std::move(new_mesh));
+                        marker->vao = 0; // Invalidate GPU resource to trigger re-upload
+                    }
+                }
+                if (radius_changed || height5m_changed) {
+                    Urbaxio::Engine::SceneObject* marker = scene_ptr->get_object_by_id(capsule_marker_5m->get_id());
+                     if (marker) {
+                        Urbaxio::CadKernel::MeshBuffers new_mesh = CreateCapsuleMesh(capsuleRadius, capsuleHeight5m);
+                        marker->set_mesh_buffers(std::move(new_mesh));
+                        marker->vao = 0; // Invalidate GPU resource to trigger re-upload
+                    }
+                }
+            }
             ImGui::End();
         }
 

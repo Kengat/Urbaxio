@@ -421,15 +421,15 @@ namespace Urbaxio {
             
             // 1. Draw lit objects (excluding all marker templates)
             for (const auto* obj : scene->get_all_objects()) {
-                if (obj && obj->vao != 0 && obj->index_count > 0 && 
-                    obj->get_name() != "CenterMarker" && 
-                    obj->get_name() != "UnitSphereMarker" && 
-                    obj->get_name() != "UnitCapsuleMarker") { // Skip all marker templates
-                    glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
-                    glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
-                    glBindVertexArray(obj->vao);
-                    glDrawElements(GL_TRIANGLES, obj->index_count, GL_UNSIGNED_INT, 0);
-                    glBindVertexArray(0);
+                if (obj && obj->vao != 0 && obj->index_count > 0) {
+                    const auto& name = obj->get_name();
+                    if (name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
+                        glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
+                        glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+                        glBindVertexArray(obj->vao);
+                        glDrawElements(GL_TRIANGLES, obj->index_count, GL_UNSIGNED_INT, 0);
+                        glBindVertexArray(0);
+                    }
                 }
             }
 
@@ -512,16 +512,15 @@ namespace Urbaxio {
             
             // Find marker templates
             Urbaxio::Engine::SceneObject* center_marker = nullptr;
-            Urbaxio::Engine::SceneObject* sphere_marker_template = nullptr;
-            Urbaxio::Engine::SceneObject* capsule_marker_template = nullptr;
+            Urbaxio::Engine::SceneObject* capsule_marker_10m_template = nullptr;
+            Urbaxio::Engine::SceneObject* capsule_marker_5m_template = nullptr;
             
             for(auto* obj : scene->get_all_objects()){
-                if(obj && obj->get_name() == "CenterMarker") {
-                    center_marker = obj;
-                } else if(obj && obj->get_name() == "UnitSphereMarker") {
-                    sphere_marker_template = obj;
-                } else if(obj && obj->get_name() == "UnitCapsuleMarker") {
-                    capsule_marker_template = obj;
+                if(obj) {
+                    const auto& name = obj->get_name();
+                    if(name == "CenterMarker") center_marker = obj;
+                    else if (name == "UnitCapsuleMarker10m") capsule_marker_10m_template = obj;
+                    else if (name == "UnitCapsuleMarker5m") capsule_marker_5m_template = obj;
                 }
             }
 
@@ -541,7 +540,7 @@ namespace Urbaxio {
             }
 
             // Draw Axis Markers
-            if (showAxes && sphere_marker_template && sphere_marker_template->vao != 0 && capsule_marker_template && capsule_marker_template->vao != 0) {
+            if (showAxes && capsule_marker_10m_template && capsule_marker_10m_template->vao != 0 && capsule_marker_5m_template && capsule_marker_5m_template->vao != 0) {
                 const float markerBaseScale = 0.15f; // Smaller than center sphere
                 const int maxMarkerDist = 100;
                 const float maxMarkerWorldSize = 0.5f;
@@ -575,32 +574,32 @@ namespace Urbaxio {
                         }
 
                         glm::mat4 translationMatrix = glm::translate(glm::mat4(1.0f), position);
-                        glm::mat4 scaleMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(scale));
                         
+                        Urbaxio::Engine::SceneObject* current_marker_template;
                         if (i % 10 == 0) { // Capsule at 10, 20, 30...
-                            glm::quat rotation;
-                            // Check if it's the Z-axis
-                            if (glm::abs(axis.dir.z) > 0.99) { // It's the Z axis
-                                // For Z-axis: first lay flat on XY plane, then rotate 45 degrees around Z
-                                rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(1,0,0));
-                                rotation = glm::angleAxis(glm::radians(45.0f), glm::vec3(0,0,1)) * rotation;
-                            } else { // X or Y axis
-                                // For X/Y axes: lay flat on XY plane, then point along axis
-                                rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(1,0,0));
-                                rotation = glm::angleAxis(glm::atan(axis.dir.y, axis.dir.x), glm::vec3(0,0,1)) * rotation;
-                            }
-                            
-                            glm::mat4 rotationMatrix = glm::mat4_cast(rotation);
-                            glm::mat4 modelMatrix = translationMatrix * rotationMatrix * scaleMatrix;
-                            glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
-                            glBindVertexArray(capsule_marker_template->vao);
-                            glDrawElements(GL_TRIANGLES, capsule_marker_template->index_count, GL_UNSIGNED_INT, 0);
-                        } else { // Sphere at 5, 15, 25...
-                            glm::mat4 modelMatrix = translationMatrix * scaleMatrix;
-                            glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
-                            glBindVertexArray(sphere_marker_template->vao);
-                            glDrawElements(GL_TRIANGLES, sphere_marker_template->index_count, GL_UNSIGNED_INT, 0);
+                            current_marker_template = capsule_marker_10m_template;
+                        } else { // Capsule at 5, 15, 25...
+                            current_marker_template = capsule_marker_5m_template;
                         }
+                        
+                        // Common rotation logic for all capsules
+                        glm::quat rotation;
+                        if (glm::abs(axis.dir.z) > 0.99) { // Z axis
+                            rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(1,0,0));
+                            rotation = glm::angleAxis(glm::radians(45.0f), glm::vec3(0,0,1)) * rotation;
+                        } else { // X or Y axis
+                            rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(1,0,0));
+                            rotation = glm::angleAxis(glm::atan(axis.dir.y, axis.dir.x), glm::vec3(0,0,1)) * rotation;
+                        }
+                        
+                        glm::mat4 rotationMatrix = glm::mat4_cast(rotation);
+                        // Apply a uniform scale factor
+                        glm::mat4 scaleMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+                        glm::mat4 modelMatrix = translationMatrix * rotationMatrix * scaleMatrix;
+                        
+                        glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
+                        glBindVertexArray(current_marker_template->vao);
+                        glDrawElements(GL_TRIANGLES, current_marker_template->index_count, GL_UNSIGNED_INT, 0);
                     }
                 }
             }

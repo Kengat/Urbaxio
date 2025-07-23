@@ -207,28 +207,6 @@ extern "C" {
                 fmt::print(stderr, "Engine: Error creating 'CenterMarker' object!\n");
             }
 
-            // --- Create Unit Sphere Marker Template ---
-            auto* sphere_marker = g_scene->create_object("UnitSphereMarker");
-            if (sphere_marker) {
-                // Low-poly sphere (subdivision 1) for performance
-                Urbaxio::CadKernel::MeshBuffers mesh = CreateIcoSphereMesh(1.0f, 1);
-                sphere_marker->set_mesh_buffers(std::move(mesh));
-                fmt::print("Engine: Created 'UnitSphereMarker' template with ID {}.\n", sphere_marker->get_id());
-            } else {
-                fmt::print(stderr, "Engine: Error creating 'UnitSphereMarker' template!\n");
-            }
-
-            // --- Create Unit Capsule Marker Template ---
-            auto* capsule_marker = g_scene->create_object("UnitCapsuleMarker");
-            if (capsule_marker) {
-                // Return radius to 1.0
-                Urbaxio::CadKernel::MeshBuffers mesh = CreateCapsuleMesh(1.0f, 2.0f);
-                capsule_marker->set_mesh_buffers(std::move(mesh));
-                fmt::print("Engine: Created 'UnitCapsuleMarker' template with ID {}.\n", capsule_marker->get_id());
-            } else {
-                fmt::print(stderr, "Engine: Error creating 'UnitCapsuleMarker' template!\n");
-            }
-
         }
         else {
             fmt::print("Engine: Engine already initialized.\n");
