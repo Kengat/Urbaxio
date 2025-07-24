@@ -22,15 +22,21 @@ public:
     void RenderPreview(Renderer& renderer, const SnapResult& snap) override;
 
 private:
-    bool isPlacingFirstPoint = false;
-    bool isPlacingSecondPoint = false;
+    // --- NEW: State Machine ---
+    enum class ToolState {
+        IDLE,                           // Tool is active, but no line has been started
+        AWAITING_SECOND_POINT_FREE,     // First point is placed, cursor moves freely
+        AWAITING_SECOND_POINT_AXIS_LOCKED // First point is placed, movement is locked to an axis
+    };
+    ToolState currentState = ToolState::IDLE;
+
+    // --- State-related data ---
     glm::vec3 currentLineStartPoint{0.0f};
     glm::vec3 currentRubberBandEnd{0.0f};
 
-    // Axis Locking State
-    bool isAxisLocked = false;
-    SnapType lockedAxisType = SnapType::NONE;
+    // --- Axis Locking State ---
     glm::vec3 lockedAxisDir{0.0f};
+    SnapType lockedAxisType = SnapType::NONE;
 
     // Input buffer for length
     char lineLengthInputBuf[64] = "";
@@ -38,8 +44,12 @@ private:
     // The last snap result received by OnUpdate
     SnapResult lastSnapResult;
 
+    // --- Private helper methods ---
     void reset();
     void finalizeLine(const glm::vec3& endPoint);
+    bool tryToLockAxis(const glm::vec3& currentTarget);
+    glm::vec3 calculateAxisLockedPoint(const SnapResult& snapResult);
+    bool isValidGeometricSnap(SnapType type);
 };
 
 } // namespace Urbaxio::Tools 
