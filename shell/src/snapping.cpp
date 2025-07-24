@@ -17,14 +17,51 @@
 namespace { // Anonymous namespace for utility functions
     const float LINE_RAY_EPSILON = 1e-6f;
     const float SCREEN_EPSILON = 1e-4f;
-    // ... (ClosestPointOnLine, ClosestPointLineLine, WorldToScreen, ScreenToCameraRay, RaycastToZPlane, SnapCandidate struct, ClosestPointOnScreenSegmentSq)
+    
+    // NEW HELPER FUNCTION (as described in the report)
+    // Calculates the closest points between a ray and a line segment in 3D space.
+    bool ClosestPointsRaySegment(
+        const glm::vec3& rayOrigin, const glm::vec3& rayDir,
+        const glm::vec3& segStart, const glm::vec3& segEnd,
+        glm::vec3& outPointOnRay,
+        glm::vec3& outPointOnSegment
+    ) {
+        glm::vec3 segDir = segEnd - segStart;
+        
+        glm::vec3 w = rayOrigin - segStart;
+        float a = glm::dot(rayDir, rayDir);      // Should be 1.0 if rayDir is normalized
+        float b = glm::dot(rayDir, segDir);
+        float c = glm::dot(segDir, segDir);      // Same as segLenSq
+        float d = glm::dot(rayDir, w);
+        float e = glm::dot(segDir, w);
+
+        float denom = a * c - b * b;
+        float t_ray, t_seg;
+
+        // If the lines are parallel or nearly parallel
+        if (std::abs(denom) < LINE_RAY_EPSILON) {
+            t_ray = 0.0f; // Any point on the ray is fine, let's use the origin
+            t_seg = -e / c; // Project ray origin onto the segment's line
+        } else {
+            t_ray = (b * e - c * d) / denom;
+            t_seg = (a * e - b * d) / denom;
+        }
+
+        // Clamp the segment parameter to the range [0, 1] to stay on the segment
+        t_seg = std::max(0.0f, std::min(1.0f, t_seg));
+
+        outPointOnRay = rayOrigin + t_ray * rayDir;
+        outPointOnSegment = segStart + t_seg * segDir;
+
+        return true;
+    }
+
     glm::vec3 ClosestPointOnLine(const glm::vec3& lineOrigin, const glm::vec3& lineDir, const glm::vec3& point) { float t = glm::dot(point - lineOrigin, lineDir); return lineOrigin + lineDir * t; }
     bool ClosestPointLineLine( const glm::vec3& o1, const glm::vec3& d1, const glm::vec3& o2, const glm::vec3& d2, glm::vec3& outPointOnL1) { glm::vec3 w = o1 - o2; float b = glm::dot(d1, d2); float d_dot = glm::dot(d1, w); float e_dot = glm::dot(d2, w); float denom = 1.0f - b * b; if (std::abs(denom) < LINE_RAY_EPSILON) { outPointOnL1 = ClosestPointOnLine(o1, d1, o2); return true; } float s = (b * e_dot - d_dot) / denom; outPointOnL1 = o1 + s * d1; return true; }
     bool WorldToScreen(const glm::vec3& worldPos, const glm::mat4& viewMatrix, const glm::mat4& projectionMatrix, int screenWidth, int screenHeight, glm::vec2& outScreenPos) { if (screenWidth <= 0 || screenHeight <= 0) return false; glm::vec4 clipPos = projectionMatrix * viewMatrix * glm::vec4(worldPos, 1.0f); if (clipPos.w <= SCREEN_EPSILON) { return false; } glm::vec3 ndcPos = glm::vec3(clipPos) / clipPos.w; outScreenPos.x = (ndcPos.x + 1.0f) * 0.5f * static_cast<float>(screenWidth); outScreenPos.y = (1.0f - ndcPos.y) * 0.5f * static_cast<float>(screenHeight); return true; }
     void ScreenToCameraRay(int screenX, int screenY, int screenWidth, int screenHeight, const glm::mat4& invViewProjMatrix, const glm::vec3& cameraPos, glm::vec3& outRayOrigin, glm::vec3& outRayDirection) { float x_ndc = (2.0f * static_cast<float>(screenX)) / static_cast<float>(screenWidth) - 1.0f; float y_ndc = 1.0f - (2.0f * static_cast<float>(screenY)) / static_cast<float>(screenHeight); glm::vec4 worldNear_h = invViewProjMatrix * glm::vec4(x_ndc, y_ndc, -1.0f, 1.0f); if (std::abs(worldNear_h.w) < LINE_RAY_EPSILON) { worldNear_h.w = LINE_RAY_EPSILON; } glm::vec3 worldNear = glm::vec3(worldNear_h) / worldNear_h.w; outRayOrigin = cameraPos; outRayDirection = glm::normalize(worldNear - cameraPos); }
     bool RaycastToZPlane(int mouseX, int mouseY, int screenWidth, int screenHeight, const Urbaxio::Camera& camera, glm::vec3& outIntersectionPoint) { glm::vec3 rayOrigin, rayDirection; glm::mat4 view = camera.GetViewMatrix(); glm::mat4 projection = camera.GetProjectionMatrix((screenHeight > 0) ? ((float)screenWidth / (float)screenHeight) : 1.0f); Urbaxio::Camera::ScreenToWorldRay(mouseX, mouseY, screenWidth, screenHeight, view, projection, rayOrigin, rayDirection); glm::vec3 planeNormal(0.0f, 0.0f, 1.0f); glm::vec3 pointOnPlane(0.0f, 0.0f, 0.0f); float dirDotNormal = glm::dot(rayDirection, planeNormal); if (std::abs(dirDotNormal) < LINE_RAY_EPSILON) { return false; } float t = glm::dot(pointOnPlane - rayOrigin, planeNormal) / dirDotNormal; if (t < 0.0f) { return false; } outIntersectionPoint = rayOrigin + rayDirection * t; return true; }
     struct SnapCandidate : public Urbaxio::SnapResult { float screenDistSq = std::numeric_limits<float>::max(); };
-    float ClosestPointOnScreenSegmentSq(const glm::vec2& p, const glm::vec2& a, const glm::vec2& b, glm::vec2& closest, float& outT) { glm::vec2 ab = b - a; glm::vec2 ap = p - a; float lenSqAB = glm::length2(ab); if (lenSqAB < SCREEN_EPSILON * SCREEN_EPSILON) { closest = a; outT = 0.0f; return glm::length2(ap); } outT = glm::dot(ap, ab) / lenSqAB; outT = std::max(0.0f, std::min(1.0f, outT)); closest = a + outT * ab; return glm::length2(p - closest); }
 
     int GetSnapPriority(Urbaxio::SnapType type) {
         switch (type) {
@@ -110,8 +147,19 @@ SnapResult SnappingSystem::FindSnapPoint(
         
         glm::vec3 midpoint = (line.start + line.end) * 0.5f; glm::vec2 scrPosMid; if (WorldToScreen(midpoint, view, proj, screenWidth, screenHeight, scrPosMid)) { float dSq = glm::length2(mousePosScreen - scrPosMid); if (dSq < pointThresholdSq) { bool add = true; for(const auto&c:candidates){if((c.type==SnapType::ENDPOINT||c.type==SnapType::ORIGIN||c.type==SnapType::MIDPOINT)&&glm::distance2(c.worldPoint,midpoint)<LINE_RAY_EPSILON*LINE_RAY_EPSILON){add=false;break;}} if(add) { candidates.push_back({{true,midpoint,SnapType::MIDPOINT, lineId},dSq}); }} }
         
-        glm::vec2 screenP1, screenP2; bool p1Visible = WorldToScreen(line.start, view, proj, screenWidth, screenHeight, screenP1); bool p2Visible = WorldToScreen(line.end, view, proj, screenWidth, screenHeight, screenP2);
-        if (p1Visible && p2Visible) { glm::vec2 closestPtOnScreenSeg; float t_2d; float distSqToScreenSeg = ClosestPointOnScreenSegmentSq(mousePosScreen, screenP1, screenP2, closestPtOnScreenSeg, t_2d); if (distSqToScreenSeg < lineSnapThresholdSq) { glm::vec3 worldPointOnEdge = glm::mix(line.start, line.end, t_2d); candidates.push_back({ {true, worldPointOnEdge, SnapType::ON_EDGE, lineId}, distSqToScreenSeg }); } }
+        // --- REVISED 3D 'ON_EDGE' SNAPPING LOGIC ---
+        glm::vec3 closestPointOnRay, closestPointOnSegment;
+        if (ClosestPointsRaySegment(rayOrigin, rayDirection, line.start, line.end, closestPointOnRay, closestPointOnSegment)) {
+            // We found the closest points in 3D. Now, check if they are close enough on screen.
+            glm::vec2 screenSnapPos;
+            if (WorldToScreen(closestPointOnSegment, view, proj, screenWidth, screenHeight, screenSnapPos)) {
+                float distSqToScreen = glm::length2(mousePosScreen - screenSnapPos);
+                if (distSqToScreen < lineSnapThresholdSq) {
+                    // The 3D point is a valid snap candidate.
+                    candidates.push_back({ {true, closestPointOnSegment, SnapType::ON_EDGE, lineId}, distSqToScreen });
+                }
+            }
+        }
     }
 
     // 3. Scene Object Vertices and Faces
