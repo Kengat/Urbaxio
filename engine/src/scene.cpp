@@ -627,49 +627,42 @@ namespace Urbaxio::Engine {
         if (hostObject && !originalHostFace.IsNull()) {
             std::cout << "Scene: Detected new loop on existing face of object " << hostObject->get_id() << ". Attempting PARAMETRIC split." << std::endl;
             try {
+                // --- Step 1: Heal the host shape to ensure it's valid for boolean operations ---
                 ShapeFix_Shape shapeFixer(*hostObject->get_shape());
                 shapeFixer.Perform();
                 TopoDS_Shape healedShape = shapeFixer.Shape();
-                
+                AnalyzeShape(healedShape, "Healed Host Shape BEFORE split");
+                // Re-find the face on the healed shape using the context
                 Handle(ShapeBuild_ReShape) context = shapeFixer.Context();
                 TopoDS_Shape healedFaceShape = context->Apply(originalHostFace);
                 if (healedFaceShape.IsNull() || healedFaceShape.ShapeType() != TopAbs_FACE) {
                      throw Standard_Failure("Could not re-find host face after healing.");
                 }
                 TopoDS_Face healedHostFace = TopoDS::Face(healedFaceShape);
-                
+                AnalyzeShape(healedHostFace, "Healed Host Face BEFORE split");
                 Handle(Geom_Surface) hostSurface = BRep_Tool::Surface(healedHostFace);
                 if (hostSurface.IsNull()) {
                     throw Standard_Failure("Host face has no underlying surface.");
                 }
                 Handle(ShapeAnalysis_Surface) analysis = new ShapeAnalysis_Surface(hostSurface);
-
-                // --- Step 2: Create a list of topologically sound edges ---
+                // --- Step 2: Create a list of topologically sound edges from the loop vertices ---
                 TopTools_ListOfShape edgeList;
                 Standard_Real umin, umax, vmin, vmax;
                 hostSurface->Bounds(umin, umax, vmin, vmax);
-
                 for (size_t i = 0; i < finalOrderedVertices.size(); ++i) {
                     const glm::vec3& v1_glm = finalOrderedVertices[i];
                     const glm::vec3& v2_glm = finalOrderedVertices[(i + 1) % finalOrderedVertices.size()];
-                    
                     gp_Pnt p1_3d(v1_glm.x, v1_glm.y, v1_glm.z);
                     gp_Pnt p2_3d(v2_glm.x, v2_glm.y, v2_glm.z);
                     if (p1_3d.IsEqual(p2_3d, Precision::Confusion())) continue;
-                    
                     gp_Pnt2d uv1 = analysis->ValueOfUV(p1_3d, Precision::Confusion());
                     gp_Pnt2d uv2 = analysis->ValueOfUV(p2_3d, Precision::Confusion());
-
-                    // Clamp UV coordinates to surface bounds to avoid floating point errors at the boundary
                     uv1.SetX(std::max(umin, std::min(umax, uv1.X())));
                     uv1.SetY(std::max(vmin, std::min(vmax, uv1.Y())));
                     uv2.SetX(std::max(umin, std::min(umax, uv2.X())));
                     uv2.SetY(std::max(vmin, std::min(vmax, uv2.Y())));
-                    
                     if (uv1.IsEqual(uv2, Precision::Confusion())) continue;
-
                     Handle(Geom2d_Line) pcurve = new Geom2d_Line(uv1, gp_Dir2d(uv2.X() - uv1.X(), uv2.Y() - uv1.Y()));
-                    // Use the constructor that takes parameters
                     Standard_Real u_start = 0.0;
                     Standard_Real u_end = uv1.Distance(uv2);
                     BRepBuilderAPI_MakeEdge edgeMaker(pcurve, hostSurface, u_start, u_end);
@@ -681,48 +674,62 @@ namespace Urbaxio::Engine {
                     }
                     edgeList.Append(edgeMaker.Edge());
                 }
-                
-                // --- Step 3: Reliable Wire Assembly using ShapeFix_Wire ---
                 BRepBuilderAPI_MakeWire tempWireMaker;
                 tempWireMaker.Add(edgeList);
-
                 if (tempWireMaker.Wire().IsNull()) {
                     throw Standard_Failure("BRepBuilderAPI_MakeWire failed to create even a disconnected wire.");
                 }
-
                 Handle(ShapeFix_Wire) wireFixer = new ShapeFix_Wire();
                 wireFixer->Init(tempWireMaker.Wire(), healedHostFace, Precision::Confusion());
                 if (!wireFixer->Perform()) {
                     throw Standard_Failure("ShapeFix_Wire::Perform() returned false, indicating a critical failure.");
                 }
-
                 if (wireFixer->LastFixStatus(ShapeExtend_FAIL)) {
                     throw Standard_Failure("ShapeFix_Wire could not fix all problems in the wire (e.g., gaps are too large).");
                 }
-
                 TopoDS_Wire cuttingWire = wireFixer->Wire();
+                AnalyzeShape(cuttingWire, "Cutting Wire BEFORE split");
                 if (cuttingWire.IsNull() || !BRep_Tool::IsClosed(cuttingWire)) {
                     throw Standard_Failure("The final wire created by ShapeFix_Wire is not a single, closed loop.");
                 }
-
-                // --- CORRECTED SPLITTER LOGIC ---
+                // --- Step 4: Perform the Split operation ---
                 BOPAlgo_Splitter splitter;
-                
                 TopTools_ListOfShape arguments;
                 arguments.Append(healedShape);
                 splitter.SetArguments(arguments);
-
                 TopTools_ListOfShape tools;
                 tools.Append(cuttingWire);
                 splitter.SetTools(tools);
+                splitter.Perform();
+                // Count faces before for validation
+                TopExp_Explorer faceExpBefore(healedShape, TopAbs_FACE);
+                int faceCountBefore = 0;
+                for (; faceExpBefore.More(); faceExpBefore.Next()) faceCountBefore++;
 
                 splitter.Perform();
 
+                // ROBUSTNESS: Check for errors from the boolean operation itself.
                 if (splitter.HasErrors()) {
                     splitter.GetReport()->Dump(std::cout);
                     throw Standard_Failure("BOPAlgo_Splitter failed to perform operation.");
                 }
-                hostObject->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(splitter.Shape())));
+                
+                TopoDS_Shape splitShape = splitter.Shape();
+
+                // --- NEW: Validate that the split actually happened ---
+                TopExp_Explorer faceExpAfter(splitShape, TopAbs_FACE);
+                int faceCountAfter = 0;
+                for (; faceExpAfter.More(); faceExpAfter.Next()) faceCountAfter++;
+
+                if (faceCountAfter <= faceCountBefore) {
+                    throw Standard_Failure("BOPAlgo_Splitter completed without errors but failed to split the face. This can indicate a degenerate cutting wire or tolerance issues.");
+                }
+                AnalyzeShape(splitShape, "Split Shape AFTER BOPAlgo_Splitter");
+                ShapeFix_Shape finalFixer(splitShape);
+                finalFixer.Perform();
+                TopoDS_Shape finalShape = finalFixer.Shape();
+                AnalyzeShape(finalShape, "Final Shape AFTER ShapeFix_Shape");
+                hostObject->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
                 UpdateObjectBoundary(hostObject);
                 hostObject->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*hostObject->get_shape()));
                 hostObject->vao = 0;
@@ -790,36 +797,19 @@ namespace Urbaxio::Engine {
 
 
     // --- PUSH/PULL (MODIFIED) ---
-    TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal) {
+    TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& guideNormal) {
         if (faceVertices.empty()) return TopoDS_Face();
-        
-        // Find center of user-provided points
-        glm::vec3 targetCenter(0.0f);
-        for(const auto& v : faceVertices) {
-            targetCenter += v;
-        }
-        targetCenter /= (float)faceVertices.size();
-        
-        struct FaceCandidate {
-            TopoDS_Face face;
-            float distance = std::numeric_limits<float>::max();
-        };
-        
-        std::vector<FaceCandidate> candidates;
-
+        // Step 1: Find all candidate faces where all loop vertices lie on the face.
+        std::vector<TopoDS_Face> candidates;
         TopExp_Explorer faceExplorer(shape, TopAbs_FACE);
         for (; faceExplorer.More(); faceExplorer.Next()) {
             TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
-            
             try {
                 BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_False);
                 if(surfaceAdaptor.GetType() != GeomAbs_Plane) continue;
-
-                // Check if all loop points are on or inside the face
                 bool allPointsOnFace = true;
                 for(const auto& v : faceVertices) {
                     BRepClass_FaceClassifier classifier;
-                    // Use a slightly larger tolerance for classification
                     classifier.Perform(candidateFace, gp_Pnt(v.x, v.y, v.z), 1e-4); 
                     TopAbs_State state = classifier.State();
                     if(state != TopAbs_ON && state != TopAbs_IN) {
@@ -827,30 +817,71 @@ namespace Urbaxio::Engine {
                         break;
                     }
                 }
-                
                 if (allPointsOnFace) {
-                    // This is a valid candidate, calculate its distance to the target
-                    GProp_GProps props;
-                    BRepGProp::SurfaceProperties(candidateFace, props);
-                    gp_Pnt center = props.CentreOfMass();
-                    float dist = (float)center.Distance(gp_Pnt(targetCenter.x, targetCenter.y, targetCenter.z));
-                    candidates.push_back({candidateFace, dist});
+                    candidates.push_back(candidateFace);
                 }
             } catch (const Standard_Failure&) {
                 continue;
             }
         }
-        
         if (candidates.empty()) {
             return TopoDS_Face();
         }
-        
-        // Sort candidates by distance, closest first
-        std::sort(candidates.begin(), candidates.end(), [](const FaceCandidate& a, const FaceCandidate& b) {
-            return a.distance < b.distance;
-        });
-        
-        return candidates[0].face;
+        if (candidates.size() == 1) {
+            return candidates[0];
+        }
+        // Step 2: Filter by normal alignment (max |dot|)
+        std::vector<TopoDS_Face> alignedCandidates;
+        double maxDotAbs = -1.0;
+        gp_Dir targetDir(guideNormal.x, guideNormal.y, guideNormal.z);
+        for (const auto& candidateFace : candidates) {
+            try {
+                BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_True);
+                gp_Pln plane = surfaceAdaptor.Plane();
+                gp_Dir candidateDir = plane.Axis().Direction();
+                if (candidateFace.Orientation() == TopAbs_REVERSED) candidateDir.Reverse();
+                double dot = std::abs(targetDir.Dot(candidateDir));
+                if (dot > maxDotAbs) maxDotAbs = dot;
+            } catch (const Standard_Failure&) { continue; }
+        }
+        const double NORMAL_ALIGNMENT_TOLERANCE = 1e-6;
+        for (const auto& candidateFace : candidates) {
+            try {
+                BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_True);
+                gp_Pln plane = surfaceAdaptor.Plane();
+                gp_Dir candidateDir = plane.Axis().Direction();
+                if (candidateFace.Orientation() == TopAbs_REVERSED) candidateDir.Reverse();
+                double dot = std::abs(targetDir.Dot(candidateDir));
+                if (std::abs(dot - maxDotAbs) < NORMAL_ALIGNMENT_TOLERANCE) {
+                    alignedCandidates.push_back(candidateFace);
+                }
+            } catch (const Standard_Failure&) { continue; }
+        }
+        if (alignedCandidates.size() == 1) {
+            return alignedCandidates[0];
+        }
+        if (alignedCandidates.empty()) {
+            alignedCandidates = candidates;
+        }
+        // Step 3: Tie-break by distance to center of mass
+        glm::vec3 targetCenter(0.0f);
+        for(const auto& v : faceVertices) targetCenter += v;
+        targetCenter /= (float)faceVertices.size();
+        TopoDS_Face bestMatch;
+        float minDistance = std::numeric_limits<float>::max();
+        for (const auto& candidateFace : alignedCandidates) {
+            try {
+                GProp_GProps props;
+                BRepGProp::SurfaceProperties(candidateFace, props);
+                gp_Pnt center = props.CentreOfMass();
+                float dist = (float)center.Distance(gp_Pnt(targetCenter.x, targetCenter.y, targetCenter.z));
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    bestMatch = candidateFace;
+                }
+            } catch (const Standard_Failure&) { continue; }
+        }
+        return bestMatch;
     }
 
     void Scene::AnalyzeShape(const TopoDS_Shape& shape, const std::string& label) {

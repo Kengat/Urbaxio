@@ -136,7 +136,11 @@ namespace Urbaxio::Engine {
         bool ArePointsCoplanar(const std::vector<glm::vec3>& points, gp_Pln& outPlane);
         void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
         
-        TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal);
+        TopoDS_Face FindOriginalFace(
+            const TopoDS_Shape& shape, 
+            const std::vector<glm::vec3>& faceVertices, 
+            const glm::vec3& guideNormal
+        );
         void AnalyzeShape(const TopoDS_Shape& shape, const std::string& label);
 
         SceneObject* CreateRectangularFace(const std::string& name, const gp_Pnt& p1, const gp_Pnt& p2, const gp_Pnt& p3, const gp_Pnt& p4);
