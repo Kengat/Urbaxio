@@ -15,6 +15,7 @@
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopLoc_Location.hxx>
+#include <TopAbs.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Trsf.hxx>
@@ -123,17 +124,16 @@ namespace Urbaxio::CadKernel {
                 }
                 gp_Dir normal(normals(normIndex), normals(normIndex + 1), normals(normIndex + 2));
 
-                //                       
-                gp_Vec normalVec(normal.X(), normal.Y(), normal.Z());
-                gp_XYZ normalXYZ = normalVec.XYZ();
-                transformation.Transforms(normalXYZ);
-                normalVec.SetXYZ(normalXYZ);
-                if (normalVec.Magnitude() > gp::Resolution()) {
-                    normal = normalVec.Normalized();
+                // --- FIX: Correctly transform the normal direction ---
+                // This applies only the rotational part of the transformation, ignoring any translation.
+                // The old method incorrectly treated the normal as a point, corrupting its direction.
+                normal.Transform(transformation);
+
+                // Invert normal for reversed faces for correct lighting
+                if (face.Orientation() == TopAbs_REVERSED) {
+                    normal.Reverse();
                 }
-                else {
-                    normal.SetXYZ(gp_XYZ(0, 0, 1));
-                }
+                // --- END FIX ---
 
                 out.vertices.push_back(static_cast<float>(vertex.X()));
                 out.vertices.push_back(static_cast<float>(vertex.Y()));
