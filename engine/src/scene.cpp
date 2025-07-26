@@ -799,6 +799,7 @@ namespace Urbaxio::Engine {
     // --- PUSH/PULL (MODIFIED) ---
     TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& guideNormal) {
         if (faceVertices.empty()) return TopoDS_Face();
+        // --- NEW: Refactored logic with normal-based tie-breaking ---
         // Step 1: Find all candidate faces where all loop vertices lie on the face.
         std::vector<TopoDS_Face> candidates;
         TopExp_Explorer faceExplorer(shape, TopAbs_FACE);
@@ -824,13 +825,15 @@ namespace Urbaxio::Engine {
                 continue;
             }
         }
+        // Step 2: Handle the results
         if (candidates.empty()) {
-            return TopoDS_Face();
+            return TopoDS_Face(); // No suitable face found
         }
         if (candidates.size() == 1) {
-            return candidates[0];
+            return candidates[0]; // Only one candidate, return it
         }
-        // Step 2: Filter by normal alignment (max |dot|)
+        // Step 3: Multi-pass filtering to find the best match
+        // Pass 1: Filter by normal alignment. Keep only the faces that are most parallel to the guide normal.
         std::vector<TopoDS_Face> alignedCandidates;
         double maxDotAbs = -1.0;
         gp_Dir targetDir(guideNormal.x, guideNormal.y, guideNormal.z);
@@ -841,29 +844,32 @@ namespace Urbaxio::Engine {
                 gp_Dir candidateDir = plane.Axis().Direction();
                 if (candidateFace.Orientation() == TopAbs_REVERSED) candidateDir.Reverse();
                 double dot = std::abs(targetDir.Dot(candidateDir));
-                if (dot > maxDotAbs) maxDotAbs = dot;
+                if (dot > maxDotAbs) {
+                    maxDotAbs = dot;
+                }
             } catch (const Standard_Failure&) { continue; }
         }
         const double NORMAL_ALIGNMENT_TOLERANCE = 1e-6;
-        for (const auto& candidateFace : candidates) {
-            try {
-                BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_True);
-                gp_Pln plane = surfaceAdaptor.Plane();
-                gp_Dir candidateDir = plane.Axis().Direction();
-                if (candidateFace.Orientation() == TopAbs_REVERSED) candidateDir.Reverse();
-                double dot = std::abs(targetDir.Dot(candidateDir));
-                if (std::abs(dot - maxDotAbs) < NORMAL_ALIGNMENT_TOLERANCE) {
-                    alignedCandidates.push_back(candidateFace);
-                }
-            } catch (const Standard_Failure&) { continue; }
+        if (maxDotAbs > (1.0 - NORMAL_ALIGNMENT_TOLERANCE)) {
+            for (const auto& candidateFace : candidates) {
+                try {
+                    BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_True);
+                    gp_Pln plane = surfaceAdaptor.Plane();
+                    gp_Dir candidateDir = plane.Axis().Direction();
+                    if (candidateFace.Orientation() == TopAbs_REVERSED) candidateDir.Reverse();
+                    if (std::abs(targetDir.Dot(candidateDir)) >= (maxDotAbs - NORMAL_ALIGNMENT_TOLERANCE)) {
+                        alignedCandidates.push_back(candidateFace);
+                    }
+                } catch (const Standard_Failure&) { continue; }
+            }
         }
         if (alignedCandidates.size() == 1) {
             return alignedCandidates[0];
         }
-        if (alignedCandidates.empty()) {
+        if (alignedCandidates.empty()) { // Should not happen if initial candidates were found, but as a fallback
             alignedCandidates = candidates;
         }
-        // Step 3: Tie-break by distance to center of mass
+        // Pass 2: Tie-break using distance to center of mass.
         glm::vec3 targetCenter(0.0f);
         for(const auto& v : faceVertices) targetCenter += v;
         targetCenter /= (float)faceVertices.size();
