@@ -25,31 +25,31 @@ namespace Urbaxio {
         Renderer();
         ~Renderer();
         bool Initialize();
-        void RenderFrame(
-            SDL_Window* window,
-            const Urbaxio::Camera& camera,
-            Urbaxio::Engine::Scene* scene,
-            // Appearance
-            const glm::vec3& defaultObjectColor,
-            const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
-            bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
-            const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ, 
-            const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
-            // Interactive Effects
-            const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
-            // Selections
-            uint64_t selectedObjId,
-            const std::vector<size_t>& selectedTriangleIndices,
-            const std::set<uint64_t>& selectedLineIDs,
-            const glm::vec3& selectionHighlightColor,
-            // Hovers
-            uint64_t hoveredObjId,
-            const std::vector<size_t>& hoveredFaceTriangleIndices,
-            const glm::vec3& hoverHighlightColor,
-            // Tools
-            const SnapResult& currentSnap,
-            ImDrawData* imguiDrawData
-        );
+            void RenderFrame(
+        SDL_Window* window,
+        const Urbaxio::Camera& camera,
+        Urbaxio::Engine::Scene* scene,
+        // Appearance
+        const glm::vec3& defaultObjectColor,
+        const glm::vec3& lightColor, float ambientStrength,
+        bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
+        const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ,
+        const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
+        // Interactive Effects
+        const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
+        // Selections
+        uint64_t selectedObjId,
+        const std::vector<size_t>& selectedTriangleIndices,
+        const std::set<uint64_t>& selectedLineIDs,
+        const glm::vec3& selectionHighlightColor,
+        // Hovers
+        uint64_t hoveredObjId,
+        const std::vector<size_t>& hoveredFaceTriangleIndices,
+        const glm::vec3& hoverHighlightColor,
+        // Tools
+        const SnapResult& currentSnap,
+        ImDrawData* imguiDrawData
+    );
         void SetViewport(int x, int y, int width, int height);
         float GetMaxLineWidth() const { return maxLineWidth; }
 

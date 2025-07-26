@@ -348,7 +348,7 @@ namespace Urbaxio {
         Urbaxio::Engine::Scene* scene,
         // Appearance
         const glm::vec3& defaultObjectColor,
-        const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
+        const glm::vec3& lightColor, float ambientStrength,
         bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
         const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ,
         const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
@@ -378,6 +378,9 @@ namespace Urbaxio {
             glUseProgram(objectShaderProgram);
             glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            // Use camera's front direction as light direction (headlamp lighting)
+            // The light direction should point FROM the light source TO the surface
+            glm::vec3 lightDir = -glm::normalize(camera.Front);
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir));
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor));
             glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength);

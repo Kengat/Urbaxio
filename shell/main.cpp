@@ -101,7 +101,6 @@ int main(int argc, char* argv[]) {
     // --- Appearance Settings ---
     ImVec4 clear_color = ImVec4(0.13f, 0.13f, 0.18f, 1.00f);
     glm::vec3 objectColor(0.8f, 0.85f, 0.9f);
-    glm::vec3 lightDirection = glm::normalize(glm::vec3(0.273f, 0.268f, 0.259f));
     glm::vec3 lightColor = glm::vec3(0.618f, 0.858f, 0.844f);
     float ambientStrength = 0.267f;
     bool showGrid = true; bool showAxes = true;
@@ -279,7 +278,11 @@ int main(int argc, char* argv[]) {
         if (show_style_editor) {
             ImGui::Begin("Appearance Settings", &show_style_editor);
             if (ImGui::CollapsingHeader("Scene Colors")) { ImGui::ColorEdit3("Background", (float*)&clear_color); ImGui::ColorEdit3("Default Object", (float*)&objectColor); }
-            if (ImGui::CollapsingHeader("Lighting")) { ImGui::SliderFloat("Ambient Strength", &ambientStrength, 0.0f, 1.0f); static glm::vec3 lightDirInput = lightDirection; if (ImGui::SliderFloat3("Light Direction", glm::value_ptr(lightDirInput), -1.0f, 1.0f)) { if (glm::length(lightDirInput) > 1e-6f) { lightDirection = glm::normalize(lightDirInput); } } ImGui::ColorEdit3("Light Color", glm::value_ptr(lightColor)); }
+            if (ImGui::CollapsingHeader("Lighting")) { 
+                ImGui::TextDisabled("Light follows camera direction (headlamp mode)");
+                ImGui::SliderFloat("Ambient Strength", &ambientStrength, 0.0f, 1.0f); 
+                ImGui::ColorEdit3("Light Color", glm::value_ptr(lightColor)); 
+            }
             if (ImGui::CollapsingHeader("Grid & Axes")) { ImGui::Checkbox("Show Grid", &showGrid); ImGui::SameLine(); ImGui::Checkbox("Show Axes", &showAxes); ImGui::ColorEdit3("Grid Color", glm::value_ptr(gridColor)); ImGui::SeparatorText("Positive Axes"); ImGui::ColorEdit4("Axis X Color", glm::value_ptr(axisColorX)); ImGui::ColorEdit4("Axis Y Color", glm::value_ptr(axisColorY)); ImGui::ColorEdit4("Axis Z Color", glm::value_ptr(axisColorZ)); ImGui::ColorEdit4("Fade To Color##Positive", glm::value_ptr(positiveAxisFadeColor)); ImGui::SameLine(); ImGui::TextDisabled("(also used for axis markers)"); ImGui::SliderFloat("Width##Positive", &axisLineWidth, 1.0f, maxLineWidth); ImGui::SeparatorText("Negative Axes"); ImGui::ColorEdit4("Fade To Color##Negative", glm::value_ptr(negativeAxisFadeColor)); ImGui::SliderFloat("Width##Negative", &negAxisLineWidth, 1.0f, maxLineWidth); }
             if (ImGui::CollapsingHeader("Interactive Effects")) { ImGui::SliderFloat("Cursor Radius", &cursorRadius, 1.0f, 50.0f); ImGui::SliderFloat("Effect Intensity", &effectIntensity, 0.1f, 2.0f); }
             
@@ -317,7 +320,7 @@ int main(int argc, char* argv[]) {
         toolManager.RenderPreview(renderer, currentSnap);
         
         // --- Render the main frame ---
-        renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightDirection, lightColor, ambientStrength, 
+        renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightColor, ambientStrength, 
             showGrid, showAxes, axisLineWidth, negAxisLineWidth,
             gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
             cursorWorldPos, cursorRadius, effectIntensity, 
