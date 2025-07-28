@@ -3,12 +3,15 @@
 #include "camera.h"
 #include "snapping.h"
 #include <tools/ToolManager.h>
+#include "engine/scene.h"       // This is needed for the Scene class
+#include "engine/scene_object.h"  // NEW: This is required for SceneObject methods like get_mesh_buffers()
 
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
 #include <SDL2/SDL.h>
 #include <iostream>
 #include <cmath>
+#include <limits> // For std::numeric_limits
 
 namespace Urbaxio {
 
@@ -46,7 +49,14 @@ namespace Urbaxio {
 
         // Update modifier key states at the start of the frame
         const Uint8* keyboardState = SDL_GetKeyboardState(NULL);
-        shiftDown = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
+        bool newShiftDown = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
+        
+        // NEW: Detect if shift was just released while middle mouse is held down
+        if (shiftDown && !newShiftDown && middleMouseButtonDown) {
+            firstMouse = true; // This will trigger a re-targeting for the orbit on next motion
+        }
+        shiftDown = newShiftDown;
+        
         ctrlDown = keyboardState[SDL_SCANCODE_LCTRL] || keyboardState[SDL_SCANCODE_RCTRL] || keyboardState[SDL_SCANCODE_LGUI] || keyboardState[SDL_SCANCODE_RGUI];
 
         while (SDL_PollEvent(&event)) { 
@@ -122,7 +132,17 @@ namespace Urbaxio {
                 
                 case SDL_MOUSEWHEEL: 
                     if (!wantCaptureMouse) { 
-                        camera.ProcessMouseScroll(static_cast<float>(event.wheel.y));
+                        if (ctrlDown) {
+                            // With Ctrl, use the old orbital zoom
+                            camera.ProcessOrbitZoom(static_cast<float>(event.wheel.y));
+                        } else {
+                            // By default, use the new dolly zoom to cursor
+                            int mouseX, mouseY;
+                            SDL_GetMouseState(&mouseX, &mouseY);
+                            int w, h;
+                            SDL_GetWindowSize(window, &w, &h);
+                            camera.ProcessDollyZoom(static_cast<float>(event.wheel.y), mouseX, mouseY, w, h, *scene);
+                        }
                     } 
                     break;
 
@@ -135,15 +155,43 @@ namespace Urbaxio {
         // Handle continuous actions like camera panning/orbiting
         int w, h;
         SDL_GetWindowSize(window, &w, &h);
-        HandleMouseMotion(camera, window, w, h);
+        HandleMouseMotion(camera, window, w, h, *scene);
     }
 
-    void InputHandler::HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h) {
+    void InputHandler::HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h, const Urbaxio::Engine::Scene& scene) {
         int cX, cY;
         SDL_GetMouseState(&cX, &cY);
 
         if (middleMouseButtonDown && isMouseFocused) {
             if (firstMouse) {
+                // Set orbit target when starting orbit (not pan)
+                if (!shiftDown) {
+                    glm::vec3 rayOrigin, rayDir;
+                    Camera::ScreenToWorldRay(cX, cY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w / display_h), rayOrigin, rayDir);
+                    
+                    float closest_t = std::numeric_limits<float>::max();
+                    bool hit = false;
+                    
+                    for (const auto* obj : scene.get_all_objects()) {
+                        if (obj && obj->has_mesh()) {
+                            const auto& mesh = obj->get_mesh_buffers();
+                            for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                                unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
+                                glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+                                glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+                                glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+                                float t;
+                                if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closest_t) {
+                                    closest_t = t;
+                                    hit = true;
+                                }
+                            }
+                        }
+                    }
+                    if (hit) {
+                        camera.SetOrbitTarget(rayOrigin + rayDir * closest_t);
+                    }
+                }
                 lastMouseX = cX;
                 lastMouseY = cY;
                 firstMouse = false;
@@ -152,7 +200,7 @@ namespace Urbaxio {
                 float dY = static_cast<float>(cY - lastMouseY);
                 if (std::abs(dX) > 1e-3f || std::abs(dY) > 1e-3f) {
                     if (shiftDown) {
-                        camera.ProcessPan(dX, dY);
+                        camera.ProcessPan(dX, dY, cX, cY, display_w, display_h, scene);
                     } else {
                         camera.ProcessOrbit(dX, dY);
                     }

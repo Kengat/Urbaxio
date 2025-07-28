@@ -7,6 +7,8 @@
 #include <glm/gtc/quaternion.hpp> // Optional: For more advanced rotations later
 
 namespace Urbaxio {
+    // FORWARD DECLARATION: Tell the compiler that the Scene class exists without including the full header.
+    namespace Engine { class Scene; }
 
     // Represents the 3D camera and handles its movement logic.
     class Camera {
@@ -53,10 +55,16 @@ namespace Urbaxio {
         void ProcessOrbit(float xoffset, float yoffset);
 
         // Processes input received from mouse movement for panning
-        void ProcessPan(float xoffset, float yoffset);
+        void ProcessPan(float xoffset, float yoffset, int mouseX, int mouseY, int screenWidth, int screenHeight, const Engine::Scene& scene);
 
-        // Processes input received from a mouse scroll-wheel event
-        void ProcessMouseScroll(float yoffset);
+        // Processes input for orbital zoom (zooming towards the target)
+        void ProcessOrbitZoom(float yoffset);
+
+        // NEW: Processes input for dolly zoom (zooming towards the mouse cursor)
+        void ProcessDollyZoom(float yoffset, int mouseX, int mouseY, int screenWidth, int screenHeight, const Engine::Scene& scene);
+
+        // NEW: Sets a new pivot point for orbiting and re-calculates orbital parameters
+        void SetOrbitTarget(const glm::vec3& hitPoint);
 
         // --- Picking Ray Function ---
         // Calculates a world space ray from screen coordinates

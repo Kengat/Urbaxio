@@ -43,7 +43,7 @@ namespace Urbaxio {
         bool firstMouse;
 
         // Helpers
-        void HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h);
+        void HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h, const Urbaxio::Engine::Scene& scene);
     };
 
 } // namespace Urbaxio
