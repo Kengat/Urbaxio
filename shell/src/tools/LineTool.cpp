@@ -84,7 +84,7 @@ void LineTool::Deactivate() {
 void LineTool::reset() {
     currentState = ToolState::IDLE;
     lockedAxisType = SnapType::NONE;
-    lineLengthInputBuf[0] = '\0';
+    lengthInputBuf[0] = '\0';
 }
 
 void LineTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {
@@ -101,7 +101,7 @@ void LineTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {
     if (currentState == ToolState::IDLE) {
         currentLineStartPoint = clickPoint;
         currentState = ToolState::AWAITING_SECOND_POINT_FREE;
-        lineLengthInputBuf[0] = '\0';
+        lengthInputBuf[0] = '\0';
     } else if (currentState == ToolState::AWAITING_SECOND_POINT_FREE || currentState == ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED) {
         finalizeLine(clickPoint);
     }
@@ -112,7 +112,7 @@ void LineTool::OnRightMouseDown() {
         currentState = ToolState::AWAITING_SECOND_POINT_FREE;
     } else if (currentState == ToolState::AWAITING_SECOND_POINT_FREE) {
         currentState = ToolState::IDLE;
-        lineLengthInputBuf[0] = '\0';
+        lengthInputBuf[0] = '\0';
     } else if (currentState == ToolState::IDLE) {
         reset();
     }
@@ -129,9 +129,11 @@ void LineTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
         bool isBackspace = (key == SDLK_BACKSPACE);
 
         if (isEnter) {
-            float length;
-            auto [ptr, ec] = std::from_chars(lineLengthInputBuf, lineLengthInputBuf + strlen(lineLengthInputBuf), length);
-            if (ec == std::errc() && ptr == lineLengthInputBuf + strlen(lineLengthInputBuf) && length > 1e-4f) {
+            float length_mm;
+            auto [ptr, ec] = std::from_chars(lengthInputBuf, lengthInputBuf + strlen(lengthInputBuf), length_mm);
+            if (ec == std::errc() && ptr == lengthInputBuf + strlen(lengthInputBuf)) {
+                float length_m = length_mm / 1000.0f; // Convert mm to meters
+                if (length_m > 1e-4f) {
                 glm::vec3 direction;
                 if (currentState == ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED) {
                     float dotProd = glm::dot(currentRubberBandEnd - currentLineStartPoint, lockedAxisDir);
@@ -141,19 +143,20 @@ void LineTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
                     if (glm::length(direction) < 1e-6f) { reset(); return; }
                     direction = glm::normalize(direction);
                 }
-                glm::vec3 finalEndPoint = currentLineStartPoint + direction * length;
+                glm::vec3 finalEndPoint = currentLineStartPoint + direction * length_m;
                 finalizeLine(finalEndPoint);
-            } else {
-                lineLengthInputBuf[0] = '\0'; // Clear bad input
             }
+        } else {
+            lengthInputBuf[0] = '\0'; // Clear bad input
+        }
         } else if (isBackspace) {
-            RemoveLastChar(lineLengthInputBuf);
+            RemoveLastChar(lengthInputBuf);
         } else {
             char c = '\0';
             if ((key >= SDLK_0 && key <= SDLK_9)) c = (char)key;
             else if ((key >= SDLK_KP_0 && key <= SDLK_KP_9)) c = '0' + (key - SDLK_KP_0);
-            else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(lineLengthInputBuf, '.') == nullptr) c = '.'; }
-            if (c != '\0') AppendCharToBuffer(lineLengthInputBuf, 64, c);
+            else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(lengthInputBuf, '.') == nullptr) c = '.'; }
+            if (c != '\0') AppendCharToBuffer(lengthInputBuf, 64, c);
         }
     }
 }
@@ -200,13 +203,13 @@ void LineTool::finalizeLine(const glm::vec3& endPoint) {
     // Reset for the next line
     currentState = ToolState::IDLE;
     lockedAxisType = SnapType::NONE;
-    lineLengthInputBuf[0] = '\0';
+    lengthInputBuf[0] = '\0';
 }
 
 void LineTool::RenderUI() {
     if (currentState != ToolState::IDLE) {
         ImGui::Separator();
-        ImGui::Text("Length: %s", lineLengthInputBuf);
+        ImGui::Text("Length (mm): %s", lengthInputBuf);
         ImGui::Separator();
     }
 }

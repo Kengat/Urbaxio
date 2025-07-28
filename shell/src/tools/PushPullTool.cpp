@@ -121,8 +121,8 @@ void PushPullTool::reset() {
     isPushPullActive = false;
     pushPull_objId = 0;
     pushPull_faceIndices.clear();
-    pushPullCurrentDistance = 0.0f;
-    distanceInputBuf[0] = '\0';
+    pushPullCurrentLength = 0.0f;
+    lengthInputBuf[0] = '\0';
     if(context.hoveredObjId) *context.hoveredObjId = 0;
     if(context.hoveredFaceTriangleIndices) context.hoveredFaceTriangleIndices->clear();
 }
@@ -167,13 +167,13 @@ void PushPullTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl
             glm::intersectRayPlane(rayOrigin, rayDir, glm::vec3(mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+1], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+2]), pushPull_faceNormal, hitDist);
             pushPull_startPoint = rayOrigin + rayDir * hitDist;
             
-            pushPullCurrentDistance = 0.0f;
+            pushPullCurrentLength = 0.0f;
             SDL_GetMouseState(&pushPull_startMouseX, &pushPull_startMouseY);
 
             // Clear any previous selection
             *context.selectedObjId = 0;
             context.selectedTriangleIndices->clear();
-            distanceInputBuf[0] = '\0';
+            lengthInputBuf[0] = '\0';
         }
     }
 }
@@ -192,22 +192,24 @@ void PushPullTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
     
     if (isPushPullActive) {
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
-            float dist;
-            auto [ptr, ec] = std::from_chars(distanceInputBuf, distanceInputBuf + strlen(distanceInputBuf), dist);
-            if (ec == std::errc() && ptr == distanceInputBuf + strlen(distanceInputBuf)) {
-                pushPullCurrentDistance = dist;
+            float length_mm;
+            auto [ptr, ec] = std::from_chars(lengthInputBuf, lengthInputBuf + strlen(lengthInputBuf), length_mm);
+            if (ec == std::errc() && ptr == lengthInputBuf + strlen(lengthInputBuf)) {
+                // NEW: Apply the sign from the current mouse-drag direction
+                float sign = (pushPullCurrentLength < 0.0f) ? -1.0f : 1.0f;
+                pushPullCurrentLength = (length_mm / 1000.0f) * sign;
                 finalizePushPull(ctrl);
             } else {
-                distanceInputBuf[0] = '\0'; // Clear bad input
+                lengthInputBuf[0] = '\0'; // Clear bad input
             }
         } else if (key == SDLK_BACKSPACE) {
-            size_t len = strlen(distanceInputBuf); if (len > 0) distanceInputBuf[len - 1] = '\0';
+            size_t len = strlen(lengthInputBuf); if (len > 0) lengthInputBuf[len - 1] = '\0';
         } else {
             char c = '\0';
             if ((key >= SDLK_0 && key <= SDLK_9)) c = (char)key;
             else if ((key >= SDLK_KP_0 && key <= SDLK_KP_9)) c = '0' + (key - SDLK_KP_0);
-            else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(distanceInputBuf, '.') == nullptr) c = '.'; }
-            if (c != '\0') { size_t len = strlen(distanceInputBuf); if (len + 1 < 64) { distanceInputBuf[len] = c; distanceInputBuf[len + 1] = '\0';} }
+            else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(lengthInputBuf, '.') == nullptr) c = '.'; }
+            if (c != '\0') { size_t len = strlen(lengthInputBuf); if (len + 1 < 64) { lengthInputBuf[len] = c; lengthInputBuf[len + 1] = '\0';} }
         }
     }
 }
@@ -220,10 +222,10 @@ void PushPullTool::OnUpdate(const SnapResult& snap) {
         *context.hoveredFaceTriangleIndices = pushPull_faceIndices;
 
         if (snap.snapped && IsValidPushPullSnap(snap.type)) {
-            // Project the snapped point onto the extrusion axis to get the distance
+            // Project the snapped point onto the extrusion axis to get the length
             glm::vec3 projectedPoint = ClosestPointOnLine_ForPushPull(pushPull_startPoint, pushPull_faceNormal, snap.worldPoint);
             glm::vec3 offsetVector = projectedPoint - pushPull_startPoint;
-            pushPullCurrentDistance = glm::dot(offsetVector, pushPull_faceNormal);
+            pushPullCurrentLength = glm::dot(offsetVector, pushPull_faceNormal);
         } else {
             // Fallback to screen-space mouse dragging if no valid snap
             glm::mat4 view = context.camera->GetViewMatrix();
@@ -240,7 +242,7 @@ void PushPullTool::OnUpdate(const SnapResult& snap) {
                     float pixel_dist = glm::dot(mouseDelta, screenAxisDir);
                     // Sensitivity based on distance to object
                     float sensitivity = glm::distance(context.camera->Position, pushPull_startPoint) * 0.001f;
-                    pushPullCurrentDistance = pixel_dist * sensitivity;
+                    pushPullCurrentLength = pixel_dist * sensitivity;
                 }
             }
         }
@@ -252,7 +254,7 @@ void PushPullTool::OnUpdate(const SnapResult& snap) {
 
 void PushPullTool::finalizePushPull(bool ctrl) {
     if (context.scene && pushPull_objId != 0) {
-        if (std::abs(pushPullCurrentDistance) > 1e-4) {
+        if (std::abs(pushPullCurrentLength) > 1e-4) {
             
             Urbaxio::Engine::SceneObject* obj = context.scene->get_object_by_id(pushPull_objId);
             if (!obj) { reset(); return; }
@@ -278,7 +280,7 @@ void PushPullTool::finalizePushPull(bool ctrl) {
                 context.scene, 
                 faceVertices,
                 pushPull_faceNormal,
-                pushPullCurrentDistance,
+                pushPullCurrentLength,
                 ctrl
             );
             context.scene->getCommandManager()->ExecuteCommand(std::move(command));
@@ -328,7 +330,7 @@ void PushPullTool::updateHover(int mouseX, int mouseY) {
 void PushPullTool::RenderUI() {
     if (isPushPullActive) {
         ImGui::Separator();
-        ImGui::Text("Distance: %s", distanceInputBuf);
+        ImGui::Text("Length (mm): %s", lengthInputBuf);
         ImGui::Separator();
     }
 }
@@ -337,7 +339,7 @@ void PushPullTool::RenderPreview(Renderer& renderer, const SnapResult& snap) {
     if (isPushPullActive) {
         Urbaxio::Engine::SceneObject* obj = context.scene->get_object_by_id(pushPull_objId);
         if (obj) {
-            renderer.UpdatePushPullPreview(*obj, pushPull_faceIndices, pushPull_faceNormal, pushPullCurrentDistance);
+            renderer.UpdatePushPullPreview(*obj, pushPull_faceIndices, pushPull_faceNormal, pushPullCurrentLength);
         }
     } else {
         // Clear preview mesh when not active

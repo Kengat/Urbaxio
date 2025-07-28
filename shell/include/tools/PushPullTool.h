@@ -30,12 +30,12 @@ private:
     std::vector<size_t> pushPull_faceIndices;
     glm::vec3 pushPull_faceNormal{0.0f};
     glm::vec3 pushPull_startPoint{0.0f}; // Point on face plane where drag started
-    float pushPullCurrentDistance = 0.0f;
+    float pushPullCurrentLength = 0.0f;
     int pushPull_startMouseX = 0;
     int pushPull_startMouseY = 0;
     
-    // Input buffer for distance
-    char distanceInputBuf[64] = "";
+    // Input buffer for length
+    char lengthInputBuf[64] = "";
     
     void reset();
     void finalizePushPull(bool ctrl);

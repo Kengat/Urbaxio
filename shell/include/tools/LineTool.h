@@ -39,7 +39,7 @@ private:
     SnapType lockedAxisType = SnapType::NONE;
 
     // Input buffer for length
-    char lineLengthInputBuf[64] = "";
+    char lengthInputBuf[64] = "";
     
     // The last snap result received by OnUpdate
     SnapResult lastSnapResult;
