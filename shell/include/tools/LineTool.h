@@ -24,9 +24,10 @@ public:
 private:
     // --- NEW: State Machine ---
     enum class ToolState {
-        IDLE,                           // Tool is active, but no line has been started
-        AWAITING_SECOND_POINT_FREE,     // First point is placed, cursor moves freely
-        AWAITING_SECOND_POINT_AXIS_LOCKED // First point is placed, movement is locked to an axis
+        IDLE,                               // Tool is active, but no line has been started
+        AWAITING_SECOND_POINT_FREE,         // First point is placed, cursor moves freely
+        AWAITING_SECOND_POINT_AXIS_LOCKED,  // First point is placed, movement is locked to a screen-aligned axis
+        AWAITING_SECOND_POINT_INFERENCE_LOCKED // First point is placed, movement is locked to a user-defined direction
     };
     ToolState currentState = ToolState::IDLE;
 
@@ -37,6 +38,7 @@ private:
     // --- Axis Locking State ---
     glm::vec3 lockedAxisDir{0.0f};
     SnapType lockedAxisType = SnapType::NONE;
+    glm::vec3 inferenceAxisDir{0.0f}; // NEW: For user-defined direction lock
 
     // Input buffer for length
     char lengthInputBuf[64] = "";
@@ -49,7 +51,8 @@ private:
     void finalizeLine(const glm::vec3& endPoint);
     bool tryToLockAxis(const glm::vec3& currentTarget);
     glm::vec3 calculateAxisLockedPoint(const SnapResult& snapResult);
-    bool isValidGeometricSnap(SnapType type);
+    glm::vec3 calculateInferenceLockedPoint(const SnapResult& snap);
+    bool isValidGeometricSnap(SnapType type); // <-- MOVED HERE
 };
 
 } // namespace Urbaxio::Tools 

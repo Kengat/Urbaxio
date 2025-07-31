@@ -227,24 +227,34 @@ void PushPullTool::OnUpdate(const SnapResult& snap) {
             glm::vec3 offsetVector = projectedPoint - pushPull_startPoint;
             pushPullCurrentLength = glm::dot(offsetVector, pushPull_faceNormal);
         } else {
-            // Fallback to screen-space mouse dragging if no valid snap
-            glm::mat4 view = context.camera->GetViewMatrix();
-            glm::mat4 proj = context.camera->GetProjectionMatrix((float)*context.display_w/(float)*context.display_h);
-            glm::vec2 screenStart, screenEnd;
-            bool p1_visible = SnappingSystem::WorldToScreen(pushPull_startPoint, view, proj, *context.display_w, *context.display_h, screenStart);
-            bool p2_visible = SnappingSystem::WorldToScreen(pushPull_startPoint + pushPull_faceNormal, view, proj, *context.display_w, *context.display_h, screenEnd);
+            // NEW LOGIC: Fallback to closest point between mouse ray and extrusion axis.
             
-            if (p1_visible && p2_visible) {
-                glm::vec2 screenAxisDir = screenEnd - screenStart;
-                if (glm::length2(screenAxisDir) > 1e-8f) {
-                    screenAxisDir = glm::normalize(screenAxisDir);
-                    glm::vec2 mouseDelta(mouseX - pushPull_startMouseX, mouseY - pushPull_startMouseY);
-                    float pixel_dist = glm::dot(mouseDelta, screenAxisDir);
-                    // Sensitivity based on distance to object
-                    float sensitivity = glm::distance(context.camera->Position, pushPull_startPoint) * 0.001f;
-                    pushPullCurrentLength = pixel_dist * sensitivity;
-                }
+            // 1. Get the mouse ray
+            glm::vec3 rayOrigin, rayDir;
+            Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w/(float)*context.display_h), rayOrigin, rayDir);
+
+            // 2. Define the extrusion axis as an infinite line
+            const glm::vec3& axisOrigin = pushPull_startPoint;
+            const glm::vec3& axisDir = pushPull_faceNormal; // Already normalized
+
+            // 3. Calculate the parameters for the closest point calculation
+            glm::vec3 w0 = axisOrigin - rayOrigin;
+            float b = glm::dot(axisDir, rayDir); // dot(D1, D2)
+            float d = glm::dot(axisDir, w0);     // dot(D1, w0)
+            float e = glm::dot(rayDir, w0);      // dot(D2, w0)
+            
+            float denom = 1.0f - b * b;
+
+            // 4. Calculate the distance along the extrusion axis (s)
+            if (std::abs(denom) > 1e-6f) {
+                // s is the parameter for the extrusion axis line.
+                // It represents the distance from axisOrigin along axisDir.
+                float s = (b * e - d) / denom;
+                pushPullCurrentLength = s;
             }
+            // If the lines are parallel (denom is ~0), the user is looking straight
+            // down the extrusion axis. In this case, the distance is undefined,
+            // so we just keep the previous value.
         }
     } else {
         // Not active, so just update the hover state

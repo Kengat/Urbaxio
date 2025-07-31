@@ -1,5 +1,6 @@
 #include "tools/LineTool.h"
 #include "engine/scene.h"
+#include "engine/scene_object.h" // Required for full SceneObject definition
 #include "camera.h"
 #include "renderer.h"
 #include "snapping.h"
@@ -27,6 +28,8 @@ bool IsLineSplittingSnap(Urbaxio::SnapType type) {
             return false;
     }
 }
+
+
 
 void AppendCharToBuffer(char* buf, size_t bufSize, char c) {
     size_t len = strlen(buf);
@@ -84,6 +87,7 @@ void LineTool::Deactivate() {
 void LineTool::reset() {
     currentState = ToolState::IDLE;
     lockedAxisType = SnapType::NONE;
+    inferenceAxisDir = glm::vec3(0.0f);
     lengthInputBuf[0] = '\0';
 }
 
@@ -102,13 +106,13 @@ void LineTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {
         currentLineStartPoint = clickPoint;
         currentState = ToolState::AWAITING_SECOND_POINT_FREE;
         lengthInputBuf[0] = '\0';
-    } else if (currentState == ToolState::AWAITING_SECOND_POINT_FREE || currentState == ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED) {
+    } else if (currentState == ToolState::AWAITING_SECOND_POINT_FREE || currentState == ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED || currentState == ToolState::AWAITING_SECOND_POINT_INFERENCE_LOCKED) {
         finalizeLine(clickPoint);
     }
 }
 
 void LineTool::OnRightMouseDown() {
-    if (currentState == ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED) {
+    if (currentState == ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED || currentState == ToolState::AWAITING_SECOND_POINT_INFERENCE_LOCKED) {
         currentState = ToolState::AWAITING_SECOND_POINT_FREE;
     } else if (currentState == ToolState::AWAITING_SECOND_POINT_FREE) {
         currentState = ToolState::IDLE;
@@ -124,7 +128,7 @@ void LineTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
         return;
     }
     
-    if (currentState == ToolState::AWAITING_SECOND_POINT_FREE || currentState == ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED) {
+    if (currentState == ToolState::AWAITING_SECOND_POINT_FREE || currentState == ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED || currentState == ToolState::AWAITING_SECOND_POINT_INFERENCE_LOCKED) {
         bool isEnter = (key == SDLK_RETURN || key == SDLK_KP_ENTER);
         bool isBackspace = (key == SDLK_BACKSPACE);
 
@@ -138,6 +142,9 @@ void LineTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
                 if (currentState == ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED) {
                     float dotProd = glm::dot(currentRubberBandEnd - currentLineStartPoint, lockedAxisDir);
                     direction = (dotProd >= 0.0f) ? lockedAxisDir : -lockedAxisDir;
+                } else if (currentState == ToolState::AWAITING_SECOND_POINT_INFERENCE_LOCKED) {
+                    float dotProd = glm::dot(currentRubberBandEnd - currentLineStartPoint, inferenceAxisDir);
+                    direction = (dotProd >= 0.0f) ? inferenceAxisDir : -inferenceAxisDir;
                 } else {
                     direction = currentRubberBandEnd - currentLineStartPoint;
                     if (glm::length(direction) < 1e-6f) { reset(); return; }
@@ -172,11 +179,25 @@ void LineTool::OnUpdate(const SnapResult& snap) {
             break;
 
         case ToolState::AWAITING_SECOND_POINT_FREE:
-            if (shiftDown && tryToLockAxis(snap.worldPoint)) {
-                currentState = ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED;
-                // Defer point calculation to the next frame in the correct state
-                return;
+            if (shiftDown) {
+                // Priority 1: Lock to direction towards a specific geometric snap point ("the sun")
+                if (lastSnapResult.snapped && isValidGeometricSnap(lastSnapResult.type)) {
+                    glm::vec3 direction_to_lock = lastSnapResult.worldPoint - currentLineStartPoint;
+                    if (glm::length2(direction_to_lock) > 1e-8f) { // Ensure it's not the same point
+                        inferenceAxisDir = glm::normalize(direction_to_lock);
+                        currentState = ToolState::AWAITING_SECOND_POINT_INFERENCE_LOCKED;
+                        // Defer point calculation to next frame in new state, so it will immediately use the new axis
+                        return; 
+                    }
+                }
+                
+                // Priority 2: Fallback to screen-space axis lock if no good snap
+                if (tryToLockAxis(snap.worldPoint)) {
+                    currentState = ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED;
+                    return;
+                }
             }
+            // If no lock is activated, stay in free mode
             currentRubberBandEnd = snap.worldPoint;
             break;
 
@@ -187,6 +208,15 @@ void LineTool::OnUpdate(const SnapResult& snap) {
                 return;
             }
             currentRubberBandEnd = calculateAxisLockedPoint(snap);
+            break;
+            
+        case ToolState::AWAITING_SECOND_POINT_INFERENCE_LOCKED:
+            if (!shiftDown) {
+                currentState = ToolState::AWAITING_SECOND_POINT_FREE;
+                currentRubberBandEnd = snap.worldPoint; // Update immediately
+                return;
+            }
+            currentRubberBandEnd = calculateInferenceLockedPoint(snap);
             break;
     }
 }
@@ -203,6 +233,7 @@ void LineTool::finalizeLine(const glm::vec3& endPoint) {
     // Reset for the next line
     currentState = ToolState::IDLE;
     lockedAxisType = SnapType::NONE;
+    inferenceAxisDir = glm::vec3(0.0f);
     lengthInputBuf[0] = '\0';
 }
 
@@ -223,6 +254,24 @@ void LineTool::RenderPreview(Renderer& renderer, const SnapResult& snap) {
 }
 
 // --- NEW/MODIFIED HELPER METHODS ---
+
+bool LineTool::isValidGeometricSnap(SnapType type) {
+    // A valid geometric snap is ANY snap that isn't NONE, GRID or ON_FACE
+    switch (type) {
+        case SnapType::ENDPOINT:
+        case SnapType::MIDPOINT:
+        case SnapType::ON_EDGE:
+        case SnapType::INTERSECTION:
+        case SnapType::CENTER:
+        case SnapType::ORIGIN:
+        case SnapType::AXIS_X:
+        case SnapType::AXIS_Y:
+        case SnapType::AXIS_Z:
+            return true;
+        default:
+            return false;
+    }
+}
 
 bool LineTool::tryToLockAxis(const glm::vec3& currentTarget) {
     glm::mat4 view = context.camera->GetViewMatrix();
@@ -267,32 +316,13 @@ bool LineTool::tryToLockAxis(const glm::vec3& currentTarget) {
     return false;
 }
 
-bool LineTool::isValidGeometricSnap(SnapType type) {
-    // A valid geometric snap is ANY snap that isn't NONE or GRID
-    switch (type) {
-        case SnapType::ENDPOINT:
-        case SnapType::MIDPOINT:
-        case SnapType::ON_EDGE:
-        case SnapType::ON_FACE:
-        case SnapType::INTERSECTION:
-        case SnapType::CENTER:
-        case SnapType::ORIGIN:
-        case SnapType::AXIS_X:
-        case SnapType::AXIS_Y:
-        case SnapType::AXIS_Z:
-            return true;
-        default:
-            return false;
-    }
-}
-
 glm::vec3 LineTool::calculateAxisLockedPoint(const SnapResult& snapResult) {
-    // Step 0: High-priority geometric snap (inference point)
+    // Priority 1: Check for a valid geometric snap from the snapping system.
     if (snapResult.snapped && isValidGeometricSnap(snapResult.type)) {
         return ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, snapResult.worldPoint);
     }
     
-    // Step 1 & 2: Hybrid Strategy for empty space
+    // Priority 2: Fallback to free-floating movement if no suitable snap is active.
     int mouseX, mouseY;
     SDL_GetMouseState(&mouseX, &mouseY);
     glm::vec3 rayOrigin, rayDir;
@@ -308,8 +338,6 @@ glm::vec3 LineTool::calculateAxisLockedPoint(const SnapResult& snapResult) {
         // "Vertical" Strategy: Project onto the virtual vertical plane
         glm::vec3 planeOrigin = currentLineStartPoint;
         
-        // --- FIX: The normal must be perpendicular to the camera's UP direction on the XY plane ---
-        // This makes the plane sensitive to vertical mouse movement.
         glm::vec3 planeNormal = glm::cross(AXIS_Z_DIR, context.camera->Right);
 
         float denominator = glm::dot(rayDir, planeNormal);
@@ -325,6 +353,38 @@ glm::vec3 LineTool::calculateAxisLockedPoint(const SnapResult& snapResult) {
     
     // Fallback if any calculation fails (e.g., parallel ray)
     return currentRubberBandEnd; 
+}
+
+glm::vec3 LineTool::calculateInferenceLockedPoint(const SnapResult& snap) {
+    // Define the inference axis
+    const glm::vec3& axisOrigin = currentLineStartPoint;
+    const glm::vec3& axisDir = inferenceAxisDir; 
+
+    // Priority 1: Check for a valid geometric snap from the snapping system.
+    if (snap.snapped && isValidGeometricSnap(snap.type)) {
+        // Project the snapped point ("Alpha Centauri") onto our line of fire.
+        return ClosestPointOnLine(axisOrigin, axisDir, snap.worldPoint);
+    }
+
+    // Priority 2: Fallback to free-floating movement if no suitable snap is active.
+    int mouseX, mouseY;
+    SDL_GetMouseState(&mouseX, &mouseY);
+    glm::vec3 rayOrigin, rayDir;
+    Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / (float)*context.display_h), rayOrigin, rayDir);
+
+    glm::vec3 w0 = axisOrigin - rayOrigin;
+    float b = glm::dot(axisDir, rayDir);
+    float d = glm::dot(axisDir, w0);
+    float e = glm::dot(rayDir, w0);
+    float denom = 1.0f - b * b;
+
+    if (std::abs(denom) > 1e-6f) {
+        float s = (b * e - d) / denom;
+        return axisOrigin + s * axisDir;
+    }
+
+    // Fallback if lines are parallel
+    return currentRubberBandEnd;
 }
 
 } // namespace Urbaxio::Tools 

@@ -1,7 +1,7 @@
 Привет! Давай продолжим работу над проектом под кодовым названием Urbaxio.
 
 Главная Идея:
-Мы создаем основу для очень гибкого 3D-редактора, что-то вроде "конструктора САПР-песочницы", вдохновляясь идеями из Blender, SketchUp и Dreams (PS4). Представь себе сильно упрощенный SketchUp, но построенный на принципах максимальной модульности. Каждая новая функция (будь то инструмент рисования, симуляция или сложный CAD-алгоритм) в идеале должна быть отдельным, легко подключаемым и отключаемым "плагином" (динамической библиотекой DLL/SO). Ядро должно быть минимальным и стабильным, предоставляя четкое API для плагинов и оболочки.
+Мы создаем основу для очень гибкого 3D-редактора, что-то вроде "конструктора САПР-песочницы", вдохновляясь идеями из Blender, SketchUp и Dreams (PS4). Представь себе упрощенный SketchUp, но построенный на принципах максимальной модульности. Каждая новая функция (будь то инструмент рисования, симуляция или сложный CAD-алгоритм) в идеале должна быть отдельным, легко подключаемым и отключаемым "плагином" (динамической библиотекой DLL/SO). Ядро должно быть минимальным и стабильным, предоставляя четкое API для плагинов и оболочки.
 
 Моя Роль и Твоя Помощь:
 Я выступаю в роли "навигатора" и конечного пользователя. Я не профессиональный C++ разработчик, поэтому твоя помощь в написании и отладке кода будет ключевой. Вся эта затея с модульностью во многом придумана для того, чтобы нам было удобнее работать вместе, учитывая ограничения контекстного окна ИИ. Мне нужно, чтобы ты мог эффективно работать с отдельными частями кода, не требуя каждый раз загрузки всего проекта.
@@ -36,16 +36,17 @@ shell/include/tools/ и shell/src/tools/: Система инструменто�
 cmake/: Вспомогательные скрипты CMake.
 
 Текущий Статус Проекта (Что уже работает):
-Ключевое достижение: Мы завершили масштабный этап стабилизации и повышения точности геометрического ядра! Проект стал значительно надежнее и удобнее в использовании.
-Стабилизация разрезания граней: Мы полностью переработали алгоритм FindAndCreateFaces. Теперь он использует надежный многоступенчатый конвейер: "лечение" (healing) геометрии с помощью ShapeFix_Shape и ShapeFix_Wire, безопасную UV-проекцию с приведением (clamping) координат и строгую валидацию топологии режущего каркаса. Это кардинально повысило стабильность булевых операций и практически исключило сбои BOPAlgo_Splitter.
-Новый 3D-алгоритм привязок: Мы заменили фундаментально ошибочный метод привязки к ребрам, основанный на 2D-проекции, на математически корректный 3D-алгоритм. Теперь система вычисляет кратчайшее расстояние между 3D-лучом курсора и 3D-отрезком ребра, что обеспечивает идеально точную и интуитивную привязку независимо от ракурса камеры.
-Умная привязка с учетом окклюзии: Новая система привязок теперь учитывает видимость. Перед поиском кандидатов для привязки выполняется "предпроход" для определения ближайшей видимой геометрии. Это предотвращает ошибочные привязки к ребрам и вершинам, которые скрыты за другими объектами.
-Улучшенный UX для инструментов: Инструмент LineTool получил усовершенствованную логику блокировки по осям. Теперь при рисовании по оси Z (вертикально) курсор не привязывается к "полу" (плоскости Z=0), что позволяет свободно рисовать линии в пространстве, как это сделано в Push/Pull.
-Гибкая настройка интерфейса: Добавлена возможность настраивать внешний вид координатных маркеров (капсул) через UI, что улучшает визуальное восприятие масштаба сцены.
+Ключевое достижение: Мы завершили масштабный этап улучшения навигации в 3D-пространстве, сделав ее интуитивной и профессиональной, на уровне лучших отраслевых стандартов.
+"Умное" приближение к курсору (Dolly Zoom): Стандартное приближение колесиком мыши теперь работает по принципу "zoom to mouse". Камера выполняет рейкастинг, определяет геометрию под курсором и приближается именно к ней, а не к абстрактному центру.
+Динамическая скорость навигации: Скорость приближения и панирования теперь зависит от расстояния до объекта под курсором. Это позволяет делать быстрые перемещения по большой сцене и очень точные, медленные движения при работе с мелкими деталями.
+Вращение вокруг выбранной точки: Вращение (орбитирование) теперь происходит не вокруг фиксированного центра, а вокруг точки на объекте, на которую пользователь нажал средней кнопкой мыши. Это позволяет интуитивно осматривать любую часть модели.
+Бесшовный переход Панирование-Вращение: Реализован плавный переход от панирования (Shift+ЦКМ) к вращению (ЦКМ) без необходимости отпускать кнопку мыши, что значительно ускоряет рабочий процесс.
+Корректное освещение: Исправлена фундаментальная ошибка в обработке нормалей, из-за которой грани объектов могли случайным образом становиться черными после булевых операций. Теперь освещение стабильно и предсказуемо.
 
 Дальнейшие Направления Развития:
-После серьезной работы над стабильностью ядра мы можем переключить внимание на улучшение пользовательского опыта и расширение функционала.
-Приоритет №1: Улучшение UI/UX и Панели Инструментов. Наша цель — сделать интерфейс более интуитивным и профессиональным, вдохновляясь лучшими образцами, такими как Dreams. Первым шагом будет реализация иконок для инструментов.
+После серьезной работы над ядром и навигацией, мы продолжим курс на улучшение пользовательского опыта и расширение функционала.
+Приоритет №1: Инкрементальные улучшения UX. Я (пользователь) продолжу активно тестировать приложение и находить мелкие недочеты, "шероховатости" и потенциальные улучшения в работе инструментов, интерфейса и общего взаимодействия. Твоя задача — оперативно реализовывать эти небольшие, но важные изменения.
+Приоритет №2 (после UX): Устранение оставшихся проблем со стабильностью, в частности, редкой ошибки, когда при рисовании "из точки в точку" создается новая грань вместо разрезания существующей.
 
 Долгосрочные цели (после улучшения UI):
 Реализация удаления геометрии (линий и граней) с поддержкой Undo/Redo.
@@ -341,6 +342,7 @@ ENCODINGUTF8#include "cad_kernel/MeshBuffers.h"
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopLoc_Location.hxx>
+#include <TopAbs.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Trsf.hxx>
@@ -449,17 +451,16 @@ namespace Urbaxio::CadKernel {
                 }
                 gp_Dir normal(normals(normIndex), normals(normIndex + 1), normals(normIndex + 2));
 
-                //                       
-                gp_Vec normalVec(normal.X(), normal.Y(), normal.Z());
-                gp_XYZ normalXYZ = normalVec.XYZ();
-                transformation.Transforms(normalXYZ);
-                normalVec.SetXYZ(normalXYZ);
-                if (normalVec.Magnitude() > gp::Resolution()) {
-                    normal = normalVec.Normalized();
+                // --- FIX: Correctly transform the normal direction ---
+                // This applies only the rotational part of the transformation, ignoring any translation.
+                // The old method incorrectly treated the normal as a point, corrupting its direction.
+                normal.Transform(transformation);
+
+                // Invert normal for reversed faces for correct lighting
+                if (face.Orientation() == TopAbs_REVERSED) {
+                    normal.Reverse();
                 }
-                else {
-                    normal.SetXYZ(gp_XYZ(0, 0, 1));
-                }
+                // --- END FIX ---
 
                 out.vertices.push_back(static_cast<float>(vertex.X()));
                 out.vertices.push_back(static_cast<float>(vertex.Y()));
@@ -766,7 +767,11 @@ namespace Urbaxio::Engine {
         bool ArePointsCoplanar(const std::vector<glm::vec3>& points, gp_Pln& outPlane);
         void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
         
-        TopoDS_Face FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal);
+        TopoDS_Face FindOriginalFace(
+            const TopoDS_Shape& shape, 
+            const std::vector<glm::vec3>& faceVertices, 
+            const glm::vec3& guideNormal
+        );
         void AnalyzeShape(const TopoDS_Shape& shape, const std::string& label);
 
         SceneObject* CreateRectangularFace(const std::string& name, const gp_Pnt& p1, const gp_Pnt& p2, const gp_Pnt& p3, const gp_Pnt& p4);
@@ -1690,49 +1695,42 @@ namespace Urbaxio::Engine {
         if (hostObject && !originalHostFace.IsNull()) {
             std::cout << "Scene: Detected new loop on existing face of object " << hostObject->get_id() << ". Attempting PARAMETRIC split." << std::endl;
             try {
+                // --- Step 1: Heal the host shape to ensure it's valid for boolean operations ---
                 ShapeFix_Shape shapeFixer(*hostObject->get_shape());
                 shapeFixer.Perform();
                 TopoDS_Shape healedShape = shapeFixer.Shape();
-                
+                AnalyzeShape(healedShape, "Healed Host Shape BEFORE split");
+                // Re-find the face on the healed shape using the context
                 Handle(ShapeBuild_ReShape) context = shapeFixer.Context();
                 TopoDS_Shape healedFaceShape = context->Apply(originalHostFace);
                 if (healedFaceShape.IsNull() || healedFaceShape.ShapeType() != TopAbs_FACE) {
                      throw Standard_Failure("Could not re-find host face after healing.");
                 }
                 TopoDS_Face healedHostFace = TopoDS::Face(healedFaceShape);
-                
+                AnalyzeShape(healedHostFace, "Healed Host Face BEFORE split");
                 Handle(Geom_Surface) hostSurface = BRep_Tool::Surface(healedHostFace);
                 if (hostSurface.IsNull()) {
                     throw Standard_Failure("Host face has no underlying surface.");
                 }
                 Handle(ShapeAnalysis_Surface) analysis = new ShapeAnalysis_Surface(hostSurface);
-
-                // --- Step 2: Create a list of topologically sound edges ---
+                // --- Step 2: Create a list of topologically sound edges from the loop vertices ---
                 TopTools_ListOfShape edgeList;
                 Standard_Real umin, umax, vmin, vmax;
                 hostSurface->Bounds(umin, umax, vmin, vmax);
-
                 for (size_t i = 0; i < finalOrderedVertices.size(); ++i) {
                     const glm::vec3& v1_glm = finalOrderedVertices[i];
                     const glm::vec3& v2_glm = finalOrderedVertices[(i + 1) % finalOrderedVertices.size()];
-                    
                     gp_Pnt p1_3d(v1_glm.x, v1_glm.y, v1_glm.z);
                     gp_Pnt p2_3d(v2_glm.x, v2_glm.y, v2_glm.z);
                     if (p1_3d.IsEqual(p2_3d, Precision::Confusion())) continue;
-                    
                     gp_Pnt2d uv1 = analysis->ValueOfUV(p1_3d, Precision::Confusion());
                     gp_Pnt2d uv2 = analysis->ValueOfUV(p2_3d, Precision::Confusion());
-
-                    // Clamp UV coordinates to surface bounds to avoid floating point errors at the boundary
                     uv1.SetX(std::max(umin, std::min(umax, uv1.X())));
                     uv1.SetY(std::max(vmin, std::min(vmax, uv1.Y())));
                     uv2.SetX(std::max(umin, std::min(umax, uv2.X())));
                     uv2.SetY(std::max(vmin, std::min(vmax, uv2.Y())));
-                    
                     if (uv1.IsEqual(uv2, Precision::Confusion())) continue;
-
                     Handle(Geom2d_Line) pcurve = new Geom2d_Line(uv1, gp_Dir2d(uv2.X() - uv1.X(), uv2.Y() - uv1.Y()));
-                    // Use the constructor that takes parameters
                     Standard_Real u_start = 0.0;
                     Standard_Real u_end = uv1.Distance(uv2);
                     BRepBuilderAPI_MakeEdge edgeMaker(pcurve, hostSurface, u_start, u_end);
@@ -1744,48 +1742,62 @@ namespace Urbaxio::Engine {
                     }
                     edgeList.Append(edgeMaker.Edge());
                 }
-                
-                // --- Step 3: Reliable Wire Assembly using ShapeFix_Wire ---
                 BRepBuilderAPI_MakeWire tempWireMaker;
                 tempWireMaker.Add(edgeList);
-
                 if (tempWireMaker.Wire().IsNull()) {
                     throw Standard_Failure("BRepBuilderAPI_MakeWire failed to create even a disconnected wire.");
                 }
-
                 Handle(ShapeFix_Wire) wireFixer = new ShapeFix_Wire();
                 wireFixer->Init(tempWireMaker.Wire(), healedHostFace, Precision::Confusion());
                 if (!wireFixer->Perform()) {
                     throw Standard_Failure("ShapeFix_Wire::Perform() returned false, indicating a critical failure.");
                 }
-
                 if (wireFixer->LastFixStatus(ShapeExtend_FAIL)) {
                     throw Standard_Failure("ShapeFix_Wire could not fix all problems in the wire (e.g., gaps are too large).");
                 }
-
                 TopoDS_Wire cuttingWire = wireFixer->Wire();
+                AnalyzeShape(cuttingWire, "Cutting Wire BEFORE split");
                 if (cuttingWire.IsNull() || !BRep_Tool::IsClosed(cuttingWire)) {
                     throw Standard_Failure("The final wire created by ShapeFix_Wire is not a single, closed loop.");
                 }
-
-                // --- CORRECTED SPLITTER LOGIC ---
+                // --- Step 4: Perform the Split operation ---
                 BOPAlgo_Splitter splitter;
-                
                 TopTools_ListOfShape arguments;
                 arguments.Append(healedShape);
                 splitter.SetArguments(arguments);
-
                 TopTools_ListOfShape tools;
                 tools.Append(cuttingWire);
                 splitter.SetTools(tools);
+                splitter.Perform();
+                // Count faces before for validation
+                TopExp_Explorer faceExpBefore(healedShape, TopAbs_FACE);
+                int faceCountBefore = 0;
+                for (; faceExpBefore.More(); faceExpBefore.Next()) faceCountBefore++;
 
                 splitter.Perform();
 
+                // ROBUSTNESS: Check for errors from the boolean operation itself.
                 if (splitter.HasErrors()) {
                     splitter.GetReport()->Dump(std::cout);
                     throw Standard_Failure("BOPAlgo_Splitter failed to perform operation.");
                 }
-                hostObject->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(splitter.Shape())));
+                
+                TopoDS_Shape splitShape = splitter.Shape();
+
+                // --- NEW: Validate that the split actually happened ---
+                TopExp_Explorer faceExpAfter(splitShape, TopAbs_FACE);
+                int faceCountAfter = 0;
+                for (; faceExpAfter.More(); faceExpAfter.Next()) faceCountAfter++;
+
+                if (faceCountAfter <= faceCountBefore) {
+                    throw Standard_Failure("BOPAlgo_Splitter completed without errors but failed to split the face. This can indicate a degenerate cutting wire or tolerance issues.");
+                }
+                AnalyzeShape(splitShape, "Split Shape AFTER BOPAlgo_Splitter");
+                ShapeFix_Shape finalFixer(splitShape);
+                finalFixer.Perform();
+                TopoDS_Shape finalShape = finalFixer.Shape();
+                AnalyzeShape(finalShape, "Final Shape AFTER ShapeFix_Shape");
+                hostObject->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
                 UpdateObjectBoundary(hostObject);
                 hostObject->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*hostObject->get_shape()));
                 hostObject->vao = 0;
@@ -1853,36 +1865,20 @@ namespace Urbaxio::Engine {
 
 
     // --- PUSH/PULL (MODIFIED) ---
-    TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& faceNormal) {
+    TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& guideNormal) {
         if (faceVertices.empty()) return TopoDS_Face();
-        
-        // Find center of user-provided points
-        glm::vec3 targetCenter(0.0f);
-        for(const auto& v : faceVertices) {
-            targetCenter += v;
-        }
-        targetCenter /= (float)faceVertices.size();
-        
-        struct FaceCandidate {
-            TopoDS_Face face;
-            float distance = std::numeric_limits<float>::max();
-        };
-        
-        std::vector<FaceCandidate> candidates;
-
+        // --- NEW: Refactored logic with normal-based tie-breaking ---
+        // Step 1: Find all candidate faces where all loop vertices lie on the face.
+        std::vector<TopoDS_Face> candidates;
         TopExp_Explorer faceExplorer(shape, TopAbs_FACE);
         for (; faceExplorer.More(); faceExplorer.Next()) {
             TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
-            
             try {
                 BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_False);
                 if(surfaceAdaptor.GetType() != GeomAbs_Plane) continue;
-
-                // Check if all loop points are on or inside the face
                 bool allPointsOnFace = true;
                 for(const auto& v : faceVertices) {
                     BRepClass_FaceClassifier classifier;
-                    // Use a slightly larger tolerance for classification
                     classifier.Perform(candidateFace, gp_Pnt(v.x, v.y, v.z), 1e-4); 
                     TopAbs_State state = classifier.State();
                     if(state != TopAbs_ON && state != TopAbs_IN) {
@@ -1890,30 +1886,76 @@ namespace Urbaxio::Engine {
                         break;
                     }
                 }
-                
                 if (allPointsOnFace) {
-                    // This is a valid candidate, calculate its distance to the target
-                    GProp_GProps props;
-                    BRepGProp::SurfaceProperties(candidateFace, props);
-                    gp_Pnt center = props.CentreOfMass();
-                    float dist = (float)center.Distance(gp_Pnt(targetCenter.x, targetCenter.y, targetCenter.z));
-                    candidates.push_back({candidateFace, dist});
+                    candidates.push_back(candidateFace);
                 }
             } catch (const Standard_Failure&) {
                 continue;
             }
         }
-        
+        // Step 2: Handle the results
         if (candidates.empty()) {
-            return TopoDS_Face();
+            return TopoDS_Face(); // No suitable face found
         }
-        
-        // Sort candidates by distance, closest first
-        std::sort(candidates.begin(), candidates.end(), [](const FaceCandidate& a, const FaceCandidate& b) {
-            return a.distance < b.distance;
-        });
-        
-        return candidates[0].face;
+        if (candidates.size() == 1) {
+            return candidates[0]; // Only one candidate, return it
+        }
+        // Step 3: Multi-pass filtering to find the best match
+        // Pass 1: Filter by normal alignment. Keep only the faces that are most parallel to the guide normal.
+        std::vector<TopoDS_Face> alignedCandidates;
+        double maxDotAbs = -1.0;
+        gp_Dir targetDir(guideNormal.x, guideNormal.y, guideNormal.z);
+        for (const auto& candidateFace : candidates) {
+            try {
+                BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_True);
+                gp_Pln plane = surfaceAdaptor.Plane();
+                gp_Dir candidateDir = plane.Axis().Direction();
+                if (candidateFace.Orientation() == TopAbs_REVERSED) candidateDir.Reverse();
+                double dot = std::abs(targetDir.Dot(candidateDir));
+                if (dot > maxDotAbs) {
+                    maxDotAbs = dot;
+                }
+            } catch (const Standard_Failure&) { continue; }
+        }
+        const double NORMAL_ALIGNMENT_TOLERANCE = 1e-6;
+        if (maxDotAbs > (1.0 - NORMAL_ALIGNMENT_TOLERANCE)) {
+            for (const auto& candidateFace : candidates) {
+                try {
+                    BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_True);
+                    gp_Pln plane = surfaceAdaptor.Plane();
+                    gp_Dir candidateDir = plane.Axis().Direction();
+                    if (candidateFace.Orientation() == TopAbs_REVERSED) candidateDir.Reverse();
+                    if (std::abs(targetDir.Dot(candidateDir)) >= (maxDotAbs - NORMAL_ALIGNMENT_TOLERANCE)) {
+                        alignedCandidates.push_back(candidateFace);
+                    }
+                } catch (const Standard_Failure&) { continue; }
+            }
+        }
+        if (alignedCandidates.size() == 1) {
+            return alignedCandidates[0];
+        }
+        if (alignedCandidates.empty()) { // Should not happen if initial candidates were found, but as a fallback
+            alignedCandidates = candidates;
+        }
+        // Pass 2: Tie-break using distance to center of mass.
+        glm::vec3 targetCenter(0.0f);
+        for(const auto& v : faceVertices) targetCenter += v;
+        targetCenter /= (float)faceVertices.size();
+        TopoDS_Face bestMatch;
+        float minDistance = std::numeric_limits<float>::max();
+        for (const auto& candidateFace : alignedCandidates) {
+            try {
+                GProp_GProps props;
+                BRepGProp::SurfaceProperties(candidateFace, props);
+                gp_Pnt center = props.CentreOfMass();
+                float dist = (float)center.Distance(gp_Pnt(targetCenter.x, targetCenter.y, targetCenter.z));
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    bestMatch = candidateFace;
+                }
+            } catch (const Standard_Failure&) { continue; }
+        }
+        return bestMatch;
     }
 
     void Scene::AnalyzeShape(const TopoDS_Shape& shape, const std::string& label) {
@@ -2502,7 +2544,6 @@ int main(int argc, char* argv[]) {
     // --- Appearance Settings ---
     ImVec4 clear_color = ImVec4(0.13f, 0.13f, 0.18f, 1.00f);
     glm::vec3 objectColor(0.8f, 0.85f, 0.9f);
-    glm::vec3 lightDirection = glm::normalize(glm::vec3(0.273f, 0.268f, 0.259f));
     glm::vec3 lightColor = glm::vec3(0.618f, 0.858f, 0.844f);
     float ambientStrength = 0.267f;
     bool showGrid = true; bool showAxes = true;
@@ -2680,7 +2721,11 @@ int main(int argc, char* argv[]) {
         if (show_style_editor) {
             ImGui::Begin("Appearance Settings", &show_style_editor);
             if (ImGui::CollapsingHeader("Scene Colors")) { ImGui::ColorEdit3("Background", (float*)&clear_color); ImGui::ColorEdit3("Default Object", (float*)&objectColor); }
-            if (ImGui::CollapsingHeader("Lighting")) { ImGui::SliderFloat("Ambient Strength", &ambientStrength, 0.0f, 1.0f); static glm::vec3 lightDirInput = lightDirection; if (ImGui::SliderFloat3("Light Direction", glm::value_ptr(lightDirInput), -1.0f, 1.0f)) { if (glm::length(lightDirInput) > 1e-6f) { lightDirection = glm::normalize(lightDirInput); } } ImGui::ColorEdit3("Light Color", glm::value_ptr(lightColor)); }
+            if (ImGui::CollapsingHeader("Lighting")) { 
+                ImGui::TextDisabled("Light follows camera direction (headlamp mode)");
+                ImGui::SliderFloat("Ambient Strength", &ambientStrength, 0.0f, 1.0f); 
+                ImGui::ColorEdit3("Light Color", glm::value_ptr(lightColor)); 
+            }
             if (ImGui::CollapsingHeader("Grid & Axes")) { ImGui::Checkbox("Show Grid", &showGrid); ImGui::SameLine(); ImGui::Checkbox("Show Axes", &showAxes); ImGui::ColorEdit3("Grid Color", glm::value_ptr(gridColor)); ImGui::SeparatorText("Positive Axes"); ImGui::ColorEdit4("Axis X Color", glm::value_ptr(axisColorX)); ImGui::ColorEdit4("Axis Y Color", glm::value_ptr(axisColorY)); ImGui::ColorEdit4("Axis Z Color", glm::value_ptr(axisColorZ)); ImGui::ColorEdit4("Fade To Color##Positive", glm::value_ptr(positiveAxisFadeColor)); ImGui::SameLine(); ImGui::TextDisabled("(also used for axis markers)"); ImGui::SliderFloat("Width##Positive", &axisLineWidth, 1.0f, maxLineWidth); ImGui::SeparatorText("Negative Axes"); ImGui::ColorEdit4("Fade To Color##Negative", glm::value_ptr(negativeAxisFadeColor)); ImGui::SliderFloat("Width##Negative", &negAxisLineWidth, 1.0f, maxLineWidth); }
             if (ImGui::CollapsingHeader("Interactive Effects")) { ImGui::SliderFloat("Cursor Radius", &cursorRadius, 1.0f, 50.0f); ImGui::SliderFloat("Effect Intensity", &effectIntensity, 0.1f, 2.0f); }
             
@@ -2718,7 +2763,7 @@ int main(int argc, char* argv[]) {
         toolManager.RenderPreview(renderer, currentSnap);
         
         // --- Render the main frame ---
-        renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightDirection, lightColor, ambientStrength, 
+        renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightColor, ambientStrength, 
             showGrid, showAxes, axisLineWidth, negAxisLineWidth,
             gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
             cursorWorldPos, cursorRadius, effectIntensity, 
@@ -2742,6 +2787,8 @@ ENCODINGUTF8#pragma once
 #include <glm/gtc/quaternion.hpp> // Optional: For more advanced rotations later
 
 namespace Urbaxio {
+    // FORWARD DECLARATION: Tell the compiler that the Scene class exists without including the full header.
+    namespace Engine { class Scene; }
 
     // Represents the 3D camera and handles its movement logic.
     class Camera {
@@ -2788,10 +2835,16 @@ namespace Urbaxio {
         void ProcessOrbit(float xoffset, float yoffset);
 
         // Processes input received from mouse movement for panning
-        void ProcessPan(float xoffset, float yoffset);
+        void ProcessPan(float xoffset, float yoffset, int mouseX, int mouseY, int screenWidth, int screenHeight, const Engine::Scene& scene);
 
-        // Processes input received from a mouse scroll-wheel event
-        void ProcessMouseScroll(float yoffset);
+        // Processes input for orbital zoom (zooming towards the target)
+        void ProcessOrbitZoom(float yoffset);
+
+        // NEW: Processes input for dolly zoom (zooming towards the mouse cursor)
+        void ProcessDollyZoom(float yoffset, int mouseX, int mouseY, int screenWidth, int screenHeight, const Engine::Scene& scene);
+
+        // NEW: Sets a new pivot point for orbiting and re-calculates orbital parameters
+        void SetOrbitTarget(const glm::vec3& hitPoint);
 
         // --- Picking Ray Function ---
         // Calculates a world space ray from screen coordinates
@@ -2859,7 +2912,7 @@ namespace Urbaxio {
         bool firstMouse;
 
         // Helpers
-        void HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h);
+        void HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h, const Urbaxio::Engine::Scene& scene);
     };
 
 } // namespace Urbaxio
@@ -2891,31 +2944,31 @@ namespace Urbaxio {
         Renderer();
         ~Renderer();
         bool Initialize();
-        void RenderFrame(
-            SDL_Window* window,
-            const Urbaxio::Camera& camera,
-            Urbaxio::Engine::Scene* scene,
-            // Appearance
-            const glm::vec3& defaultObjectColor,
-            const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
-            bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
-            const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ, 
-            const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
-            // Interactive Effects
-            const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
-            // Selections
-            uint64_t selectedObjId,
-            const std::vector<size_t>& selectedTriangleIndices,
-            const std::set<uint64_t>& selectedLineIDs,
-            const glm::vec3& selectionHighlightColor,
-            // Hovers
-            uint64_t hoveredObjId,
-            const std::vector<size_t>& hoveredFaceTriangleIndices,
-            const glm::vec3& hoverHighlightColor,
-            // Tools
-            const SnapResult& currentSnap,
-            ImDrawData* imguiDrawData
-        );
+            void RenderFrame(
+        SDL_Window* window,
+        const Urbaxio::Camera& camera,
+        Urbaxio::Engine::Scene* scene,
+        // Appearance
+        const glm::vec3& defaultObjectColor,
+        const glm::vec3& lightColor, float ambientStrength,
+        bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
+        const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ,
+        const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
+        // Interactive Effects
+        const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
+        // Selections
+        uint64_t selectedObjId,
+        const std::vector<size_t>& selectedTriangleIndices,
+        const std::set<uint64_t>& selectedLineIDs,
+        const glm::vec3& selectionHighlightColor,
+        // Hovers
+        uint64_t hoveredObjId,
+        const std::vector<size_t>& hoveredFaceTriangleIndices,
+        const glm::vec3& hoverHighlightColor,
+        // Tools
+        const SnapResult& currentSnap,
+        ImDrawData* imguiDrawData
+    );
         void SetViewport(int x, int y, int width, int height);
         float GetMaxLineWidth() const { return maxLineWidth; }
 
@@ -3075,6 +3128,9 @@ namespace Urbaxio {
 } // namespace Urbaxio
 ENCODINGUTF8ENCODINGUTF8--- File: shell/src/camera.cpp ---
 ENCODINGUTF8#include "camera.h"
+#include "snapping.h"
+#include "engine/scene.h"
+#include "engine/scene_object.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/vector_angle.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -3083,6 +3139,7 @@ ENCODINGUTF8#include "camera.h"
 #include <glm/common.hpp>
 #include <cmath>
 #include <iostream>
+#include <limits>
 
 namespace Urbaxio {
 
@@ -3098,8 +3155,134 @@ namespace Urbaxio {
     glm::mat4 Camera::GetViewMatrix() const { return glm::lookAt(Position, Target, Up); }
     glm::mat4 Camera::GetProjectionMatrix(float aspectRatio) const { if (aspectRatio <= 0.0f) return glm::mat4(1.0f); return glm::perspective(glm::radians(FovDegrees), aspectRatio, NearPlane, FarPlane); }
     void Camera::ProcessOrbit(float xoffset, float yoffset) { Yaw -= xoffset * MouseSensitivity; Pitch += yoffset * MouseSensitivity; Yaw = fmod(Yaw, 2.0f * glm::pi<float>()); updateCameraPositionFromOrbit(); }
-    void Camera::ProcessPan(float xoffset, float yoffset) { float currentPanSpeed = MovementSpeed * (Radius / 50.0f); currentPanSpeed = glm::clamp(currentPanSpeed, 0.001f, MovementSpeed * 10.0f); glm::vec3 rightMovement = Right * xoffset * currentPanSpeed; glm::vec3 upMovement = Up * (-yoffset) * currentPanSpeed; glm::vec3 panOffset = rightMovement + upMovement; Position -= panOffset; Target -= panOffset; updateCameraVectors(); }
-    void Camera::ProcessMouseScroll(float yoffset) { float zoomFactor = 1.0f - yoffset * (ZoomSensitivity / 10.0f); Radius *= zoomFactor; Radius = glm::clamp(Radius, 0.1f, 1000.0f); updateCameraPositionFromOrbit(); }
+    void Camera::ProcessPan(float xoffset, float yoffset, int mouseX, int mouseY, int screenWidth, int screenHeight, const Engine::Scene& scene) {
+        // 1. Find the point in the world under the cursor to use as a pivot.
+        glm::vec3 rayOrigin, rayDir;
+        ScreenToWorldRay(mouseX, mouseY, screenWidth, screenHeight, GetViewMatrix(), GetProjectionMatrix((float)screenWidth / screenHeight), rayOrigin, rayDir);
+        
+        float closest_t = std::numeric_limits<float>::max();
+        bool hit = false;
+        
+        for (const auto* obj : scene.get_all_objects()) {
+            if (obj && obj->has_mesh()) {
+                const auto& mesh = obj->get_mesh_buffers();
+                for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                    unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
+                    glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+                    glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+                    glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+                    float t;
+                    if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closest_t) {
+                        closest_t = t;
+                        hit = true;
+                    }
+                }
+            }
+        }
+        
+        glm::vec3 panPivotPoint;
+        if (hit) {
+            panPivotPoint = rayOrigin + rayDir * closest_t;
+        } else {
+            glm::vec3 planeNormal = -Front;
+            float distanceToPlane = glm::dot(Target - rayOrigin, planeNormal);
+            if (distanceToPlane < 0) distanceToPlane = Radius;
+            panPivotPoint = rayOrigin + rayDir * distanceToPlane;
+        }
+
+        // 2. Calculate the pan speed based on the distance to the pivot point.
+        float distance = glm::distance(Position, panPivotPoint);
+        float panFactor = distance * 0.001f; // Adjust this factor for sensitivity
+        
+        glm::vec3 rightMovement = Right * xoffset * panFactor;
+        glm::vec3 upMovement = Up * -yoffset * panFactor;
+
+        // 3. Apply the pan offset to both position and target.
+        Position -= (rightMovement + upMovement);
+        Target -= (rightMovement + upMovement);
+        
+        updateCameraVectors();
+    }
+    void Camera::ProcessOrbitZoom(float yoffset) { 
+        float zoomFactor = 1.0f - yoffset * (ZoomSensitivity / 10.0f); 
+        Radius *= zoomFactor; 
+        Radius = glm::clamp(Radius, 0.1f, 1000.0f); 
+        updateCameraPositionFromOrbit(); 
+    }
+
+    void Camera::ProcessDollyZoom(float yoffset, int mouseX, int mouseY, int screenWidth, int screenHeight, const Engine::Scene& scene) {
+        if (screenWidth <= 0 || screenHeight <= 0) return;
+
+        // 1. Find the point in the world under the cursor by raycasting against the scene
+        glm::vec3 rayOrigin, rayDir;
+        ScreenToWorldRay(mouseX, mouseY, screenWidth, screenHeight, GetViewMatrix(), GetProjectionMatrix((float)screenWidth / screenHeight), rayOrigin, rayDir);
+        
+        float closest_t = std::numeric_limits<float>::max();
+        bool hit = false;
+        
+        for (const auto* obj : scene.get_all_objects()) {
+            if (obj && obj->has_mesh()) {
+                const auto& mesh = obj->get_mesh_buffers();
+                for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                    unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
+                    glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+                    glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+                    glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+                    float t;
+                    if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closest_t) {
+                        closest_t = t;
+                        hit = true;
+                    }
+                }
+            }
+        }
+        
+        glm::vec3 pointUnderMouse;
+        if (hit) {
+            pointUnderMouse = rayOrigin + rayDir * closest_t;
+        } else {
+            // Fallback: intersect with a plane parallel to the view plane, passing through the current target.
+            glm::vec3 planeNormal = -Front;
+            float distanceToPlane = glm::dot(Target - rayOrigin, planeNormal);
+            // If the target is behind the camera, use a default distance.
+            if (distanceToPlane < 0) distanceToPlane = 20.0f;
+            pointUnderMouse = rayOrigin + rayDir * distanceToPlane;
+        }
+
+        // 2. Calculate the distance to the point and apply scaling with clamping
+        float distanceToTarget = glm::distance(Position, pointUnderMouse);
+        const float minZoomScaleDist = 1.0f; // NEW: Reduced minimum
+        const float maxZoomScaleDist = 500.0f; // NEW: Increased maximum
+        float clampedDistance = glm::clamp(distanceToTarget, minZoomScaleDist, maxZoomScaleDist);
+        float zoomAmount = yoffset * ZoomSensitivity * (clampedDistance * 0.07f); // NEW: Increased factor
+
+        // 3. Calculate the movement vector and prevent zooming past the target
+        glm::vec3 moveVec = glm::normalize(pointUnderMouse - Position) * zoomAmount;
+        if (zoomAmount > 0 && glm::length(moveVec) > (distanceToTarget - NearPlane)) {
+            moveVec = glm::normalize(pointUnderMouse - Position) * (distanceToTarget - NearPlane);
+        }
+        
+        // 4. Move both the camera position and the target to achieve a "dolly" or "fly" effect
+        Position += moveVec;
+        Target += moveVec;
+        
+        // 5. Update derived camera properties
+        Radius = glm::distance(Position, Target); // Radius is now relative to the new target
+        updateCameraVectors();
+    }
+
+    void Camera::SetOrbitTarget(const glm::vec3& hitPoint) {
+        // --- NEW LOGIC: The user's elegant solution ---
+        // 1. Calculate the distance from the camera to the point under the cursor.
+        float distance = glm::distance(Position, hitPoint);
+        // 2. Set the new target to be a point this distance away, directly in front of the camera.
+        Target = Position + Front * distance;
+        // 3. Update the orbit radius.
+        Radius = distance;
+
+        // No need to update vectors here, as the camera's orientation (Front) hasn't changed.
+    }
+
     void Camera::updateCameraVectors() { Front = glm::normalize(Target - Position); Right = glm::normalize(glm::cross(Front, WorldUp)); Up = glm::normalize(glm::cross(Right, Front)); }
     void Camera::updateCameraPositionFromOrbit() { Position.x = Target.x + Radius * cos(Pitch) * cos(Yaw); Position.y = Target.y + Radius * cos(Pitch) * sin(Yaw); Position.z = Target.z + Radius * sin(Pitch); updateCameraVectors(); }
 
@@ -3161,12 +3344,15 @@ ENCODINGUTF8#define GLM_ENABLE_EXPERIMENTAL
 #include "camera.h"
 #include "snapping.h"
 #include <tools/ToolManager.h>
+#include "engine/scene.h"       // This is needed for the Scene class
+#include "engine/scene_object.h"  // NEW: This is required for SceneObject methods like get_mesh_buffers()
 
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
 #include <SDL2/SDL.h>
 #include <iostream>
 #include <cmath>
+#include <limits> // For std::numeric_limits
 
 namespace Urbaxio {
 
@@ -3204,7 +3390,14 @@ namespace Urbaxio {
 
         // Update modifier key states at the start of the frame
         const Uint8* keyboardState = SDL_GetKeyboardState(NULL);
-        shiftDown = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
+        bool newShiftDown = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
+        
+        // NEW: Detect if shift was just released while middle mouse is held down
+        if (shiftDown && !newShiftDown && middleMouseButtonDown) {
+            firstMouse = true; // This will trigger a re-targeting for the orbit on next motion
+        }
+        shiftDown = newShiftDown;
+        
         ctrlDown = keyboardState[SDL_SCANCODE_LCTRL] || keyboardState[SDL_SCANCODE_RCTRL] || keyboardState[SDL_SCANCODE_LGUI] || keyboardState[SDL_SCANCODE_RGUI];
 
         while (SDL_PollEvent(&event)) { 
@@ -3280,7 +3473,17 @@ namespace Urbaxio {
                 
                 case SDL_MOUSEWHEEL: 
                     if (!wantCaptureMouse) { 
-                        camera.ProcessMouseScroll(static_cast<float>(event.wheel.y));
+                        if (ctrlDown) {
+                            // With Ctrl, use the old orbital zoom
+                            camera.ProcessOrbitZoom(static_cast<float>(event.wheel.y));
+                        } else {
+                            // By default, use the new dolly zoom to cursor
+                            int mouseX, mouseY;
+                            SDL_GetMouseState(&mouseX, &mouseY);
+                            int w, h;
+                            SDL_GetWindowSize(window, &w, &h);
+                            camera.ProcessDollyZoom(static_cast<float>(event.wheel.y), mouseX, mouseY, w, h, *scene);
+                        }
                     } 
                     break;
 
@@ -3293,15 +3496,43 @@ namespace Urbaxio {
         // Handle continuous actions like camera panning/orbiting
         int w, h;
         SDL_GetWindowSize(window, &w, &h);
-        HandleMouseMotion(camera, window, w, h);
+        HandleMouseMotion(camera, window, w, h, *scene);
     }
 
-    void InputHandler::HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h) {
+    void InputHandler::HandleMouseMotion(Urbaxio::Camera& camera, SDL_Window* window, int display_w, int display_h, const Urbaxio::Engine::Scene& scene) {
         int cX, cY;
         SDL_GetMouseState(&cX, &cY);
 
         if (middleMouseButtonDown && isMouseFocused) {
             if (firstMouse) {
+                // Set orbit target when starting orbit (not pan)
+                if (!shiftDown) {
+                    glm::vec3 rayOrigin, rayDir;
+                    Camera::ScreenToWorldRay(cX, cY, display_w, display_h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)display_w / display_h), rayOrigin, rayDir);
+                    
+                    float closest_t = std::numeric_limits<float>::max();
+                    bool hit = false;
+                    
+                    for (const auto* obj : scene.get_all_objects()) {
+                        if (obj && obj->has_mesh()) {
+                            const auto& mesh = obj->get_mesh_buffers();
+                            for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                                unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
+                                glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+                                glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+                                glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+                                float t;
+                                if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closest_t) {
+                                    closest_t = t;
+                                    hit = true;
+                                }
+                            }
+                        }
+                    }
+                    if (hit) {
+                        camera.SetOrbitTarget(rayOrigin + rayDir * closest_t);
+                    }
+                }
                 lastMouseX = cX;
                 lastMouseY = cY;
                 firstMouse = false;
@@ -3310,7 +3541,7 @@ namespace Urbaxio {
                 float dY = static_cast<float>(cY - lastMouseY);
                 if (std::abs(dX) > 1e-3f || std::abs(dY) > 1e-3f) {
                     if (shiftDown) {
-                        camera.ProcessPan(dX, dY);
+                        camera.ProcessPan(dX, dY, cX, cY, display_w, display_h, scene);
                     } else {
                         camera.ProcessOrbit(dX, dY);
                     }
@@ -3697,7 +3928,7 @@ namespace Urbaxio {
         Urbaxio::Engine::Scene* scene,
         // Appearance
         const glm::vec3& defaultObjectColor,
-        const glm::vec3& lightDir, const glm::vec3& lightColor, float ambientStrength,
+        const glm::vec3& lightColor, float ambientStrength,
         bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
         const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ,
         const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
@@ -3727,6 +3958,9 @@ namespace Urbaxio {
             glUseProgram(objectShaderProgram);
             glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            // Use camera's front direction as light direction (headlamp lighting)
+            // The light direction should point FROM the light source TO the surface
+            glm::vec3 lightDir = -glm::normalize(camera.Front);
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir));
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor));
             glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength);
@@ -4705,7 +4939,7 @@ private:
     SnapType lockedAxisType = SnapType::NONE;
 
     // Input buffer for length
-    char lineLengthInputBuf[64] = "";
+    char lengthInputBuf[64] = "";
     
     // The last snap result received by OnUpdate
     SnapResult lastSnapResult;
@@ -4752,12 +4986,12 @@ private:
     std::vector<size_t> pushPull_faceIndices;
     glm::vec3 pushPull_faceNormal{0.0f};
     glm::vec3 pushPull_startPoint{0.0f}; // Point on face plane where drag started
-    float pushPullCurrentDistance = 0.0f;
+    float pushPullCurrentLength = 0.0f;
     int pushPull_startMouseX = 0;
     int pushPull_startMouseY = 0;
     
-    // Input buffer for distance
-    char distanceInputBuf[64] = "";
+    // Input buffer for length
+    char lengthInputBuf[64] = "";
     
     void reset();
     void finalizePushPull(bool ctrl);
@@ -4919,7 +5153,7 @@ void LineTool::Deactivate() {
 void LineTool::reset() {
     currentState = ToolState::IDLE;
     lockedAxisType = SnapType::NONE;
-    lineLengthInputBuf[0] = '\0';
+    lengthInputBuf[0] = '\0';
 }
 
 void LineTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {
@@ -4936,7 +5170,7 @@ void LineTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {
     if (currentState == ToolState::IDLE) {
         currentLineStartPoint = clickPoint;
         currentState = ToolState::AWAITING_SECOND_POINT_FREE;
-        lineLengthInputBuf[0] = '\0';
+        lengthInputBuf[0] = '\0';
     } else if (currentState == ToolState::AWAITING_SECOND_POINT_FREE || currentState == ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED) {
         finalizeLine(clickPoint);
     }
@@ -4947,7 +5181,7 @@ void LineTool::OnRightMouseDown() {
         currentState = ToolState::AWAITING_SECOND_POINT_FREE;
     } else if (currentState == ToolState::AWAITING_SECOND_POINT_FREE) {
         currentState = ToolState::IDLE;
-        lineLengthInputBuf[0] = '\0';
+        lengthInputBuf[0] = '\0';
     } else if (currentState == ToolState::IDLE) {
         reset();
     }
@@ -4964,9 +5198,11 @@ void LineTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
         bool isBackspace = (key == SDLK_BACKSPACE);
 
         if (isEnter) {
-            float length;
-            auto [ptr, ec] = std::from_chars(lineLengthInputBuf, lineLengthInputBuf + strlen(lineLengthInputBuf), length);
-            if (ec == std::errc() && ptr == lineLengthInputBuf + strlen(lineLengthInputBuf) && length > 1e-4f) {
+            float length_mm;
+            auto [ptr, ec] = std::from_chars(lengthInputBuf, lengthInputBuf + strlen(lengthInputBuf), length_mm);
+            if (ec == std::errc() && ptr == lengthInputBuf + strlen(lengthInputBuf)) {
+                float length_m = length_mm / 1000.0f; // Convert mm to meters
+                if (length_m > 1e-4f) {
                 glm::vec3 direction;
                 if (currentState == ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED) {
                     float dotProd = glm::dot(currentRubberBandEnd - currentLineStartPoint, lockedAxisDir);
@@ -4976,19 +5212,20 @@ void LineTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
                     if (glm::length(direction) < 1e-6f) { reset(); return; }
                     direction = glm::normalize(direction);
                 }
-                glm::vec3 finalEndPoint = currentLineStartPoint + direction * length;
+                glm::vec3 finalEndPoint = currentLineStartPoint + direction * length_m;
                 finalizeLine(finalEndPoint);
-            } else {
-                lineLengthInputBuf[0] = '\0'; // Clear bad input
             }
+        } else {
+            lengthInputBuf[0] = '\0'; // Clear bad input
+        }
         } else if (isBackspace) {
-            RemoveLastChar(lineLengthInputBuf);
+            RemoveLastChar(lengthInputBuf);
         } else {
             char c = '\0';
             if ((key >= SDLK_0 && key <= SDLK_9)) c = (char)key;
             else if ((key >= SDLK_KP_0 && key <= SDLK_KP_9)) c = '0' + (key - SDLK_KP_0);
-            else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(lineLengthInputBuf, '.') == nullptr) c = '.'; }
-            if (c != '\0') AppendCharToBuffer(lineLengthInputBuf, 64, c);
+            else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(lengthInputBuf, '.') == nullptr) c = '.'; }
+            if (c != '\0') AppendCharToBuffer(lengthInputBuf, 64, c);
         }
     }
 }
@@ -5035,13 +5272,13 @@ void LineTool::finalizeLine(const glm::vec3& endPoint) {
     // Reset for the next line
     currentState = ToolState::IDLE;
     lockedAxisType = SnapType::NONE;
-    lineLengthInputBuf[0] = '\0';
+    lengthInputBuf[0] = '\0';
 }
 
 void LineTool::RenderUI() {
     if (currentState != ToolState::IDLE) {
         ImGui::Separator();
-        ImGui::Text("Length: %s", lineLengthInputBuf);
+        ImGui::Text("Length (mm): %s", lengthInputBuf);
         ImGui::Separator();
     }
 }
@@ -5284,8 +5521,8 @@ void PushPullTool::reset() {
     isPushPullActive = false;
     pushPull_objId = 0;
     pushPull_faceIndices.clear();
-    pushPullCurrentDistance = 0.0f;
-    distanceInputBuf[0] = '\0';
+    pushPullCurrentLength = 0.0f;
+    lengthInputBuf[0] = '\0';
     if(context.hoveredObjId) *context.hoveredObjId = 0;
     if(context.hoveredFaceTriangleIndices) context.hoveredFaceTriangleIndices->clear();
 }
@@ -5330,13 +5567,13 @@ void PushPullTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl
             glm::intersectRayPlane(rayOrigin, rayDir, glm::vec3(mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+1], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+2]), pushPull_faceNormal, hitDist);
             pushPull_startPoint = rayOrigin + rayDir * hitDist;
             
-            pushPullCurrentDistance = 0.0f;
+            pushPullCurrentLength = 0.0f;
             SDL_GetMouseState(&pushPull_startMouseX, &pushPull_startMouseY);
 
             // Clear any previous selection
             *context.selectedObjId = 0;
             context.selectedTriangleIndices->clear();
-            distanceInputBuf[0] = '\0';
+            lengthInputBuf[0] = '\0';
         }
     }
 }
@@ -5355,22 +5592,24 @@ void PushPullTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
     
     if (isPushPullActive) {
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
-            float dist;
-            auto [ptr, ec] = std::from_chars(distanceInputBuf, distanceInputBuf + strlen(distanceInputBuf), dist);
-            if (ec == std::errc() && ptr == distanceInputBuf + strlen(distanceInputBuf)) {
-                pushPullCurrentDistance = dist;
+            float length_mm;
+            auto [ptr, ec] = std::from_chars(lengthInputBuf, lengthInputBuf + strlen(lengthInputBuf), length_mm);
+            if (ec == std::errc() && ptr == lengthInputBuf + strlen(lengthInputBuf)) {
+                // NEW: Apply the sign from the current mouse-drag direction
+                float sign = (pushPullCurrentLength < 0.0f) ? -1.0f : 1.0f;
+                pushPullCurrentLength = (length_mm / 1000.0f) * sign;
                 finalizePushPull(ctrl);
             } else {
-                distanceInputBuf[0] = '\0'; // Clear bad input
+                lengthInputBuf[0] = '\0'; // Clear bad input
             }
         } else if (key == SDLK_BACKSPACE) {
-            size_t len = strlen(distanceInputBuf); if (len > 0) distanceInputBuf[len - 1] = '\0';
+            size_t len = strlen(lengthInputBuf); if (len > 0) lengthInputBuf[len - 1] = '\0';
         } else {
             char c = '\0';
             if ((key >= SDLK_0 && key <= SDLK_9)) c = (char)key;
             else if ((key >= SDLK_KP_0 && key <= SDLK_KP_9)) c = '0' + (key - SDLK_KP_0);
-            else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(distanceInputBuf, '.') == nullptr) c = '.'; }
-            if (c != '\0') { size_t len = strlen(distanceInputBuf); if (len + 1 < 64) { distanceInputBuf[len] = c; distanceInputBuf[len + 1] = '\0';} }
+            else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(lengthInputBuf, '.') == nullptr) c = '.'; }
+            if (c != '\0') { size_t len = strlen(lengthInputBuf); if (len + 1 < 64) { lengthInputBuf[len] = c; lengthInputBuf[len + 1] = '\0';} }
         }
     }
 }
@@ -5383,10 +5622,10 @@ void PushPullTool::OnUpdate(const SnapResult& snap) {
         *context.hoveredFaceTriangleIndices = pushPull_faceIndices;
 
         if (snap.snapped && IsValidPushPullSnap(snap.type)) {
-            // Project the snapped point onto the extrusion axis to get the distance
+            // Project the snapped point onto the extrusion axis to get the length
             glm::vec3 projectedPoint = ClosestPointOnLine_ForPushPull(pushPull_startPoint, pushPull_faceNormal, snap.worldPoint);
             glm::vec3 offsetVector = projectedPoint - pushPull_startPoint;
-            pushPullCurrentDistance = glm::dot(offsetVector, pushPull_faceNormal);
+            pushPullCurrentLength = glm::dot(offsetVector, pushPull_faceNormal);
         } else {
             // Fallback to screen-space mouse dragging if no valid snap
             glm::mat4 view = context.camera->GetViewMatrix();
@@ -5403,7 +5642,7 @@ void PushPullTool::OnUpdate(const SnapResult& snap) {
                     float pixel_dist = glm::dot(mouseDelta, screenAxisDir);
                     // Sensitivity based on distance to object
                     float sensitivity = glm::distance(context.camera->Position, pushPull_startPoint) * 0.001f;
-                    pushPullCurrentDistance = pixel_dist * sensitivity;
+                    pushPullCurrentLength = pixel_dist * sensitivity;
                 }
             }
         }
@@ -5415,7 +5654,7 @@ void PushPullTool::OnUpdate(const SnapResult& snap) {
 
 void PushPullTool::finalizePushPull(bool ctrl) {
     if (context.scene && pushPull_objId != 0) {
-        if (std::abs(pushPullCurrentDistance) > 1e-4) {
+        if (std::abs(pushPullCurrentLength) > 1e-4) {
             
             Urbaxio::Engine::SceneObject* obj = context.scene->get_object_by_id(pushPull_objId);
             if (!obj) { reset(); return; }
@@ -5441,7 +5680,7 @@ void PushPullTool::finalizePushPull(bool ctrl) {
                 context.scene, 
                 faceVertices,
                 pushPull_faceNormal,
-                pushPullCurrentDistance,
+                pushPullCurrentLength,
                 ctrl
             );
             context.scene->getCommandManager()->ExecuteCommand(std::move(command));
@@ -5491,7 +5730,7 @@ void PushPullTool::updateHover(int mouseX, int mouseY) {
 void PushPullTool::RenderUI() {
     if (isPushPullActive) {
         ImGui::Separator();
-        ImGui::Text("Distance: %s", distanceInputBuf);
+        ImGui::Text("Length (mm): %s", lengthInputBuf);
         ImGui::Separator();
     }
 }
@@ -5500,7 +5739,7 @@ void PushPullTool::RenderPreview(Renderer& renderer, const SnapResult& snap) {
     if (isPushPullActive) {
         Urbaxio::Engine::SceneObject* obj = context.scene->get_object_by_id(pushPull_objId);
         if (obj) {
-            renderer.UpdatePushPullPreview(*obj, pushPull_faceIndices, pushPull_faceNormal, pushPullCurrentDistance);
+            renderer.UpdatePushPullPreview(*obj, pushPull_faceIndices, pushPull_faceNormal, pushPullCurrentLength);
         }
     } else {
         // Clear preview mesh when not active
