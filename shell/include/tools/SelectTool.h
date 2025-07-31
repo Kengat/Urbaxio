@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tools/ITool.h"
+#include <glm/glm.hpp> // For glm::vec2
 #include <cstdint>
 #include <cstddef> // for size_t
 
@@ -15,12 +16,24 @@ public:
     void Deactivate() override;
 
     void OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) override;
+    void OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) override;
+    void OnMouseMove(int mouseX, int mouseY) override;
+
+    // --- NEW: Public methods to query drag state ---
+    bool IsDragging() const;
+    void GetDragRect(glm::vec2& outStart, glm::vec2& outCurrent) const;
+
 
 private:
     // Double-click detection state
     uint32_t lastClickTimestamp = 0;
     uint64_t lastClickedObjId = 0;
     size_t lastClickedTriangleIndex = 0;
+
+    // --- NEW: Drag selection state ---
+    bool isDragging = false;
+    glm::vec2 dragStartCoords;
+    glm::vec2 currentDragCoords;
 };
 
 } // namespace Urbaxio::Tools 

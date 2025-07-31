@@ -3,7 +3,8 @@
 #include <engine/scene.h>
 #include <engine/scene_object.h>
 #include <cad_kernel/cad_kernel.h>
-#include <tools/ToolManager.h> // <-- NEW
+#include <tools/ToolManager.h>
+#include <tools/SelectTool.h>   // <-- FIX: Include specific tool for dynamic_cast
 
 #include "camera.h"
 #include "input_handler.h"
@@ -328,6 +329,17 @@ int main(int argc, char* argv[]) {
             hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor,
             currentSnap, 
             ImGui::GetDrawData());
+
+        // --- NEW: Render selection box if needed ---
+        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) {
+            Urbaxio::Tools::SelectTool* selectTool = static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool());
+            if (selectTool->IsDragging()) {
+                glm::vec2 start, end;
+                selectTool->GetDragRect(start, end);
+                renderer.RenderSelectionBox(start, end, display_w, display_h);
+            }
+        }
+            
         SDL_GL_SwapWindow(window);
     }
 

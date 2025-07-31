@@ -58,6 +58,7 @@ namespace Urbaxio {
         void UpdatePreviewLine(const glm::vec3& start, const glm::vec3& end, bool enabled = true);
         void UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance);
         void UpdateAxesVBO(const glm::vec4& colorX, const glm::vec4& colorY, const glm::vec4& colorZ, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor);
+        void RenderSelectionBox(const glm::vec2& start, const glm::vec2& end, int screenWidth, int screenHeight); // <-- NEW
 
     private:
         GLuint objectShaderProgram = 0;
@@ -68,6 +69,7 @@ namespace Urbaxio {
         GLuint simpleLineShaderProgram = 0; 
         GLuint unlitShaderProgram = 0; // <-- NEW SHADER for unlit objects
         GLuint dashedLineShaderProgram = 0; // <-- NEW SHADER for dashed lines
+        GLuint selectionBoxShaderProgram = 0; // <-- NEW
         
         GLuint splatShaderProgram = 0;
         GLuint markerShaderProgram = 0;
@@ -87,6 +89,7 @@ namespace Urbaxio {
         GLuint previewVAO = 0, previewVBO = 0; GLsizei previewVertexCount = 0;
         GLuint previewLineVAO = 0, previewLineVBO = 0; bool previewLineEnabled = false;
         GLuint previewOutlineVAO = 0, previewOutlineVBO = 0; GLsizei previewOutlineVertexCount = 0; // <-- NEW for dashed outline
+        GLuint selectionBoxVAO = 0, selectionBoxVBO = 0; // <-- NEW
 
         std::map<MarkerShape, GLuint> markerVAOs;
         std::map<MarkerShape, GLuint> markerVBOs;
@@ -122,7 +125,8 @@ namespace Urbaxio {
         bool CreateMarkerResources();
         bool CreatePreviewResources();
         bool CreatePreviewLineResources();
-        bool CreatePreviewOutlineResources(); // <-- NEW
+        bool CreatePreviewOutlineResources();
+        bool CreateSelectionBoxResources();
         void Cleanup();
         void DrawSnapMarker(const SnapResult& snap, const Camera& camera, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight);
 
@@ -130,9 +134,10 @@ namespace Urbaxio {
         const char* simpleLineVertexShaderSource; const char* simpleLineFragmentShaderSource;
         const char* gridVertexShaderSource; const char* gridFragmentShaderSource;
         const char* axisVertexShaderSource; const char* axisFragmentShaderSource;
-        const char* unlitVertexShaderSource; const char* unlitFragmentShaderSource; // <-- NEW
+        const char* unlitVertexShaderSource; const char* unlitFragmentShaderSource;
         const char* splatVertexShaderSource; const char* splatFragmentShaderSource;
         const char* markerVertexShaderSource; const char* markerFragmentShaderSource;
-        const char* dashedLineVertexShaderSource; const char* dashedLineFragmentShaderSource; // <-- NEW
+        const char* dashedLineVertexShaderSource; const char* dashedLineFragmentShaderSource;
+        const char* selectionBoxVertexShaderSource; const char* selectionBoxFragmentShaderSource;
     };
 }

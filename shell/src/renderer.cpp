@@ -337,9 +337,24 @@ namespace Urbaxio {
             "    }\n"
             "    FragColor = u_Color;\n"
             "}\n";
+
+        selectionBoxVertexShaderSource =
+            "#version 330 core\n"
+            "layout (location = 0) in vec2 aPos;\n" // Input is already in NDC
+            "void main() {\n"
+            "    gl_Position = vec4(aPos.x, aPos.y, 0.0, 1.0);\n"
+            "}\n";
+
+        selectionBoxFragmentShaderSource =
+            "#version 330 core\n"
+            "out vec4 FragColor;\n"
+            "uniform vec4 u_Color;\n"
+            "void main() {\n"
+            "    FragColor = u_Color;\n"
+            "}\n";
     }
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateSplatResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateSplatResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { /* ... same ... */ if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
     
     void Renderer::RenderFrame(
@@ -598,6 +613,8 @@ namespace Urbaxio {
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, markerVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, markerFragmentShaderSource); if (vs != 0 && fs != 0) markerShaderProgram = LinkShaderProgram(vs, fs); if (markerShaderProgram == 0) { std::cerr << "Renderer Error: Failed to link marker shader program!" << std::endl; return false; } std::cout << "Renderer: Marker shader program created." << std::endl; }
         // Dashed Line Shader
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, dashedLineVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, dashedLineFragmentShaderSource); if (vs != 0 && fs != 0) dashedLineShaderProgram = LinkShaderProgram(vs, fs); if (dashedLineShaderProgram == 0) return false; std::cout << "Renderer: Dashed Line shader program created." << std::endl; }
+        // Selection Box Shader
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, selectionBoxVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, selectionBoxFragmentShaderSource); if (vs != 0 && fs != 0) selectionBoxShaderProgram = LinkShaderProgram(vs, fs); if (selectionBoxShaderProgram == 0) return false; std::cout << "Renderer: Selection Box shader program created." << std::endl; }
         return true;
     }
     bool Renderer::CreateGridResources() {
@@ -732,6 +749,7 @@ namespace Urbaxio {
         if (splatShaderProgram != 0) glDeleteProgram(splatShaderProgram); splatShaderProgram = 0;
         if (markerShaderProgram != 0) glDeleteProgram(markerShaderProgram); markerShaderProgram = 0;
         if (dashedLineShaderProgram != 0) glDeleteProgram(dashedLineShaderProgram); dashedLineShaderProgram = 0;
+        if (selectionBoxShaderProgram != 0) glDeleteProgram(selectionBoxShaderProgram); selectionBoxShaderProgram = 0;
         std::cout << "Renderer: Resource cleanup finished." << std::endl;
     }
 
@@ -931,6 +949,58 @@ namespace Urbaxio {
         glBindBuffer(GL_ARRAY_BUFFER, axesVBO);
         glBufferData(GL_ARRAY_BUFFER, allAxesVertices.size() * sizeof(float), allAxesVertices.data(), GL_DYNAMIC_DRAW);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    void Renderer::RenderSelectionBox(const glm::vec2& start, const glm::vec2& end, int screenWidth, int screenHeight) {
+        if (selectionBoxShaderProgram == 0 || selectionBoxVAO == 0) return;
+        
+        // Convert screen coordinates to Normalized Device Coordinates (NDC) [-1, 1]
+        float x1 = (start.x / screenWidth) * 2.0f - 1.0f;
+        float y1 = 1.0f - (start.y / screenHeight) * 2.0f;
+        float x2 = (end.x / screenWidth) * 2.0f - 1.0f;
+        float y2 = 1.0f - (end.y / screenHeight) * 2.0f;
+
+        float vertices[] = {
+            x1, y1, // Top-left
+            x2, y1, // Top-right
+            x2, y2, // Bottom-right
+            x1, y2  // Bottom-left
+        };
+
+        glBindBuffer(GL_ARRAY_BUFFER, selectionBoxVBO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        glUseProgram(selectionBoxShaderProgram);
+        // Orange color for the box
+        glUniform4f(glGetUniformLocation(selectionBoxShaderProgram, "u_Color"), 1.0f, 0.65f, 0.0f, 1.0f);
+        
+        glDisable(GL_DEPTH_TEST);
+        
+        // Use stippling for dashed lines
+        glEnable(GL_LINE_STIPPLE);
+        glLineStipple(4, 0xAAAA); // factor=4, pattern=1010101010101010
+
+        glBindVertexArray(selectionBoxVAO);
+        glDrawArrays(GL_LINE_LOOP, 0, 4);
+        glBindVertexArray(0);
+
+        glDisable(GL_LINE_STIPPLE);
+        glEnable(GL_DEPTH_TEST);
+    }
+
+    bool Renderer::CreateSelectionBoxResources() {
+        glGenVertexArrays(1, &selectionBoxVAO);
+        glGenBuffers(1, &selectionBoxVBO);
+        glBindVertexArray(selectionBoxVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, selectionBoxVBO);
+        // Buffer for 4 vertices (a rectangle), 2 floats each (x, y)
+        glBufferData(GL_ARRAY_BUFFER, 4 * 2 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        glBindVertexArray(0);
+        std::cout << "Renderer: Selection Box VAO/VBO created." << std::endl;
+        return selectionBoxVAO != 0 && selectionBoxVBO != 0;
     }
 
 } // namespace Urbaxio
