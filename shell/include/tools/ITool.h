@@ -6,11 +6,11 @@
 #include <vector>
 #include <set>
 #include <string>
+#include "snapping.h"
 
 // Forward declarations to avoid including heavy headers
 namespace Urbaxio {
     class Camera;
-    struct SnapResult;
     class Renderer;
     namespace Engine {
         class Scene;
@@ -24,7 +24,8 @@ namespace Urbaxio::Tools {
 enum class ToolType {
     Select,
     Line,
-    PushPull
+    PushPull,
+    Move
 };
 
 // Bundles common objects and state that tools need to access.
@@ -71,7 +72,9 @@ public:
     virtual void OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {}
     
     // Per-frame update, gives the tool the latest snap info
-    virtual void OnUpdate(const SnapResult& snap) {} 
+    virtual void OnUpdate(const SnapResult& snap) {
+        lastSnapResult = snap;
+    } 
 
     // Rendering (called from main loop)
     virtual void RenderUI() {}
@@ -82,6 +85,7 @@ public:
 protected:
     ToolContext context;
     bool isActive = false;
+    SnapResult lastSnapResult;
 };
 
 } // namespace Urbaxio::Tools 

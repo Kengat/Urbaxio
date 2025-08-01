@@ -2,6 +2,7 @@
 #include "tools/SelectTool.h"
 #include "tools/LineTool.h"
 #include "tools/PushPullTool.h"
+#include "tools/MoveTool.h" // <-- NEW
 
 namespace Urbaxio::Tools {
 
@@ -9,6 +10,7 @@ ToolManager::ToolManager(const ToolContext& context) : context(context) {
     tools[ToolType::Select] = std::make_unique<SelectTool>();
     tools[ToolType::Line] = std::make_unique<LineTool>();
     tools[ToolType::PushPull] = std::make_unique<PushPullTool>();
+    tools[ToolType::Move] = std::make_unique<MoveTool>(); // <-- NEW
 
     // Start with the Select tool active
     SetTool(ToolType::Select);

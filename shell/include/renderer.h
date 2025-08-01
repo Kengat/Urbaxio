@@ -48,7 +48,10 @@ namespace Urbaxio {
         const glm::vec3& hoverHighlightColor,
         // Tools
         const SnapResult& currentSnap,
-        ImDrawData* imguiDrawData
+        ImDrawData* imguiDrawData,
+        // --- NEW for Previews ---
+        uint64_t previewObjectId = 0,
+        const glm::mat4& previewTransform = glm::mat4(1.0f)
     );
         void SetViewport(int x, int y, int width, int height);
         float GetMaxLineWidth() const { return maxLineWidth; }

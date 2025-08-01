@@ -5,6 +5,7 @@
 #include <cad_kernel/cad_kernel.h>
 #include <tools/ToolManager.h>
 #include <tools/SelectTool.h>   // <-- FIX: Include specific tool for dynamic_cast
+#include <tools/MoveTool.h>     // <-- NEW: Include specific tool for dynamic_cast
 
 #include "camera.h"
 #include "input_handler.h"
@@ -235,6 +236,9 @@ int main(int argc, char* argv[]) {
             bool isLine = activeToolType == Urbaxio::Tools::ToolType::Line;
             if (ImGui::RadioButton("Line", isLine)) toolManager.SetTool(Urbaxio::Tools::ToolType::Line);
             ImGui::SameLine();
+            bool isMove = activeToolType == Urbaxio::Tools::ToolType::Move; // <-- NEW
+            if (ImGui::RadioButton("Move", isMove)) toolManager.SetTool(Urbaxio::Tools::ToolType::Move); // <-- NEW
+            ImGui::SameLine();
             bool isPushPull = activeToolType == Urbaxio::Tools::ToolType::PushPull;
             if (ImGui::RadioButton("Push/Pull", isPushPull)) toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull);
 
@@ -319,6 +323,17 @@ int main(int argc, char* argv[]) {
 
         // --- Let the tool render its preview geometry ---
         toolManager.RenderPreview(renderer, currentSnap);
+
+        // --- NEW: Get preview transform from MoveTool if active ---
+        uint64_t previewObjId = 0;
+        glm::mat4 previewMatrix(1.0f);
+        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
+            auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
+            if (moveTool->IsMoving()) {
+                previewObjId = moveTool->GetMovingObjectId();
+                previewMatrix = moveTool->GetPreviewTransform();
+            }
+        }
         
         // --- Render the main frame ---
         renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightColor, ambientStrength, 
@@ -328,11 +343,14 @@ int main(int argc, char* argv[]) {
             selectedObjId, selectedTriangleIndices, selectedLineIDs, selectionHighlightColor, 
             hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor,
             currentSnap, 
-            ImGui::GetDrawData());
+            ImGui::GetDrawData(),
+            previewObjId, // <-- NEW
+            previewMatrix  // <-- NEW
+        );
 
-        // --- NEW: Render selection box if needed ---
+        // --- Render selection box if needed ---
         if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) {
-            Urbaxio::Tools::SelectTool* selectTool = static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool());
+            auto* selectTool = static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool());
             if (selectTool->IsDragging()) {
                 glm::vec2 start, end;
                 selectTool->GetDragRect(start, end);

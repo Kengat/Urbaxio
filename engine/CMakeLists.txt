@@ -6,6 +6,7 @@ add_library(engine STATIC
     # --- Undo/Redo System ---
     src/commands/CommandManager.cpp
     src/commands/PushPullCommand.cpp
+    src/commands/MoveCommand.cpp
     src/commands/CreateLineCommand.cpp
 )
 
