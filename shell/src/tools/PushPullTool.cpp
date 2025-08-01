@@ -195,7 +195,7 @@ void PushPullTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
             float length_mm;
             // FIX: Check the return value of std::from_chars to silence the [[nodiscard]] warning
             auto [ptr, ec] = std::from_chars(lengthInputBuf, lengthInputBuf + strlen(lengthInputBuf), length_mm);
-            if (ec == std::errc()) {
+            if (ec == std::errc() && ptr == lengthInputBuf + strlen(lengthInputBuf)) {
                 // NEW: Apply the sign from the current mouse-drag direction
                 float sign = (pushPullCurrentLength < 0.0f) ? -1.0f : 1.0f;
                 pushPullCurrentLength = (length_mm / 1000.0f) * sign;

@@ -4,8 +4,8 @@
 #include <engine/scene_object.h>
 #include <cad_kernel/cad_kernel.h>
 #include <tools/ToolManager.h>
-#include <tools/SelectTool.h>   // <-- FIX: Include specific tool for dynamic_cast
-#include <tools/MoveTool.h>     // <-- NEW: Include specific tool for dynamic_cast
+#include <tools/SelectTool.h>
+#include <tools/MoveTool.h>
 
 #include "camera.h"
 #include "input_handler.h"
@@ -22,7 +22,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/norm.hpp>
 
-#include <fmt/core.h> // <-- FIX: Added missing include for fmt library
+#include <fmt/core.h>
 
 #include <iostream>
 #include <string>
@@ -33,7 +33,7 @@
 #include <map>
 #include <cstdint>
 
-// --- NEW: OCCT includes for capsule generation (moved from engine) ---
+// --- OCCT includes for capsule generation (moved from engine) ---
 #include <gp_Ax2.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
@@ -46,7 +46,7 @@
 
 namespace { // Anonymous namespace for helpers
 
-    // --- NEW: Capsule generation logic is now in the shell ---
+    // --- Capsule generation logic is now in the shell ---
     Urbaxio::CadKernel::MeshBuffers CreateCapsuleMesh(float radius, float height) {
         try {
             // --- FIX: Offset the cylinder's base down by half its height to center it ---
@@ -149,28 +149,22 @@ int main(int argc, char* argv[]) {
     
     Urbaxio::Tools::ToolManager toolManager(toolContext);
 
-    // --- NEW: Marker settings ---
+    // --- Marker settings ---
     static float capsuleRadius = 0.5f;
     static float capsuleHeight10m = 3.2f;
     static float capsuleHeight5m = 1.4f;
 
-    // --- NEW: Create shell-specific markers ---
+    // --- Create shell-specific markers ---
     auto* capsule_marker_10m = scene_ptr->create_object("UnitCapsuleMarker10m");
     if (capsule_marker_10m) {
         Urbaxio::CadKernel::MeshBuffers mesh = CreateCapsuleMesh(capsuleRadius, capsuleHeight10m);
         capsule_marker_10m->set_mesh_buffers(std::move(mesh));
-        fmt::print("Shell: Created 'UnitCapsuleMarker10m' template with ID {}.\n", capsule_marker_10m->get_id());
-    } else {
-        fmt::print(stderr, "Shell: Error creating 'UnitCapsuleMarker10m' template!\n");
     }
     
     auto* capsule_marker_5m = scene_ptr->create_object("UnitCapsuleMarker5m");
     if (capsule_marker_5m) {
         Urbaxio::CadKernel::MeshBuffers mesh = CreateCapsuleMesh(capsuleRadius, capsuleHeight5m);
         capsule_marker_5m->set_mesh_buffers(std::move(mesh));
-        fmt::print("Shell: Created 'UnitCapsuleMarker5m' template with ID {}.\n", capsule_marker_5m->get_id());
-    } else {
-        fmt::print(stderr, "Shell: Error creating 'UnitCapsuleMarker5m' template!\n");
     }
 
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
@@ -184,7 +178,6 @@ int main(int argc, char* argv[]) {
         if (toolManager.ShouldEnableSnapping()) {
             currentSnap = snappingSystem.FindSnapPoint(mouseX, mouseY, display_w, display_h, camera, *scene_ptr);
         } else {
-            // Create empty snap result when snapping is disabled
             currentSnap = {};
             currentSnap.snapped = false;
         }
@@ -206,8 +199,19 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), selectedLineIDs);
-
+        
+        // --- FIX: Moved preview state query before buffer updates ---
+        uint64_t previewObjId = 0;
+        glm::mat4 previewMatrix(1.0f);
+        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
+            auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
+            if (moveTool->IsMoving()) {
+                previewObjId = moveTool->GetMovingObjectId();
+                previewMatrix = moveTool->GetPreviewTransform();
+            }
+        }
+        
+        renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), selectedLineIDs, previewObjId, scene_ptr);
 
         // --- Get cursor world position for shaders ---
         glm::vec3 cursorWorldPos = currentSnap.snapped
@@ -221,7 +225,7 @@ int main(int argc, char* argv[]) {
             ImGui::Begin("Urbaxio Controls");
             ImGui::Text("App avg %.3f ms/f (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::Separator();
-            if (ImGui::Button("Create Box Object")) { object_counter++; std::string box_name = "Box_" + std::to_string(object_counter); Urbaxio::Engine::SceneObject* new_box = scene_ptr->create_box_object(box_name, 10.0, 20.0, 5.0); if (new_box && new_box->has_mesh()) { /* GPU upload handled by main loop now */ } else { if (!new_box) { std::cerr << "Shell: Failed to create SceneObject for '" << box_name << "'." << std::endl; } else { std::cerr << "Shell: Failed to triangulate or mesh is empty for '" << box_name << "'." << std::endl; } } }
+            if (ImGui::Button("Create Box Object")) { object_counter++; std::string box_name = "Box_" + std::to_string(object_counter); scene_ptr->create_box_object(box_name, 10.0, 20.0, 5.0); }
             ImGui::Separator();
             
             if (ImGui::Button("Appearance Settings")) show_style_editor = true;
@@ -236,8 +240,8 @@ int main(int argc, char* argv[]) {
             bool isLine = activeToolType == Urbaxio::Tools::ToolType::Line;
             if (ImGui::RadioButton("Line", isLine)) toolManager.SetTool(Urbaxio::Tools::ToolType::Line);
             ImGui::SameLine();
-            bool isMove = activeToolType == Urbaxio::Tools::ToolType::Move; // <-- NEW
-            if (ImGui::RadioButton("Move", isMove)) toolManager.SetTool(Urbaxio::Tools::ToolType::Move); // <-- NEW
+            bool isMove = activeToolType == Urbaxio::Tools::ToolType::Move;
+            if (ImGui::RadioButton("Move", isMove)) toolManager.SetTool(Urbaxio::Tools::ToolType::Move);
             ImGui::SameLine();
             bool isPushPull = activeToolType == Urbaxio::Tools::ToolType::PushPull;
             if (ImGui::RadioButton("Push/Pull", isPushPull)) toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull);
@@ -249,7 +253,6 @@ int main(int argc, char* argv[]) {
             }
             ImGui::SameLine();
             if (ImGui::Button("Run Split Test")) {
-                // 1. Clean up GPU resources for existing objects
                 if (scene_ptr) {
                     std::vector<Urbaxio::Engine::SceneObject*> objects_to_clean = scene_ptr->get_all_objects();
                     for (auto* obj : objects_to_clean) {
@@ -260,7 +263,6 @@ int main(int argc, char* argv[]) {
                              if (obj->ebo != 0) { glDeleteBuffers(1, &obj->ebo); obj->ebo = 0; }
                         }
                     }
-                    // 2. Clear the scene logic and run the test
                     scene_ptr->TestFaceSplitting(); 
                 }
             }
@@ -299,16 +301,14 @@ int main(int argc, char* argv[]) {
                 if (radius_changed || height10m_changed) {
                     Urbaxio::Engine::SceneObject* marker = scene_ptr->get_object_by_id(capsule_marker_10m->get_id());
                     if (marker) {
-                        Urbaxio::CadKernel::MeshBuffers new_mesh = CreateCapsuleMesh(capsuleRadius, capsuleHeight10m);
-                        marker->set_mesh_buffers(std::move(new_mesh));
+                        marker->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight10m));
                         marker->vao = 0; // Invalidate GPU resource to trigger re-upload
                     }
                 }
                 if (radius_changed || height5m_changed) {
                     Urbaxio::Engine::SceneObject* marker = scene_ptr->get_object_by_id(capsule_marker_5m->get_id());
                      if (marker) {
-                        Urbaxio::CadKernel::MeshBuffers new_mesh = CreateCapsuleMesh(capsuleRadius, capsuleHeight5m);
-                        marker->set_mesh_buffers(std::move(new_mesh));
+                        marker->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight5m));
                         marker->vao = 0; // Invalidate GPU resource to trigger re-upload
                     }
                 }
@@ -323,17 +323,6 @@ int main(int argc, char* argv[]) {
 
         // --- Let the tool render its preview geometry ---
         toolManager.RenderPreview(renderer, currentSnap);
-
-        // --- NEW: Get preview transform from MoveTool if active ---
-        uint64_t previewObjId = 0;
-        glm::mat4 previewMatrix(1.0f);
-        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
-            auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
-            if (moveTool->IsMoving()) {
-                previewObjId = moveTool->GetMovingObjectId();
-                previewMatrix = moveTool->GetPreviewTransform();
-            }
-        }
         
         // --- Render the main frame ---
         renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightColor, ambientStrength, 
@@ -344,8 +333,8 @@ int main(int argc, char* argv[]) {
             hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor,
             currentSnap, 
             ImGui::GetDrawData(),
-            previewObjId, // <-- NEW
-            previewMatrix  // <-- NEW
+            previewObjId,
+            previewMatrix
         );
 
         // --- Render selection box if needed ---
@@ -362,5 +351,5 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "Shell: <<< Exiting main loop." << std::endl;
-    std::cout << "Shell: Cleaning up..." << std::endl; /* ... Cleanup ... */ if (scene_ptr) { std::vector<Urbaxio::Engine::SceneObject*> objects_to_clean = scene_ptr->get_all_objects(); for (auto* obj : objects_to_clean) { if (obj && obj->vao != 0) glDeleteVertexArrays(1, &obj->vao); if (obj && obj->vbo_vertices != 0) glDeleteBuffers(1, &obj->vbo_vertices); if (obj && obj->vbo_normals != 0) glDeleteBuffers(1, &obj->vbo_normals); if (obj && obj->ebo != 0) glDeleteBuffers(1, &obj->ebo); } } ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui::DestroyContext(); SDL_GL_DeleteContext(gl_context); SDL_DestroyWindow(window); SDL_Quit(); std::cout << "Shell: Urbaxio Application finished gracefully." << std::endl; return 0;
+    std::cout << "Shell: Cleaning up..." << std::endl; if (scene_ptr) { std::vector<Urbaxio::Engine::SceneObject*> objects_to_clean = scene_ptr->get_all_objects(); for (auto* obj : objects_to_clean) { if (obj && obj->vao != 0) glDeleteVertexArrays(1, &obj->vao); if (obj && obj->vbo_vertices != 0) glDeleteBuffers(1, &obj->vbo_vertices); if (obj && obj->vbo_normals != 0) glDeleteBuffers(1, &obj->vbo_normals); if (obj && obj->ebo != 0) glDeleteBuffers(1, &obj->ebo); } } ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui::DestroyContext(); SDL_GL_DeleteContext(gl_context); SDL_DestroyWindow(window); SDL_Quit(); std::cout << "Shell: Urbaxio Application finished gracefully." << std::endl; return 0;
 }

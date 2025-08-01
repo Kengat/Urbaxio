@@ -346,17 +346,21 @@ namespace Urbaxio::Engine {
         const Line& line = it->second;
 
         // Remove from start vertex adjacency
-        auto& startAdj = vertexAdjacency_[line.start];
-        startAdj.erase(std::remove(startAdj.begin(), startAdj.end(), lineId), startAdj.end());
-        if (startAdj.empty()) {
-            vertexAdjacency_.erase(line.start);
+        if (vertexAdjacency_.count(line.start)) {
+            auto& startAdj = vertexAdjacency_.at(line.start);
+            startAdj.erase(std::remove(startAdj.begin(), startAdj.end(), lineId), startAdj.end());
+            if (startAdj.empty()) {
+                vertexAdjacency_.erase(line.start);
+            }
         }
 
         // Remove from end vertex adjacency
-        auto& endAdj = vertexAdjacency_[line.end];
-        endAdj.erase(std::remove(endAdj.begin(), endAdj.end(), lineId), endAdj.end());
-        if (endAdj.empty()) {
-            vertexAdjacency_.erase(line.end);
+        if (vertexAdjacency_.count(line.end)) {
+            auto& endAdj = vertexAdjacency_.at(line.end);
+            endAdj.erase(std::remove(endAdj.begin(), endAdj.end(), lineId), endAdj.end());
+            if (endAdj.empty()) {
+                vertexAdjacency_.erase(line.end);
+            }
         }
 
         // Remove from the main map
@@ -771,27 +775,25 @@ namespace Urbaxio::Engine {
     void Scene::UpdateObjectBoundary(SceneObject* obj) {
         if (!obj || !obj->has_shape()) return;
         
+        // --- MODIFIED LOGIC ---
+        // 1. Remove all old lines associated with this object.
+        // This is crucial for rebuilding vertex adjacency correctly.
+        for (uint64_t oldLineId : obj->boundaryLineIDs) {
+            RemoveLine(oldLineId);
+        }
+        obj->boundaryLineIDs.clear();
+        
+        // 2. Extract fresh edges from the shape.
         auto new_edges = ExtractEdgesFromShape(*obj->get_shape());
-        std::set<uint64_t> new_boundary_line_ids;
-        std::set<uint64_t> old_line_ids_to_check = obj->boundaryLineIDs;
-
-        // Add/update lines from new edges
+        
+        // 3. Add the new edges as lines and update the object's boundary set.
         for (const auto& edge : new_edges) {
             uint64_t line_id = AddSingleLineSegment(edge.first, edge.second);
             if (line_id != 0) {
                 lines_[line_id].usedInFace = true;
-                new_boundary_line_ids.insert(line_id);
-                if(old_line_ids_to_check.count(line_id)) {
-                    old_line_ids_to_check.erase(line_id);
-                }
+                obj->boundaryLineIDs.insert(line_id);
             }
         }
-
-        for (uint64_t dead_line_id : old_line_ids_to_check) {
-            RemoveLine(dead_line_id);
-        }
-        
-        obj->boundaryLineIDs = new_boundary_line_ids;
     }
     
 
@@ -1173,7 +1175,7 @@ namespace Urbaxio::Engine {
         // is closed by the existing edge of the original face.
         // The expected outcome is that the original single face object is *replaced* by a new object containing two faces.
         // Therefore, the final number of objects in the scene should still be 1, but this object should have 2 faces.
-        std::cout << "\n--- FINAL VERIFICATION ---" << std::endl;
+        std::cout << "\n--- FINAL VERIFICATION ---\n" << std::endl;
         
         size_t finalObjectCount = objects_.size();
         bool testPassed = false;
@@ -1197,7 +1199,7 @@ namespace Urbaxio::Engine {
             std::cout << "This likely indicates a failure in the parametric splitting logic or loop detection." << std::endl;
         }
 
-        std::cout << "\n--- Final Object Analysis ---" << std::endl;
+        std::cout << "\n--- Final Object Analysis ---\n" << std::endl;
         for (const auto& [id, obj_ptr] : objects_) {
             AnalyzeShape(*obj_ptr->get_shape(), "Final Object " + std::to_string(id));
         }
@@ -1210,6 +1212,7 @@ namespace Urbaxio::Engine {
         
         for (auto* obj : get_all_objects()) {
             if (!obj || !obj->has_shape()) continue;
+            // Guide normal doesn't matter much here, we're just checking for containment.
             TopoDS_Face foundFace = FindOriginalFace(*obj->get_shape(), faceVertices, glm::vec3(0,0,1));
             if (!foundFace.IsNull()) {
                 return obj;

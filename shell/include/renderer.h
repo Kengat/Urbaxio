@@ -57,7 +57,12 @@ namespace Urbaxio {
         float GetMaxLineWidth() const { return maxLineWidth; }
 
         // Buffer updaters for tools and scene state
-        void UpdateUserLinesBuffer(const std::map<uint64_t, Engine::Line>& lines, const std::set<uint64_t>& selectedLineIDs);
+        void UpdateUserLinesBuffer(
+            const std::map<uint64_t, Engine::Line>& lines, 
+            const std::set<uint64_t>& selectedLineIDs, 
+            uint64_t movingObjectId, 
+            Engine::Scene* scene
+        );
         void UpdatePreviewLine(const glm::vec3& start, const glm::vec3& end, bool enabled = true);
         void UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance);
         void UpdateAxesVBO(const glm::vec4& colorX, const glm::vec4& colorY, const glm::vec4& colorZ, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor);
@@ -87,6 +92,7 @@ namespace Urbaxio {
 
         GLuint splatVAO = 0, splatVBO = 0, splatEBO = 0;
         GLuint userLinesVAO = 0, userLinesVBO = 0; int userLinesVertexCount = 0;
+        GLuint movingLinesVAO = 0, movingLinesVBO = 0; int movingLinesVertexCount = 0; // <-- NEW for moving lines preview
         
         // --- Preview Resources ---
         GLuint previewVAO = 0, previewVBO = 0; GLsizei previewVertexCount = 0;
