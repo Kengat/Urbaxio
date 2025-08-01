@@ -18,6 +18,7 @@
 namespace { // Anonymous namespace for helpers local to this file
 
 const float LINE_PICK_THRESHOLD_RADIUS = 0.25f;
+const float CLICK_DRAG_THRESHOLD_SQ = 25.0f; // 5x5 pixels threshold
 
 // Helper to find all coplanar and adjacent triangles, starting from a given one.
 std::vector<size_t> FindCoplanarAdjacentTriangles(
@@ -165,20 +166,21 @@ void SelectTool::Activate(const ToolContext& context) {
     lastClickTimestamp = 0;
     lastClickedObjId = 0;
     lastClickedTriangleIndex = 0;
+    isMouseDown = false;
     isDragging = false;
 }
 
 void SelectTool::Deactivate() {
+    isMouseDown = false;
     isDragging = false;
     ITool::Deactivate();
 }
 
 void SelectTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {
-    isDragging = true;
+    isMouseDown = true;
     dragStartCoords = glm::vec2(mouseX, mouseY);
     currentDragCoords = dragStartCoords;
     
-    // Clear previous selection unless shift is held
     if (!shift) {
         *context.selectedObjId = 0;
         context.selectedTriangleIndices->clear();
@@ -187,112 +189,7 @@ void SelectTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) 
 }
 
 void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
-    if (!context.scene || !context.camera || !context.display_w || !context.display_h) return;
-
-    glm::vec3 rayOrigin, rayDir;
-    Camera::ScreenToWorldRay(
-        mouseX, mouseY, *context.display_w, *context.display_h,
-        context.camera->GetViewMatrix(),
-        context.camera->GetProjectionMatrix((float)*context.display_w / (float)*context.display_h),
-        rayOrigin, rayDir
-    );
-
-    uint64_t hitObjectId = 0;
-    size_t hitTriangleBaseIndex = 0;
-    float closestHitDistance = std::numeric_limits<float>::max();
-
-    struct LineHit { uint64_t lineId; float distanceAlongRay; };
-    std::vector<LineHit> lineHits;
-
-    // 1. Check for line intersections first
-    const auto& all_lines = context.scene->GetAllLines();
-    for (const auto& [id, line] : all_lines) {
-        float distAlongRay;
-        if (RayLineSegmentIntersection(rayOrigin, rayDir, line.start, line.end, LINE_PICK_THRESHOLD_RADIUS, distAlongRay)) {
-            lineHits.push_back({id, distAlongRay});
-        }
-    }
-
-    // If a line was hit, select it and we're done.
-    if (!lineHits.empty()) {
-        std::sort(lineHits.begin(), lineHits.end(), [](const LineHit& a, const LineHit& b) { return a.distanceAlongRay < b.distanceAlongRay; });
-        uint64_t closestLineId = lineHits[0].lineId;
-        
-        if (!shift) {
-            context.selectedLineIDs->clear();
-        }
-        
-        if (context.selectedLineIDs->count(closestLineId)) {
-            context.selectedLineIDs->erase(closestLineId);
-        } else {
-            context.selectedLineIDs->insert(closestLineId);
-        }
-        
-        // Clear object selection when selecting lines
-        *context.selectedObjId = 0;
-        context.selectedTriangleIndices->clear();
-        return;
-    }
-
-    // Check if it was a drag or a simple click
-    float dragDistanceSq = glm::distance2(dragStartCoords, currentDragCoords);
-    const float clickThresholdSq = 25.0f; // 5x5 pixels
-
-    if (dragDistanceSq < clickThresholdSq) {
-        // 2. If no line was hit, check for object face intersections
-        if (!shift) {
-            context.selectedLineIDs->clear();
-        }
-
-        for (Urbaxio::Engine::SceneObject* obj_ptr : context.scene->get_all_objects()) {
-            const auto& name = obj_ptr->get_name();
-            if (obj_ptr && obj_ptr->has_mesh() &&
-                name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
-                const auto& mesh = obj_ptr->get_mesh_buffers();
-                for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-                    glm::vec3 v0(mesh.vertices[mesh.indices[i] * 3], mesh.vertices[mesh.indices[i] * 3 + 1], mesh.vertices[mesh.indices[i] * 3 + 2]);
-                    glm::vec3 v1(mesh.vertices[mesh.indices[i + 1] * 3], mesh.vertices[mesh.indices[i + 1] * 3 + 1], mesh.vertices[mesh.indices[i + 1] * 3 + 2]);
-                    glm::vec3 v2(mesh.vertices[mesh.indices[i + 2] * 3], mesh.vertices[mesh.indices[i + 2] * 3 + 1], mesh.vertices[mesh.indices[i + 2] * 3 + 2]);
-                    float t;
-                    if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDistance) {
-                        closestHitDistance = t;
-                        hitObjectId = obj_ptr->get_id();
-                        hitTriangleBaseIndex = i;
-                    }
-                }
-            }
-        }
-
-        // 3. Process the face hit
-        if (hitObjectId != 0) {
-            uint32_t currentTime = SDL_GetTicks();
-            const uint32_t DOUBLE_CLICK_TIME = 300;
-
-            // Double-click to select a single triangle
-            if (currentTime - lastClickTimestamp < DOUBLE_CLICK_TIME && hitObjectId == lastClickedObjId && hitTriangleBaseIndex == lastClickedTriangleIndex) {
-                *context.selectedTriangleIndices = { hitTriangleBaseIndex };
-                *context.selectedObjId = hitObjectId;
-                lastClickTimestamp = 0; // Reset double-click timer
-            } else { // Single-click to select a whole face
-                Urbaxio::Engine::SceneObject* hitObject = context.scene->get_object_by_id(hitObjectId);
-                if (hitObject) {
-                    *context.selectedTriangleIndices = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex);
-                    *context.selectedObjId = hitObjectId;
-                }
-                lastClickTimestamp = currentTime;
-                lastClickedObjId = hitObjectId;
-                lastClickedTriangleIndex = hitTriangleBaseIndex;
-            }
-        } else {
-            // Clicked on empty space, deselect everything
-            if (!shift) {
-                *context.selectedObjId = 0;
-                context.selectedTriangleIndices->clear();
-            }
-            lastClickTimestamp = 0;
-        }
-
-    } else {
+    if (isDragging) {
         // --- It was a DRAG ---
         bool isCrossingSelection = currentDragCoords.x < dragStartCoords.x;
         
@@ -310,10 +207,9 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
             bool p1Visible = SnappingSystem::WorldToScreen(line.start, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, p1s);
             bool p2Visible = SnappingSystem::WorldToScreen(line.end, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, p2s);
 
-            if (!p1Visible && !p2Visible) continue; // Skip lines fully behind camera
+            if (!p1Visible && !p2Visible) continue; 
 
             if (isCrossingSelection) {
-                // AABB check is a good approximation for crossing
                 glm::vec2 lineMin = glm::min(p1s, p2s);
                 glm::vec2 lineMax = glm::max(p1s, p2s);
                 if (rectMax.x >= lineMin.x && rectMin.x <= lineMax.x && rectMax.y >= lineMin.y && rectMin.y <= lineMax.y) {
@@ -334,58 +230,158 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
             if (!obj || !obj->has_mesh()) continue;
             const auto& name = obj->get_name();
             if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") continue;
-
+            
+            std::set<size_t> processedTrianglesInObject;
             const auto& mesh = obj->get_mesh_buffers();
             for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-                unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
-                glm::vec3 v0 = {mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]};
-                glm::vec3 v1 = {mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]};
-                glm::vec3 v2 = {mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]};
+                if(processedTrianglesInObject.count(i)) continue;
 
-                glm::vec2 s0, s1, s2;
-                bool v0_vis = SnappingSystem::WorldToScreen(v0, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, s0);
-                bool v1_vis = SnappingSystem::WorldToScreen(v1, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, s1);
-                bool v2_vis = SnappingSystem::WorldToScreen(v2, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, s2);
-                
-                if (isCrossingSelection) {
-                    if ((v0_vis && isPointInRect(s0)) || (v1_vis && isPointInRect(s1)) || (v2_vis && isPointInRect(s2))) {
-                        if (newlySelectedObjId == 0) newlySelectedObjId = obj->get_id();
-                        if (obj->get_id() == newlySelectedObjId) newlySelectedTriangles.push_back(i);
+                std::vector<size_t> currentFace = FindCoplanarAdjacentTriangles(*obj, i);
+                for(size_t tri_idx : currentFace) processedTrianglesInObject.insert(tri_idx);
+
+                bool shouldSelectFace = false;
+                if(isCrossingSelection) {
+                    bool anyVertexInRect = false;
+                    for(size_t tri_idx : currentFace) {
+                        unsigned int i0 = mesh.indices[tri_idx], i1 = mesh.indices[tri_idx+1], i2 = mesh.indices[tri_idx+2];
+                        glm::vec3 v_world[] = {
+                            {mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]},
+                            {mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]},
+                            {mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]}
+                        };
+                        glm::vec2 v_screen[3];
+                        bool v_vis[] = {
+                            SnappingSystem::WorldToScreen(v_world[0], context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen[0]),
+                            SnappingSystem::WorldToScreen(v_world[1], context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen[1]),
+                            SnappingSystem::WorldToScreen(v_world[2], context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen[2])
+                        };
+                        if((v_vis[0] && isPointInRect(v_screen[0])) || (v_vis[1] && isPointInRect(v_screen[1])) || (v_vis[2] && isPointInRect(v_screen[2]))) {
+                            anyVertexInRect = true; break;
+                        }
                     }
+                    if(anyVertexInRect) shouldSelectFace = true;
                 } else { // Window selection
-                    if ((v0_vis && isPointInRect(s0)) && (v1_vis && isPointInRect(s1)) && (v2_vis && isPointInRect(s2))) {
-                        if (newlySelectedObjId == 0) newlySelectedObjId = obj->get_id();
-                        if (obj->get_id() == newlySelectedObjId) newlySelectedTriangles.push_back(i);
+                    bool allVerticesInRect = true;
+                    for(size_t tri_idx : currentFace) {
+                        unsigned int i0 = mesh.indices[tri_idx], i1 = mesh.indices[tri_idx+1], i2 = mesh.indices[tri_idx+2];
+                        glm::vec3 v_world[] = {
+                            {mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]},
+                            {mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]},
+                            {mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]}
+                        };
+                        glm::vec2 v_screen[3];
+                        bool v_vis[] = {
+                             SnappingSystem::WorldToScreen(v_world[0], context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen[0]),
+                             SnappingSystem::WorldToScreen(v_world[1], context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen[1]),
+                             SnappingSystem::WorldToScreen(v_world[2], context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen[2])
+                        };
+                        if(!v_vis[0] || !isPointInRect(v_screen[0]) || !v_vis[1] || !isPointInRect(v_screen[1]) || !v_vis[2] || !isPointInRect(v_screen[2])) { 
+                            allVerticesInRect = false; break;
+                        }
+                    }
+                    if(allVerticesInRect) shouldSelectFace = true;
+                }
+
+                if(shouldSelectFace) {
+                    if (newlySelectedObjId == 0) newlySelectedObjId = obj->get_id();
+                    if (obj->get_id() == newlySelectedObjId) {
+                        newlySelectedTriangles.insert(newlySelectedTriangles.end(), currentFace.begin(), currentFace.end());
                     }
                 }
             }
-            if (newlySelectedObjId != 0) break; // Only select from one object
+            if (newlySelectedObjId != 0) break;
         }
 
         // --- Apply Selection ---
-        if (shift) { // Add to current selection
-            for (uint64_t id : newlySelectedLines) context.selectedLineIDs->insert(id);
-            if (newlySelectedObjId != 0) {
-                if (*context.selectedObjId == 0) { // If no object was selected before
-                    *context.selectedObjId = newlySelectedObjId;
-                    *context.selectedTriangleIndices = newlySelectedTriangles;
-                } else if (*context.selectedObjId == newlySelectedObjId) { // Add to the same object's selection
-                    context.selectedTriangleIndices->insert(context.selectedTriangleIndices->end(), newlySelectedTriangles.begin(), newlySelectedTriangles.end());
+        if (shift) {
+            for (uint64_t id : newlySelectedLines) { if (context.selectedLineIDs->count(id)) context.selectedLineIDs->erase(id); else context.selectedLineIDs->insert(id); }
+            if (newlySelectedObjId != 0 && (*context.selectedObjId == 0 || *context.selectedObjId == newlySelectedObjId)) {
+                *context.selectedObjId = newlySelectedObjId;
+                std::set<size_t> currentSelection(context.selectedTriangleIndices->begin(), context.selectedTriangleIndices->end());
+                for(size_t tri_idx : newlySelectedTriangles) { if (currentSelection.count(tri_idx)) currentSelection.erase(tri_idx); else currentSelection.insert(tri_idx); }
+                context.selectedTriangleIndices->assign(currentSelection.begin(), currentSelection.end());
+            }
+        } else {
+            *context.selectedLineIDs = newlySelectedLines; *context.selectedObjId = newlySelectedObjId; *context.selectedTriangleIndices = newlySelectedTriangles;
+        }
+
+    } else {
+        // --- It was a CLICK ---
+        if (!context.scene || !context.camera || !context.display_w || !context.display_h) return;
+
+        glm::vec3 rayOrigin, rayDir;
+        Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / (float)*context.display_h), rayOrigin, rayDir);
+
+        uint64_t hitObjectId = 0; size_t hitTriangleBaseIndex = 0; float closestHitDistance = std::numeric_limits<float>::max();
+        struct LineHit { uint64_t lineId; float distanceAlongRay; };
+        std::vector<LineHit> lineHits;
+
+        const auto& all_lines = context.scene->GetAllLines();
+        for (const auto& [id, line] : all_lines) {
+            float distAlongRay;
+            if (RayLineSegmentIntersection(rayOrigin, rayDir, line.start, line.end, LINE_PICK_THRESHOLD_RADIUS, distAlongRay)) lineHits.push_back({id, distAlongRay});
+        }
+
+        if (!lineHits.empty()) {
+            std::sort(lineHits.begin(), lineHits.end(), [](const LineHit& a, const LineHit& b) { return a.distanceAlongRay < b.distanceAlongRay; });
+            if (shift) {
+                if (context.selectedLineIDs->count(lineHits[0].lineId)) context.selectedLineIDs->erase(lineHits[0].lineId); else context.selectedLineIDs->insert(lineHits[0].lineId);
+            } else {
+                *context.selectedLineIDs = {lineHits[0].lineId};
+            }
+        } else {
+             for (Urbaxio::Engine::SceneObject* obj_ptr : context.scene->get_all_objects()) {
+                const auto& name = obj_ptr->get_name();
+                if (obj_ptr && obj_ptr->has_mesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
+                    const auto& mesh = obj_ptr->get_mesh_buffers();
+                    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                        glm::vec3 v0(mesh.vertices[mesh.indices[i] * 3], mesh.vertices[mesh.indices[i] * 3 + 1], mesh.vertices[mesh.indices[i] * 3 + 2]);
+                        glm::vec3 v1(mesh.vertices[mesh.indices[i + 1] * 3], mesh.vertices[mesh.indices[i + 1] * 3 + 1], mesh.vertices[mesh.indices[i + 1] * 3 + 2]);
+                        glm::vec3 v2(mesh.vertices[mesh.indices[i + 2] * 3], mesh.vertices[mesh.indices[i + 2] * 3 + 1], mesh.vertices[mesh.indices[i + 2] * 3 + 2]);
+                        float t;
+                        if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDistance) {
+                            closestHitDistance = t; hitObjectId = obj_ptr->get_id(); hitTriangleBaseIndex = i;
+                        }
+                    }
                 }
             }
-        } else { // Replace current selection
-            *context.selectedLineIDs = newlySelectedLines;
-            *context.selectedObjId = newlySelectedObjId;
-            *context.selectedTriangleIndices = newlySelectedTriangles;
+            if (hitObjectId != 0) {
+                uint32_t currentTime = SDL_GetTicks();
+                const uint32_t DOUBLE_CLICK_TIME = 300;
+                if (currentTime - lastClickTimestamp < DOUBLE_CLICK_TIME && hitObjectId == lastClickedObjId && hitTriangleBaseIndex == lastClickedTriangleIndex) {
+                    *context.selectedTriangleIndices = { hitTriangleBaseIndex }; *context.selectedObjId = hitObjectId; lastClickTimestamp = 0;
+                } else {
+                    Urbaxio::Engine::SceneObject* hitObject = context.scene->get_object_by_id(hitObjectId);
+                    if (hitObject) {
+                        std::vector<size_t> newFace = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex);
+                        if (shift) {
+                            if (*context.selectedObjId == hitObjectId) {
+                                std::set<size_t> currentSelection(context.selectedTriangleIndices->begin(), context.selectedTriangleIndices->end());
+                                bool isAlreadySelected = !newFace.empty() && currentSelection.count(newFace[0]);
+                                if (isAlreadySelected) for(size_t idx : newFace) currentSelection.erase(idx); else for(size_t idx : newFace) currentSelection.insert(idx);
+                                context.selectedTriangleIndices->assign(currentSelection.begin(), currentSelection.end());
+                            } else { *context.selectedObjId = hitObjectId; *context.selectedTriangleIndices = newFace; }
+                        } else { *context.selectedObjId = hitObjectId; *context.selectedTriangleIndices = newFace; }
+                    }
+                    lastClickTimestamp = currentTime; lastClickedObjId = hitObjectId; lastClickedTriangleIndex = hitTriangleBaseIndex;
+                }
+            } else { lastClickTimestamp = 0; }
         }
     }
 
+    isMouseDown = false;
     isDragging = false;
 }
 
 void SelectTool::OnMouseMove(int mouseX, int mouseY) {
-    if (isDragging) {
+    if (isMouseDown) {
         currentDragCoords = glm::vec2(mouseX, mouseY);
+        if (!isDragging) {
+            float dragDistanceSq = glm::distance2(dragStartCoords, currentDragCoords);
+            if (dragDistanceSq > CLICK_DRAG_THRESHOLD_SQ) {
+                isDragging = true;
+            }
+        }
     }
 }
 

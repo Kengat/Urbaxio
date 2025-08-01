@@ -19,7 +19,7 @@ public:
     void OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) override;
     void OnMouseMove(int mouseX, int mouseY) override;
 
-    // --- NEW: Public methods to query drag state ---
+    // --- Public methods to query drag state ---
     bool IsDragging() const;
     void GetDragRect(glm::vec2& outStart, glm::vec2& outCurrent) const;
 
@@ -31,7 +31,8 @@ private:
     size_t lastClickedTriangleIndex = 0;
 
     // --- NEW: Drag selection state ---
-    bool isDragging = false;
+    bool isMouseDown = false; // Is the left mouse button currently held down?
+    bool isDragging = false;  // Has the mouse moved past the threshold while down?
     glm::vec2 dragStartCoords;
     glm::vec2 currentDragCoords;
 };

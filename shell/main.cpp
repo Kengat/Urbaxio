@@ -124,7 +124,7 @@ int main(int argc, char* argv[]) {
     uint64_t selectedObjId = 0;
     std::vector<size_t> selectedTriangleIndices;
     std::set<uint64_t> selectedLineIDs;
-    glm::vec3 selectionHighlightColor = glm::vec3(0.6f, 0.8f, 1.0f);
+    glm::vec3 selectionHighlightColor = glm::vec3(1.0f, 225.0f / 255.0f, 84.0f / 255.0f);
 
     uint64_t hoveredObjId = 0;
     std::vector<size_t> hoveredFaceTriangleIndices;
