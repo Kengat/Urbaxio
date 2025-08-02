@@ -173,109 +173,148 @@ void MoveTool::determineTargetFromSelection() {
 }
 
 void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
-    reset(); 
-    glm::vec3 rayOrigin, rayDir;
-    Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin, rayDir);
+    reset();
 
-    uint64_t hitObjectId = 0;
-    size_t hitTriangleBaseIndex = 0;
-    float closestHitDistance = std::numeric_limits<float>::max();
+    const SnapResult& snap = lastSnapResult;
 
-    for (auto* obj : context.scene->get_all_objects()) {
-        const auto& name = obj->get_name();
-        if (!obj || !obj->has_mesh() || name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") continue;
-        
-        const auto& mesh = obj->get_mesh_buffers();
-        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-            unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
-            glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
-            glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
-            glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
-            float t;
-            if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDistance) {
-                closestHitDistance = t;
-                hitObjectId = obj->get_id();
-                hitTriangleBaseIndex = i;
+    // --- NEW: Explicitly ignore non-geometric snaps for picking a target ---
+    if (!snap.snapped || snap.type == SnapType::AXIS_X || snap.type == SnapType::AXIS_Y || snap.type == SnapType::AXIS_Z || snap.type == SnapType::GRID) {
+        // Fallback to generic face-pick if no valid geometric snap is available.
+        glm::vec3 rayOrigin, rayDir;
+        Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin, rayDir);
+        uint64_t hitObjectId = 0;
+        size_t hitTriangleBaseIndex = 0;
+        float closestHitDistance = std::numeric_limits<float>::max();
+        for (auto* obj : context.scene->get_all_objects()) {
+            const auto& name = obj->get_name();
+            if (!obj || !obj->has_mesh() || name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") continue;
+            const auto& mesh = obj->get_mesh_buffers();
+            for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
+                glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+                glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+                glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+                float t;
+                if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDistance) {
+                    closestHitDistance = t;
+                    hitObjectId = obj->get_id();
+                    hitTriangleBaseIndex = i;
+                }
             }
         }
-    }
-
-    if (hitObjectId == 0) return;
-    
-    // --- NEW: Robust screen-space sub-object picking ---
-    Engine::SceneObject* hitObject = context.scene->get_object_by_id(hitObjectId);
-    const auto& mesh = hitObject->get_mesh_buffers();
-    glm::vec2 mousePos(mouseX, mouseY);
-    const float pick_threshold_pixels_sq = 10.0f * 10.0f;
-
-    // 1. Check for vertex hit
-    unsigned int best_v_idx = -1;
-    float min_dist_sq = pick_threshold_pixels_sq;
-    for (size_t i = 0; i < mesh.vertices.size() / 3; ++i) {
-        glm::vec3 v_world = {mesh.vertices[i*3], mesh.vertices[i*3+1], mesh.vertices[i*3+2]};
-        glm::vec2 v_screen;
-        if (SnappingSystem::WorldToScreen(v_world, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen)) {
-            float dist_sq = glm::distance2(mousePos, v_screen);
-            if (dist_sq < min_dist_sq) {
-                min_dist_sq = dist_sq;
-                best_v_idx = i;
+        if (hitObjectId != 0) {
+            Engine::SceneObject* hitObject = context.scene->get_object_by_id(hitObjectId);
+            currentTarget.type = MoveTarget::TargetType::FACE;
+            currentTarget.objectId = hitObjectId;
+            std::vector<size_t> faceTriangles = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex);
+            for(size_t triBaseIndex : faceTriangles) {
+                const auto& mesh = hitObject->get_mesh_buffers();
+                currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
+                currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+1]);
+                currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+2]);
             }
         }
-    }
-    if (best_v_idx != (unsigned int)-1) {
-        currentTarget.type = MoveTarget::TargetType::VERTEX;
-        currentTarget.objectId = hitObjectId;
-        currentTarget.movingVertices = { best_v_idx };
-        return;
-    }
-    
-    // 2. If no vertex, check for edge hit
-    std::pair<unsigned int, unsigned int> best_edge = {-1, -1};
-    min_dist_sq = pick_threshold_pixels_sq;
-    std::set<std::pair<unsigned int, unsigned int>> unique_edges;
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-        unsigned int idxs[] = {mesh.indices[i], mesh.indices[i+1], mesh.indices[i+2]};
-        for(int j = 0; j < 3; ++j) {
-            unsigned int v1 = idxs[j], v2 = idxs[(j+1)%3];
-            if (v1 > v2) std::swap(v1,v2);
-            unique_edges.insert({v1, v2});
-        }
-    }
-
-    for (const auto& edge : unique_edges) {
-        glm::vec3 p1_world = {mesh.vertices[edge.first*3], mesh.vertices[edge.first*3+1], mesh.vertices[edge.first*3+2]};
-        glm::vec3 p2_world = {mesh.vertices[edge.second*3], mesh.vertices[edge.second*3+1], mesh.vertices[edge.second*3+2]};
-        glm::vec2 p1_screen, p2_screen;
-        if (SnappingSystem::WorldToScreen(p1_world, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, p1_screen) &&
-            SnappingSystem::WorldToScreen(p2_world, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, p2_screen)) {
-            glm::vec2 edge_vec = p2_screen - p1_screen;
-            float len_sq = glm::length2(edge_vec);
-            if (len_sq < 1e-6) continue;
-            float t = glm::dot(mousePos - p1_screen, edge_vec) / len_sq;
-            t = glm::clamp(t, 0.0f, 1.0f);
-            glm::vec2 closest_point = p1_screen + t * edge_vec;
-            float dist_sq = glm::distance2(mousePos, closest_point);
-            if (dist_sq < min_dist_sq) {
-                min_dist_sq = dist_sq;
-                best_edge = edge;
-            }
-        }
-    }
-    if (best_edge.first != (unsigned int)-1) {
-        currentTarget.type = MoveTarget::TargetType::EDGE;
-        currentTarget.objectId = hitObjectId;
-        currentTarget.movingVertices = {best_edge.first, best_edge.second};
         return;
     }
 
-    // 3. If nothing else, it's a face hit
-    currentTarget.type = MoveTarget::TargetType::FACE;
-    currentTarget.objectId = hitObjectId;
-    std::vector<size_t> faceTriangles = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex);
-    for(size_t triBaseIndex : faceTriangles) {
-        currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
-        currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+1]);
-        currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+2]);
+    // --- We have a valid geometric snap, determine the target ---
+    Engine::SceneObject* snappedObject = nullptr;
+    uint64_t snappedLineId = 0;
+
+    if (snap.snappedEntityId != 0) {
+        snappedObject = context.scene->get_object_by_id(snap.snappedEntityId);
+        if (snappedObject) {
+            // It's an object (likely a face snap)
+        } else {
+            // It's a line, find its parent object
+            snappedLineId = snap.snappedEntityId;
+            for(auto* obj : context.scene->get_all_objects()) {
+                if (obj->boundaryLineIDs.count(snappedLineId)) {
+                    snappedObject = obj;
+                    break;
+                }
+            }
+        }
+    }
+
+    auto findVertexIndex = [&](const Engine::SceneObject& obj, const glm::vec3& pos) -> int {
+        const auto& mesh = obj.get_mesh_buffers();
+        for (size_t i = 0; i < mesh.vertices.size() / 3; ++i) {
+            glm::vec3 v_pos(mesh.vertices[i*3], mesh.vertices[i*3+1], mesh.vertices[i*3+2]);
+            if (glm::distance2(v_pos, pos) < 1e-8f) { return static_cast<int>(i); }
+        }
+        return -1;
+    };
+
+    switch (snap.type) {
+        case SnapType::ENDPOINT:
+        case SnapType::ORIGIN: {
+            if (!snappedObject) {
+                 for (auto* obj : context.scene->get_all_objects()) {
+                    if (!obj || !obj->has_mesh()) continue;
+                    int v_idx = findVertexIndex(*obj, snap.worldPoint);
+                    if (v_idx != -1) { snappedObject = obj; break; }
+                }
+            }
+            if (snappedObject) {
+                int vertexIndex = findVertexIndex(*snappedObject, snap.worldPoint);
+                if (vertexIndex != -1) {
+                    currentTarget.type = MoveTarget::TargetType::VERTEX;
+                    currentTarget.objectId = snappedObject->get_id();
+                    currentTarget.movingVertices.insert(vertexIndex);
+                }
+            }
+            break;
+        }
+
+        case SnapType::MIDPOINT: // Midpoint now selects the whole edge
+        case SnapType::ON_EDGE: {
+            if (snappedObject && snappedLineId != 0) {
+                const auto& line = context.scene->GetAllLines().at(snappedLineId);
+                int idx1 = findVertexIndex(*snappedObject, line.start);
+                int idx2 = findVertexIndex(*snappedObject, line.end);
+                if (idx1 != -1 && idx2 != -1) {
+                    currentTarget.type = MoveTarget::TargetType::EDGE;
+                    currentTarget.objectId = snappedObject->get_id();
+                    currentTarget.movingVertices.insert(idx1);
+                    currentTarget.movingVertices.insert(idx2);
+                }
+            }
+            break;
+        }
+
+        case SnapType::ON_FACE: {
+            if (snappedObject) {
+                glm::vec3 rayOrigin, rayDir;
+                Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin, rayDir);
+                float closestHitDist = std::numeric_limits<float>::max();
+                size_t hitTriangle = -1;
+                const auto& mesh = snappedObject->get_mesh_buffers();
+                for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                     unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
+                     glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+                     glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+                     glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+                     float t;
+                     if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDist) {
+                         closestHitDist = t;
+                         hitTriangle = i;
+                     }
+                }
+                if (hitTriangle != (size_t)-1) {
+                    currentTarget.type = MoveTarget::TargetType::FACE;
+                    currentTarget.objectId = snappedObject->get_id();
+                    std::vector<size_t> faceTriangles = FindCoplanarAdjacentTriangles(*snappedObject, hitTriangle);
+                    for(size_t triBaseIndex : faceTriangles) {
+                        currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
+                        currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+1]);
+                        currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+2]);
+                    }
+                }
+            }
+            break;
+        }
+        default: break;
     }
 }
 
