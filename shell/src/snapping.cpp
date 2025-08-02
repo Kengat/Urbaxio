@@ -58,24 +58,51 @@ namespace { // Anonymous namespace for utility functions
 
     glm::vec3 ClosestPointOnLine(const glm::vec3& lineOrigin, const glm::vec3& lineDir, const glm::vec3& point) { float t = glm::dot(point - lineOrigin, lineDir); return lineOrigin + lineDir * t; }
     // --- FIX: Restore the missing helper function ---
-    bool ClosestPointLineLine( const glm::vec3& o1, const glm::vec3& d1, const glm::vec3& o2, const glm::vec3& d2, glm::vec3& outPointOnL1) { glm::vec3 w = o1 - o2; float b = glm::dot(d1, d2); float d_dot = glm::dot(d1, w); float e_dot = glm::dot(d2, w); float denom = 1.0f - b * b; if (std::abs(denom) < LINE_RAY_EPSILON) { outPointOnL1 = ClosestPointOnLine(o1, d1, o2); return true; } float s = (b * e_dot - d_dot) / denom; outPointOnL1 = o1 + s * d1; return true; }
+    bool ClosestPointLineLine( const glm::vec3& o1, const glm::vec3& d1, const glm::vec3& o2, const glm::vec3& d2, glm::vec3& outPointOnL1) {
+        // --- НОВАЯ, БОЛЕЕ НАДЕЖНАЯ РЕАЛИЗАЦИЯ ---
+        glm::vec3   v = o1 - o2;
+        float    d1d2 = glm::dot(d1, d2);
+        float    d2v  = glm::dot(d2, v);
+        float    d1v  = glm::dot(d1, v);
+        float    d1d1 = glm::dot(d1, d1); // Should be 1.0 if normalized
+        float    d2d2 = glm::dot(d2, d2); // Should be 1.0 if normalized
+
+        float denom = d1d1 * d2d2 - d1d2 * d1d2;
+
+        // If lines are parallel, project origin of line 2 onto line 1
+        if (std::abs(denom) < LINE_RAY_EPSILON) {
+            outPointOnL1 = ClosestPointOnLine(o1, d1, o2);
+            return true;
+        }
+
+        float t = (d1d2 * d2v - d2d2 * d1v) / denom;
+        outPointOnL1 = o1 + t * d1;
+        return true;
+    }
     bool WorldToScreen(const glm::vec3& worldPos, const glm::mat4& viewMatrix, const glm::mat4& projectionMatrix, int screenWidth, int screenHeight, glm::vec2& outScreenPos) { if (screenWidth <= 0 || screenHeight <= 0) return false; glm::vec4 clipPos = projectionMatrix * viewMatrix * glm::vec4(worldPos, 1.0f); if (clipPos.w <= SCREEN_EPSILON) { return false; } glm::vec3 ndcPos = glm::vec3(clipPos) / clipPos.w; outScreenPos.x = (ndcPos.x + 1.0f) * 0.5f * static_cast<float>(screenWidth); outScreenPos.y = (1.0f - ndcPos.y) * 0.5f * static_cast<float>(screenHeight); return true; }
     bool RaycastToZPlane(int mouseX, int mouseY, int screenWidth, int screenHeight, const Urbaxio::Camera& camera, glm::vec3& outIntersectionPoint) { glm::vec3 rayOrigin, rayDirection; glm::mat4 view = camera.GetViewMatrix(); glm::mat4 projection = camera.GetProjectionMatrix((screenHeight > 0) ? ((float)screenWidth / (float)screenHeight) : 1.0f); Urbaxio::Camera::ScreenToWorldRay(mouseX, mouseY, screenWidth, screenHeight, view, projection, rayOrigin, rayDirection); glm::vec3 planeNormal(0.0f, 0.0f, 1.0f); glm::vec3 pointOnPlane(0.0f, 0.0f, 0.0f); float dirDotNormal = glm::dot(rayDirection, planeNormal); if (std::abs(dirDotNormal) < LINE_RAY_EPSILON) { return false; } float t = glm::dot(pointOnPlane - rayOrigin, planeNormal) / dirDotNormal; if (t < 0.0f) { return false; } outIntersectionPoint = rayOrigin + rayDirection * t; return true; }
     struct SnapCandidate : public Urbaxio::SnapResult { float screenDistSq = std::numeric_limits<float>::max(); };
     
     int GetSnapPriority(Urbaxio::SnapType type) {
         switch (type) {
-            case Urbaxio::SnapType::ENDPOINT:       return 10;
-            case Urbaxio::SnapType::ORIGIN:         return 9;
-            case Urbaxio::SnapType::MIDPOINT:       return 8;
-            case Urbaxio::SnapType::INTERSECTION:   return 7;
-            case Urbaxio::SnapType::CENTER:         return 7;
-            case Urbaxio::SnapType::AXIS_X:         return 6; // FIX: Higher priority
-            case Urbaxio::SnapType::AXIS_Y:         return 6; // FIX: Higher priority
-            case Urbaxio::SnapType::AXIS_Z:         return 6; // FIX: Higher priority
-            case Urbaxio::SnapType::ON_EDGE:        return 5; // FIX: Lower priority
-            case Urbaxio::SnapType::ON_FACE:        return 3;
-            case Urbaxio::SnapType::GRID:           return 1;
+            // HIGHEST PRIORITY: Specific, tangible geometry points
+            case Urbaxio::SnapType::ENDPOINT:       return 100;
+            case Urbaxio::SnapType::MIDPOINT:       return 90;
+            case Urbaxio::SnapType::INTERSECTION:   return 85;
+            
+            // HIGH PRIORITY: Tangible geometry lines/surfaces
+            case Urbaxio::SnapType::ON_EDGE:        return 80;
+            case Urbaxio::SnapType::ON_FACE:        return 70;
+
+            // MEDIUM PRIORITY: Abstract construction geometry
+            case Urbaxio::SnapType::ORIGIN:         return 50;
+            case Urbaxio::SnapType::CENTER:         return 45;
+            case Urbaxio::SnapType::AXIS_X:         return 40;
+            case Urbaxio::SnapType::AXIS_Y:         return 40;
+            case Urbaxio::SnapType::AXIS_Z:         return 40;
+            
+            // LOWEST PRIORITY
+            case Urbaxio::SnapType::GRID:           return 10;
             case Urbaxio::SnapType::NONE:
             default:                                return 0;
         }

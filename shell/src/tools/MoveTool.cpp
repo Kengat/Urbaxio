@@ -177,7 +177,7 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
 
     const SnapResult& snap = lastSnapResult;
 
-    // --- NEW: Explicitly ignore non-geometric snaps for picking a target ---
+    // --- FINAL LOGIC: Explicitly ignore non-geometric snaps for picking a target ---
     if (!snap.snapped || snap.type == SnapType::AXIS_X || snap.type == SnapType::AXIS_Y || snap.type == SnapType::AXIS_Z || snap.type == SnapType::GRID) {
         // Fallback to generic face-pick if no valid geometric snap is available.
         glm::vec3 rayOrigin, rayDir;
