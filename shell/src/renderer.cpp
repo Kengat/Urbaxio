@@ -354,7 +354,7 @@ namespace Urbaxio {
             "}\n";
     }
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateSplatResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreateGhostMeshResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
     
     void Renderer::RenderFrame(
@@ -406,16 +406,12 @@ namespace Urbaxio {
             glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
             for (const auto* obj : scene->get_all_objects()) {
                 if (obj && obj->vao != 0 && obj->index_count > 0) {
+                    if (obj->get_id() == previewObjectId) { // This is the object being moved, hide it.
+                        continue;
+                    }
                     const auto& name = obj->get_name();
                     if (name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
-                        // --- MODIFIED: Apply preview transform if this is the object being moved ---
-                        glm::mat4 currentModelMatrix = identityModel;
-                        if (obj->get_id() == previewObjectId) {
-                            currentModelMatrix = previewTransform;
-                        }
-
                         glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
-                        glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(currentModelMatrix));
                         glBindVertexArray(obj->vao);
                         glDrawElements(GL_TRIANGLES, obj->index_count, GL_UNSIGNED_INT, 0);
                         glBindVertexArray(0);
@@ -424,11 +420,39 @@ namespace Urbaxio {
             }
         }
 
+        // --- Render Ghost Mesh (as opaque object with wireframe) ---
+        if (ghostMeshVAO != 0 && ghostMeshIndexCount > 0) {
+            glUseProgram(objectShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            
+            // 1. Solid fill pass
+            glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+            glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(1.0f, 1.0f);
+            glBindVertexArray(ghostMeshVAO);
+            glDrawElements(GL_TRIANGLES, ghostMeshIndexCount, GL_UNSIGNED_INT, 0);
+            glDisable(GL_POLYGON_OFFSET_FILL);
+
+            // 2. Wireframe overlay pass
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(glm::vec3(1.0f))); // White wireframe
+            glLineWidth(1.5f);
+            glDrawElements(GL_TRIANGLES, ghostMeshIndexCount, GL_UNSIGNED_INT, 0);
+            glLineWidth(1.0f);
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            
+            glBindVertexArray(0);
+        }
+
         // --- 2. TRANSPARENT / OVERLAY PASS ---
         glDepthMask(GL_FALSE);
-
+        
         if (objectShaderProgram != 0 && scene) {
             glUseProgram(objectShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+
             if (hoveredObjId != 0 && !hoveredFaceTriangleIndices.empty()) {
                 bool isSameAsSelected = (hoveredObjId == selectedObjId) && (hoveredFaceTriangleIndices == selectedTriangleIndices);
                 if (!isSameAsSelected) {
@@ -496,21 +520,13 @@ namespace Urbaxio {
         if (simpleLineShaderProgram != 0) {
             glLineWidth(2.0f);
             glUseProgram(simpleLineShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
             glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
-            // Draw static lines with no transformation
             if (userLinesVAO != 0 && userLinesVertexCount > 0) {
-                glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
                 glBindVertexArray(userLinesVAO);
                 glDrawArrays(GL_LINES, 0, userLinesVertexCount);
-            }
-
-            // Draw moving lines with the preview transformation
-            if (movingLinesVAO != 0 && movingLinesVertexCount > 0) {
-                glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(previewTransform));
-                glBindVertexArray(movingLinesVAO);
-                glDrawArrays(GL_LINES, 0, movingLinesVertexCount);
             }
             
             glBindVertexArray(0);
@@ -734,8 +750,9 @@ namespace Urbaxio {
     }
     
     void Renderer::UpdateUserLinesBuffer(const std::map<uint64_t, Engine::Line>& lines, const std::set<uint64_t>& selectedLineIDs, uint64_t movingObjectId, Engine::Scene* scene) {
-        if (userLinesVBO == 0 || movingLinesVBO == 0) return;
+        if (userLinesVBO == 0) return;
         
+        // --- NEW: Completely ignore lines from moving object ---
         std::set<uint64_t> movingLineIds;
         if (movingObjectId != 0 && scene) {
             Engine::SceneObject* obj = scene->get_object_by_id(movingObjectId);
@@ -745,28 +762,25 @@ namespace Urbaxio {
         }
 
         std::vector<float> staticLineData;
-        std::vector<float> movingLineData;
         
         for (const auto& [lineID, line] : lines) {
-            bool isMoving = movingLineIds.count(lineID);
-            std::vector<float>& targetVector = isMoving ? movingLineData : staticLineData;
+            // Skip lines that belong to the moving object
+            if (movingLineIds.count(lineID)) {
+                continue;
+            }
             
             glm::vec4 currentColor = userLineColor;
             if (selectedLineIDs.count(lineID)) {
                 currentColor = selectedUserLineColor;
             }
             
-            targetVector.insert(targetVector.end(), {line.start.x, line.start.y, line.start.z, currentColor.r, currentColor.g, currentColor.b, currentColor.a});
-            targetVector.insert(targetVector.end(), {line.end.x, line.end.y, line.end.z, currentColor.r, currentColor.g, currentColor.b, currentColor.a});
+            staticLineData.insert(staticLineData.end(), {line.start.x, line.start.y, line.start.z, currentColor.r, currentColor.g, currentColor.b, currentColor.a});
+            staticLineData.insert(staticLineData.end(), {line.end.x, line.end.y, line.end.z, currentColor.r, currentColor.g, currentColor.b, currentColor.a});
         }
         
         glBindBuffer(GL_ARRAY_BUFFER, userLinesVBO);
         glBufferData(GL_ARRAY_BUFFER, staticLineData.size() * sizeof(float), staticLineData.data(), GL_DYNAMIC_DRAW);
         userLinesVertexCount = static_cast<int>(staticLineData.size() / 7);
-
-        glBindBuffer(GL_ARRAY_BUFFER, movingLinesVBO);
-        glBufferData(GL_ARRAY_BUFFER, movingLineData.size() * sizeof(float), movingLineData.data(), GL_DYNAMIC_DRAW);
-        movingLinesVertexCount = static_cast<int>(movingLineData.size() / 7);
 
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
@@ -781,6 +795,7 @@ namespace Urbaxio {
         if (previewVAO != 0) glDeleteVertexArrays(1, &previewVAO); previewVAO = 0; if (previewVBO != 0) glDeleteBuffers(1, &previewVBO); previewVBO = 0;
         if (previewLineVAO != 0) glDeleteVertexArrays(1, &previewLineVAO); previewLineVAO = 0; if (previewLineVBO != 0) glDeleteBuffers(1, &previewLineVBO); previewLineVBO = 0;
         if (previewOutlineVAO != 0) glDeleteVertexArrays(1, &previewOutlineVAO); previewOutlineVAO = 0; if (previewOutlineVBO != 0) glDeleteBuffers(1, &previewOutlineVBO); previewOutlineVBO = 0;
+        ClearGhostMesh(); // <-- NEW: Cleanup ghost mesh
         for (auto const& [shape, vao] : markerVAOs) { if (vao != 0) glDeleteVertexArrays(1, &vao); } markerVAOs.clear();
         for (auto const& [shape, vbo] : markerVBOs) { if (vbo != 0) glDeleteBuffers(1, &vbo); } markerVBOs.clear();
         markerVertexCounts.clear();
@@ -1045,6 +1060,60 @@ namespace Urbaxio {
         glBindVertexArray(0);
         std::cout << "Renderer: Selection Box VAO/VBO created." << std::endl;
         return selectionBoxVAO != 0 && selectionBoxVBO != 0;
+    }
+
+    bool Renderer::CreateGhostMeshResources() {
+        glGenVertexArrays(1, &ghostMeshVAO);
+        glGenBuffers(1, &ghostMeshVBO_vertices);
+        glGenBuffers(1, &ghostMeshVBO_normals);
+        glGenBuffers(1, &ghostMeshEBO);
+
+        glBindVertexArray(ghostMeshVAO);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, ghostMeshVBO_vertices);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, ghostMeshVBO_normals);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
+        
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO);
+        
+        glBindVertexArray(0);
+        std::cout << "Renderer: Ghost Mesh VAO/VBO/EBOs created." << std::endl;
+        return ghostMeshVAO != 0 && ghostMeshVBO_vertices != 0 && ghostMeshVBO_normals != 0 && ghostMeshEBO != 0;
+    }
+
+    void Renderer::UpdateGhostMesh(const CadKernel::MeshBuffers& mesh) {
+        if (ghostMeshVAO == 0 || mesh.isEmpty()) {
+            ClearGhostMesh();
+            return;
+        }
+
+        glBindVertexArray(ghostMeshVAO);
+
+        // Update vertices
+        glBindBuffer(GL_ARRAY_BUFFER, ghostMeshVBO_vertices);
+        glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(float), mesh.vertices.data(), GL_DYNAMIC_DRAW);
+
+        // Update normals
+        glBindBuffer(GL_ARRAY_BUFFER, ghostMeshVBO_normals);
+        glBufferData(GL_ARRAY_BUFFER, mesh.normals.size() * sizeof(float), mesh.normals.data(), GL_DYNAMIC_DRAW);
+
+        // Update indices
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(unsigned int), mesh.indices.data(), GL_DYNAMIC_DRAW);
+        ghostMeshIndexCount = static_cast<GLsizei>(mesh.indices.size());
+
+        glBindVertexArray(0);
+    }
+
+    void Renderer::ClearGhostMesh() {
+        if (ghostMeshVAO != 0) {
+            ghostMeshIndexCount = 0;
+            // No need to delete buffers, just stop drawing by setting index count to 0
+        }
     }
 
 } // namespace Urbaxio

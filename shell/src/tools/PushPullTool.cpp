@@ -23,7 +23,7 @@
 namespace { // Anonymous namespace for helpers
 
 // Re-using FindCoplanarAdjacentTriangles from SelectTool's anonymous namespace is tricky.
-// Так что просто копируем сюда улучшенную версию.
+// So we just copy the improved version here.
 std::vector<size_t> FindCoplanarAdjacentTriangles_ForPushPull(
     const Urbaxio::Engine::SceneObject& object,
     size_t startTriangleBaseIndex)
@@ -193,10 +193,8 @@ void PushPullTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
     if (isPushPullActive) {
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
             float length_mm;
-            // FIX: Check the return value of std::from_chars to silence the [[nodiscard]] warning
-            auto [ptr, ec] = std::from_chars(lengthInputBuf, lengthInputBuf + strlen(lengthInputBuf), length_mm);
-            if (ec == std::errc() && ptr == lengthInputBuf + strlen(lengthInputBuf)) {
-                // NEW: Apply the sign from the current mouse-drag direction
+            auto result = std::from_chars(lengthInputBuf, lengthInputBuf + strlen(lengthInputBuf), length_mm);
+            if (result.ec == std::errc() && result.ptr == lengthInputBuf + strlen(lengthInputBuf)) {
                 float sign = (pushPullCurrentLength < 0.0f) ? -1.0f : 1.0f;
                 pushPullCurrentLength = (length_mm / 1000.0f) * sign;
                 finalizePushPull(ctrl);

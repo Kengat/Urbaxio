@@ -1,17 +1,34 @@
 #pragma once
 
 #include "tools/ITool.h"
+#include <cad_kernel/MeshBuffers.h> // For ghost mesh
 #include <glm/mat4x4.hpp>
+#include <set> // For std::set
 
 namespace Urbaxio::Tools {
 
-// FIX: Moved the enum class outside of the MoveTool class
-// This resolves the MSVC compiler issue with qualified names in switch statements.
+// State of the entire tool
 enum class MoveToolState {
-    IDLE,
-    AWAITING_DESTINATION_FREE,
-    AWAITING_DESTINATION_AXIS_LOCKED,
-    AWAITING_DESTINATION_INFERENCE_LOCKED
+    IDLE,             // Waiting for a selection or a click to determine the target
+    MOVING_PREVIEW,   // Target is selected, dragging to determine translation
+};
+
+// State of the axis locking during movement
+enum class AxisLockState {
+    FREE,
+    AXIS_LOCKED,
+    INFERENCE_LOCKED
+};
+
+// What is being moved
+struct MoveTarget {
+    enum class TargetType { NONE, OBJECT, FACE, EDGE, VERTEX };
+    TargetType type = TargetType::NONE;
+    uint64_t objectId = 0;
+    
+    // Original vertex indices in the object's mesh for deformation.
+    // If type is OBJECT, this contains all vertex indices.
+    std::set<unsigned int> movingVertices;
 };
 
 class MoveTool : public ITool {
@@ -28,27 +45,40 @@ public:
     void OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) override;
     void RenderUI() override;
     
-    // Public getters for the main loop to query state for rendering
+    // Public getters for the main loop to query state
     bool IsMoving() const;
-    uint64_t GetMovingObjectId() const;
-    glm::mat4 GetPreviewTransform() const;
+    uint64_t GetMovingObjectId() const; // ID of the object to hide
+    const CadKernel::MeshBuffers* GetGhostMesh() const;
 
 private:
+    void reset();
+    void startMove(const SnapResult& snap);
+    void finalizeMove();
+
+    // High-level state
     MoveToolState currentState = MoveToolState::IDLE;
-    uint64_t movingObjectId = 0;
+    MoveTarget currentTarget;
+
+    // Movement state
     glm::vec3 basePoint{0.0f};
     glm::vec3 currentTranslation{0.0f};
     
-    // --- NEW: Axis Locking State ---
+    // Axis Locking State
+    AxisLockState lockState = AxisLockState::FREE;
     glm::vec3 lockedAxisDir{0.0f};
-    SnapType lockedAxisType = SnapType::NONE;
     glm::vec3 inferenceAxisDir{0.0f};
+
+    // Ghost mesh for preview
+    CadKernel::MeshBuffers ghostMesh;
+    bool ghostMeshActive = false;
 
     // Input buffer for length
     char lengthInputBuf[64] = "";
 
-    void reset();
-    void finalizeMove();
+    // Helpers
+    void determineTargetFromSelection();
+    void determineTargetFromPick(int mouseX, int mouseY);
+    void updateGhostMeshDeformation();
     bool tryToLockAxis(const glm::vec3& currentTarget);
     glm::vec3 calculateAxisLockedPoint(const SnapResult& snap);
     glm::vec3 calculateInferenceLockedPoint(const SnapResult& snap);

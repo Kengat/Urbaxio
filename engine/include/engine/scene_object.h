@@ -6,6 +6,7 @@
 #include <memory>
 #include <vector>
 #include <set> // <-- ADDED for boundaryLineIDs
+#include <unordered_map> // <-- ADDED
 #include <cad_kernel/cad_kernel.h>
 #include <cad_kernel/MeshBuffers.h>
 #include <glad/glad.h> //     GLuint
@@ -47,6 +48,10 @@ namespace Urbaxio::Engine {
         
         // --- NEW: Link to boundary lines ---
         std::set<uint64_t> boundaryLineIDs;
+
+        // --- NEW: Adjacency map for mesh vertices ("sticky geometry" support) ---
+        // Maps a vertex index to a set of indices of its direct neighbors.
+        std::unordered_map<unsigned int, std::set<unsigned int>> meshAdjacency;
 
     private:
         uint64_t id_;

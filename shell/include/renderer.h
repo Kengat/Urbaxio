@@ -2,6 +2,7 @@
 
 #include "snapping.h"
 #include <engine/line.h> // <--- ADDED: Fix for unknown type 'Line'
+#include <cad_kernel/MeshBuffers.h> // <-- ADDED for Ghost Mesh
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <vector>
@@ -67,6 +68,10 @@ namespace Urbaxio {
         void UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance);
         void UpdateAxesVBO(const glm::vec4& colorX, const glm::vec4& colorY, const glm::vec4& colorZ, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor);
         void RenderSelectionBox(const glm::vec2& start, const glm::vec2& end, int screenWidth, int screenHeight); // <-- NEW
+        
+        // --- NEW: Ghost Mesh methods ---
+        void UpdateGhostMesh(const CadKernel::MeshBuffers& mesh);
+        void ClearGhostMesh();
 
     private:
         GLuint objectShaderProgram = 0;
@@ -99,6 +104,13 @@ namespace Urbaxio {
         GLuint previewLineVAO = 0, previewLineVBO = 0; bool previewLineEnabled = false;
         GLuint previewOutlineVAO = 0, previewOutlineVBO = 0; GLsizei previewOutlineVertexCount = 0; // <-- NEW for dashed outline
         GLuint selectionBoxVAO = 0, selectionBoxVBO = 0; // <-- NEW
+
+        // --- NEW: Ghost Mesh Resources ---
+        GLuint ghostMeshVAO = 0;
+        GLuint ghostMeshVBO_vertices = 0;
+        GLuint ghostMeshVBO_normals = 0;
+        GLuint ghostMeshEBO = 0;
+        GLsizei ghostMeshIndexCount = 0;
 
         std::map<MarkerShape, GLuint> markerVAOs;
         std::map<MarkerShape, GLuint> markerVBOs;
@@ -136,6 +148,7 @@ namespace Urbaxio {
         bool CreatePreviewLineResources();
         bool CreatePreviewOutlineResources();
         bool CreateSelectionBoxResources();
+        bool CreateGhostMeshResources(); // <-- NEW
         void Cleanup();
         void DrawSnapMarker(const SnapResult& snap, const Camera& camera, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight);
 

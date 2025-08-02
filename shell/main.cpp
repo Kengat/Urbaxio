@@ -200,15 +200,20 @@ int main(int argc, char* argv[]) {
             }
         }
         
-        // --- FIX: Moved preview state query before buffer updates ---
+        // --- Update Preview State ---
         uint64_t previewObjId = 0;
-        glm::mat4 previewMatrix(1.0f);
+        const Urbaxio::CadKernel::MeshBuffers* ghostMesh = nullptr;
+
         if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
             auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
-            if (moveTool->IsMoving()) {
-                previewObjId = moveTool->GetMovingObjectId();
-                previewMatrix = moveTool->GetPreviewTransform();
-            }
+            previewObjId = moveTool->GetMovingObjectId(); // Will be 0 if not moving
+            ghostMesh = moveTool->GetGhostMesh();
+        }
+        
+        if (ghostMesh) {
+            renderer.UpdateGhostMesh(*ghostMesh);
+        } else {
+            renderer.ClearGhostMesh();
         }
         
         renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), selectedLineIDs, previewObjId, scene_ptr);
@@ -333,8 +338,7 @@ int main(int argc, char* argv[]) {
             hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor,
             currentSnap, 
             ImGui::GetDrawData(),
-            previewObjId,
-            previewMatrix
+            previewObjId
         );
 
         // --- Render selection box if needed ---
