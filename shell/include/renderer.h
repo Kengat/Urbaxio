@@ -70,7 +70,7 @@ namespace Urbaxio {
         void RenderSelectionBox(const glm::vec2& start, const glm::vec2& end, int screenWidth, int screenHeight); // <-- NEW
         
         // --- NEW: Ghost Mesh methods ---
-        void UpdateGhostMesh(const CadKernel::MeshBuffers& mesh);
+        void UpdateGhostMesh(const CadKernel::MeshBuffers& mesh, const std::vector<unsigned int>& wireframeIndices);
         void ClearGhostMesh();
 
     private:
@@ -109,8 +109,10 @@ namespace Urbaxio {
         GLuint ghostMeshVAO = 0;
         GLuint ghostMeshVBO_vertices = 0;
         GLuint ghostMeshVBO_normals = 0;
-        GLuint ghostMeshEBO = 0;
-        GLsizei ghostMeshIndexCount = 0;
+        GLuint ghostMeshEBO_triangles = 0; // <-- ПЕРЕИМЕНОВАТЬ
+        GLuint ghostMeshEBO_lines = 0;     // <-- ДОБАВИТЬ
+        GLsizei ghostMeshTriangleIndexCount = 0; // <-- ПЕРЕИМЕНОВАТЬ
+        GLsizei ghostMeshLineIndexCount = 0;     // <-- ДОБАВИТЬ
 
         std::map<MarkerShape, GLuint> markerVAOs;
         std::map<MarkerShape, GLuint> markerVBOs;

@@ -797,6 +797,7 @@ ENCODINGUTF8#ifndef URBAXIO_SCENE_OBJECT_H
 #include <memory>
 #include <vector>
 #include <set> // <-- ADDED for boundaryLineIDs
+#include <unordered_map> // <-- ADDED
 #include <cad_kernel/cad_kernel.h>
 #include <cad_kernel/MeshBuffers.h>
 #include <glad/glad.h> //     GLuint
@@ -838,6 +839,10 @@ namespace Urbaxio::Engine {
         
         // --- NEW: Link to boundary lines ---
         std::set<uint64_t> boundaryLineIDs;
+
+        // --- NEW: Adjacency map for mesh vertices ("sticky geometry" support) ---
+        // Maps a vertex index to a set of indices of its direct neighbors.
+        std::unordered_map<unsigned int, std::set<unsigned int>> meshAdjacency;
 
     private:
         uint64_t id_;
@@ -2317,7 +2322,8 @@ namespace Urbaxio::Engine {
         : id_(other.id_),
         name_(std::move(other.name_)),
         shape_(std::move(other.shape_)),
-        mesh_buffers_(std::move(other.mesh_buffers_)) // <---               
+        mesh_buffers_(std::move(other.mesh_buffers_)),
+        meshAdjacency(std::move(other.meshAdjacency)) // <-- Move adjacency map
     {
         other.id_ = 0;
     }
@@ -2328,7 +2334,8 @@ namespace Urbaxio::Engine {
             id_ = other.id_;
             name_ = std::move(other.name_);
             shape_ = std::move(other.shape_);
-            mesh_buffers_ = std::move(other.mesh_buffers_); // <---               
+            mesh_buffers_ = std::move(other.mesh_buffers_);
+            meshAdjacency = std::move(other.meshAdjacency); // <-- Move adjacency map
             other.id_ = 0;
         }
         return *this;
@@ -2344,10 +2351,32 @@ namespace Urbaxio::Engine {
     bool SceneObject::has_shape() const { return shape_ != nullptr; }
 
     // ---                ---
-    void SceneObject::set_mesh_buffers(Urbaxio::CadKernel::MeshBuffers buffers) { // <---           
-        mesh_buffers_ = std::move(buffers); //                                     
+    void SceneObject::set_mesh_buffers(Urbaxio::CadKernel::MeshBuffers buffers) {
+        mesh_buffers_ = std::move(buffers);
+        
+        // --- NEW: Build the vertex adjacency map ---
+        meshAdjacency.clear();
+        if (mesh_buffers_.isEmpty()) {
+            return;
+        }
+
+        for (size_t i = 0; i + 2 < mesh_buffers_.indices.size(); i += 3) {
+            unsigned int i0 = mesh_buffers_.indices[i];
+            unsigned int i1 = mesh_buffers_.indices[i+1];
+            unsigned int i2 = mesh_buffers_.indices[i+2];
+
+            // Add edges to the map. (i0, i1), (i1, i2), (i2, i0)
+            meshAdjacency[i0].insert(i1);
+            meshAdjacency[i0].insert(i2);
+            
+            meshAdjacency[i1].insert(i0);
+            meshAdjacency[i1].insert(i2);
+            
+            meshAdjacency[i2].insert(i0);
+            meshAdjacency[i2].insert(i1);
+        }
     }
-    const Urbaxio::CadKernel::MeshBuffers& SceneObject::get_mesh_buffers() const { // <---           
+    const Urbaxio::CadKernel::MeshBuffers& SceneObject::get_mesh_buffers() const {
         return mesh_buffers_;
     }
     bool SceneObject::has_mesh() const { // <---           
@@ -2655,15 +2684,20 @@ int main(int argc, char* argv[]) {
             }
         }
         
-        // --- FIX: Moved preview state query before buffer updates ---
+        // --- Update Preview State ---
         uint64_t previewObjId = 0;
-        glm::mat4 previewMatrix(1.0f);
+        const Urbaxio::CadKernel::MeshBuffers* ghostMesh = nullptr;
+
         if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
             auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
-            if (moveTool->IsMoving()) {
-                previewObjId = moveTool->GetMovingObjectId();
-                previewMatrix = moveTool->GetPreviewTransform();
-            }
+            previewObjId = moveTool->GetMovingObjectId(); // Will be 0 if not moving
+            ghostMesh = moveTool->GetGhostMesh();
+        }
+        
+        if (ghostMesh) {
+            renderer.UpdateGhostMesh(*ghostMesh);
+        } else {
+            renderer.ClearGhostMesh();
         }
         
         renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), selectedLineIDs, previewObjId, scene_ptr);
@@ -2788,8 +2822,7 @@ int main(int argc, char* argv[]) {
             hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor,
             currentSnap, 
             ImGui::GetDrawData(),
-            previewObjId,
-            previewMatrix
+            previewObjId
         );
 
         // --- Render selection box if needed ---
@@ -2952,6 +2985,7 @@ ENCODINGUTF8#pragma once
 
 #include "snapping.h"
 #include <engine/line.h> // <--- ADDED: Fix for unknown type 'Line'
+#include <cad_kernel/MeshBuffers.h> // <-- ADDED for Ghost Mesh
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <vector>
@@ -3017,6 +3051,10 @@ namespace Urbaxio {
         void UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance);
         void UpdateAxesVBO(const glm::vec4& colorX, const glm::vec4& colorY, const glm::vec4& colorZ, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor);
         void RenderSelectionBox(const glm::vec2& start, const glm::vec2& end, int screenWidth, int screenHeight); // <-- NEW
+        
+        // --- NEW: Ghost Mesh methods ---
+        void UpdateGhostMesh(const CadKernel::MeshBuffers& mesh);
+        void ClearGhostMesh();
 
     private:
         GLuint objectShaderProgram = 0;
@@ -3049,6 +3087,13 @@ namespace Urbaxio {
         GLuint previewLineVAO = 0, previewLineVBO = 0; bool previewLineEnabled = false;
         GLuint previewOutlineVAO = 0, previewOutlineVBO = 0; GLsizei previewOutlineVertexCount = 0; // <-- NEW for dashed outline
         GLuint selectionBoxVAO = 0, selectionBoxVBO = 0; // <-- NEW
+
+        // --- NEW: Ghost Mesh Resources ---
+        GLuint ghostMeshVAO = 0;
+        GLuint ghostMeshVBO_vertices = 0;
+        GLuint ghostMeshVBO_normals = 0;
+        GLuint ghostMeshEBO = 0;
+        GLsizei ghostMeshIndexCount = 0;
 
         std::map<MarkerShape, GLuint> markerVAOs;
         std::map<MarkerShape, GLuint> markerVBOs;
@@ -3086,6 +3131,7 @@ namespace Urbaxio {
         bool CreatePreviewLineResources();
         bool CreatePreviewOutlineResources();
         bool CreateSelectionBoxResources();
+        bool CreateGhostMeshResources(); // <-- NEW
         void Cleanup();
         void DrawSnapMarker(const SnapResult& snap, const Camera& camera, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight);
 
@@ -3979,7 +4025,7 @@ namespace Urbaxio {
             "}\n";
     }
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateSplatResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreateGhostMeshResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
     
     void Renderer::RenderFrame(
@@ -4031,16 +4077,12 @@ namespace Urbaxio {
             glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
             for (const auto* obj : scene->get_all_objects()) {
                 if (obj && obj->vao != 0 && obj->index_count > 0) {
+                    if (obj->get_id() == previewObjectId) { // This is the object being moved, hide it.
+                        continue;
+                    }
                     const auto& name = obj->get_name();
                     if (name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
-                        // --- MODIFIED: Apply preview transform if this is the object being moved ---
-                        glm::mat4 currentModelMatrix = identityModel;
-                        if (obj->get_id() == previewObjectId) {
-                            currentModelMatrix = previewTransform;
-                        }
-
                         glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
-                        glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(currentModelMatrix));
                         glBindVertexArray(obj->vao);
                         glDrawElements(GL_TRIANGLES, obj->index_count, GL_UNSIGNED_INT, 0);
                         glBindVertexArray(0);
@@ -4049,11 +4091,39 @@ namespace Urbaxio {
             }
         }
 
+        // --- Render Ghost Mesh (as opaque object with wireframe) ---
+        if (ghostMeshVAO != 0 && ghostMeshIndexCount > 0) {
+            glUseProgram(objectShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            
+            // 1. Solid fill pass
+            glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+            glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(1.0f, 1.0f);
+            glBindVertexArray(ghostMeshVAO);
+            glDrawElements(GL_TRIANGLES, ghostMeshIndexCount, GL_UNSIGNED_INT, 0);
+            glDisable(GL_POLYGON_OFFSET_FILL);
+
+            // 2. Wireframe overlay pass
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(glm::vec3(1.0f))); // White wireframe
+            glLineWidth(1.5f);
+            glDrawElements(GL_TRIANGLES, ghostMeshIndexCount, GL_UNSIGNED_INT, 0);
+            glLineWidth(1.0f);
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            
+            glBindVertexArray(0);
+        }
+
         // --- 2. TRANSPARENT / OVERLAY PASS ---
         glDepthMask(GL_FALSE);
-
+        
         if (objectShaderProgram != 0 && scene) {
             glUseProgram(objectShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+
             if (hoveredObjId != 0 && !hoveredFaceTriangleIndices.empty()) {
                 bool isSameAsSelected = (hoveredObjId == selectedObjId) && (hoveredFaceTriangleIndices == selectedTriangleIndices);
                 if (!isSameAsSelected) {
@@ -4121,21 +4191,13 @@ namespace Urbaxio {
         if (simpleLineShaderProgram != 0) {
             glLineWidth(2.0f);
             glUseProgram(simpleLineShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
             glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
-            // Draw static lines with no transformation
             if (userLinesVAO != 0 && userLinesVertexCount > 0) {
-                glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
                 glBindVertexArray(userLinesVAO);
                 glDrawArrays(GL_LINES, 0, userLinesVertexCount);
-            }
-
-            // Draw moving lines with the preview transformation
-            if (movingLinesVAO != 0 && movingLinesVertexCount > 0) {
-                glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(previewTransform));
-                glBindVertexArray(movingLinesVAO);
-                glDrawArrays(GL_LINES, 0, movingLinesVertexCount);
             }
             
             glBindVertexArray(0);
@@ -4359,8 +4421,9 @@ namespace Urbaxio {
     }
     
     void Renderer::UpdateUserLinesBuffer(const std::map<uint64_t, Engine::Line>& lines, const std::set<uint64_t>& selectedLineIDs, uint64_t movingObjectId, Engine::Scene* scene) {
-        if (userLinesVBO == 0 || movingLinesVBO == 0) return;
+        if (userLinesVBO == 0) return;
         
+        // --- NEW: Completely ignore lines from moving object ---
         std::set<uint64_t> movingLineIds;
         if (movingObjectId != 0 && scene) {
             Engine::SceneObject* obj = scene->get_object_by_id(movingObjectId);
@@ -4370,28 +4433,25 @@ namespace Urbaxio {
         }
 
         std::vector<float> staticLineData;
-        std::vector<float> movingLineData;
         
         for (const auto& [lineID, line] : lines) {
-            bool isMoving = movingLineIds.count(lineID);
-            std::vector<float>& targetVector = isMoving ? movingLineData : staticLineData;
+            // Skip lines that belong to the moving object
+            if (movingLineIds.count(lineID)) {
+                continue;
+            }
             
             glm::vec4 currentColor = userLineColor;
             if (selectedLineIDs.count(lineID)) {
                 currentColor = selectedUserLineColor;
             }
             
-            targetVector.insert(targetVector.end(), {line.start.x, line.start.y, line.start.z, currentColor.r, currentColor.g, currentColor.b, currentColor.a});
-            targetVector.insert(targetVector.end(), {line.end.x, line.end.y, line.end.z, currentColor.r, currentColor.g, currentColor.b, currentColor.a});
+            staticLineData.insert(staticLineData.end(), {line.start.x, line.start.y, line.start.z, currentColor.r, currentColor.g, currentColor.b, currentColor.a});
+            staticLineData.insert(staticLineData.end(), {line.end.x, line.end.y, line.end.z, currentColor.r, currentColor.g, currentColor.b, currentColor.a});
         }
         
         glBindBuffer(GL_ARRAY_BUFFER, userLinesVBO);
         glBufferData(GL_ARRAY_BUFFER, staticLineData.size() * sizeof(float), staticLineData.data(), GL_DYNAMIC_DRAW);
         userLinesVertexCount = static_cast<int>(staticLineData.size() / 7);
-
-        glBindBuffer(GL_ARRAY_BUFFER, movingLinesVBO);
-        glBufferData(GL_ARRAY_BUFFER, movingLineData.size() * sizeof(float), movingLineData.data(), GL_DYNAMIC_DRAW);
-        movingLinesVertexCount = static_cast<int>(movingLineData.size() / 7);
 
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
@@ -4406,6 +4466,7 @@ namespace Urbaxio {
         if (previewVAO != 0) glDeleteVertexArrays(1, &previewVAO); previewVAO = 0; if (previewVBO != 0) glDeleteBuffers(1, &previewVBO); previewVBO = 0;
         if (previewLineVAO != 0) glDeleteVertexArrays(1, &previewLineVAO); previewLineVAO = 0; if (previewLineVBO != 0) glDeleteBuffers(1, &previewLineVBO); previewLineVBO = 0;
         if (previewOutlineVAO != 0) glDeleteVertexArrays(1, &previewOutlineVAO); previewOutlineVAO = 0; if (previewOutlineVBO != 0) glDeleteBuffers(1, &previewOutlineVBO); previewOutlineVBO = 0;
+        ClearGhostMesh(); // <-- NEW: Cleanup ghost mesh
         for (auto const& [shape, vao] : markerVAOs) { if (vao != 0) glDeleteVertexArrays(1, &vao); } markerVAOs.clear();
         for (auto const& [shape, vbo] : markerVBOs) { if (vbo != 0) glDeleteBuffers(1, &vbo); } markerVBOs.clear();
         markerVertexCounts.clear();
@@ -4670,6 +4731,60 @@ namespace Urbaxio {
         glBindVertexArray(0);
         std::cout << "Renderer: Selection Box VAO/VBO created." << std::endl;
         return selectionBoxVAO != 0 && selectionBoxVBO != 0;
+    }
+
+    bool Renderer::CreateGhostMeshResources() {
+        glGenVertexArrays(1, &ghostMeshVAO);
+        glGenBuffers(1, &ghostMeshVBO_vertices);
+        glGenBuffers(1, &ghostMeshVBO_normals);
+        glGenBuffers(1, &ghostMeshEBO);
+
+        glBindVertexArray(ghostMeshVAO);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, ghostMeshVBO_vertices);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, ghostMeshVBO_normals);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
+        
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO);
+        
+        glBindVertexArray(0);
+        std::cout << "Renderer: Ghost Mesh VAO/VBO/EBOs created." << std::endl;
+        return ghostMeshVAO != 0 && ghostMeshVBO_vertices != 0 && ghostMeshVBO_normals != 0 && ghostMeshEBO != 0;
+    }
+
+    void Renderer::UpdateGhostMesh(const CadKernel::MeshBuffers& mesh) {
+        if (ghostMeshVAO == 0 || mesh.isEmpty()) {
+            ClearGhostMesh();
+            return;
+        }
+
+        glBindVertexArray(ghostMeshVAO);
+
+        // Update vertices
+        glBindBuffer(GL_ARRAY_BUFFER, ghostMeshVBO_vertices);
+        glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(float), mesh.vertices.data(), GL_DYNAMIC_DRAW);
+
+        // Update normals
+        glBindBuffer(GL_ARRAY_BUFFER, ghostMeshVBO_normals);
+        glBufferData(GL_ARRAY_BUFFER, mesh.normals.size() * sizeof(float), mesh.normals.data(), GL_DYNAMIC_DRAW);
+
+        // Update indices
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(unsigned int), mesh.indices.data(), GL_DYNAMIC_DRAW);
+        ghostMeshIndexCount = static_cast<GLsizei>(mesh.indices.size());
+
+        glBindVertexArray(0);
+    }
+
+    void Renderer::ClearGhostMesh() {
+        if (ghostMeshVAO != 0) {
+            ghostMeshIndexCount = 0;
+            // No need to delete buffers, just stop drawing by setting index count to 0
+        }
     }
 
 } // namespace Urbaxio
@@ -5123,17 +5238,34 @@ ENCODINGUTF8ENCODINGUTF8--- File: shell/include/tools/MoveTool.h ---
 ENCODINGUTF8#pragma once
 
 #include "tools/ITool.h"
+#include <cad_kernel/MeshBuffers.h> // For ghost mesh
 #include <glm/mat4x4.hpp>
+#include <set> // For std::set
 
 namespace Urbaxio::Tools {
 
-// FIX: Moved the enum class outside of the MoveTool class
-// This resolves the MSVC compiler issue with qualified names in switch statements.
+// State of the entire tool
 enum class MoveToolState {
-    IDLE,
-    AWAITING_DESTINATION_FREE,
-    AWAITING_DESTINATION_AXIS_LOCKED,
-    AWAITING_DESTINATION_INFERENCE_LOCKED
+    IDLE,             // Waiting for a selection or a click to determine the target
+    MOVING_PREVIEW,   // Target is selected, dragging to determine translation
+};
+
+// State of the axis locking during movement
+enum class AxisLockState {
+    FREE,
+    AXIS_LOCKED,
+    INFERENCE_LOCKED
+};
+
+// What is being moved
+struct MoveTarget {
+    enum class TargetType { NONE, OBJECT, FACE, EDGE, VERTEX };
+    TargetType type = TargetType::NONE;
+    uint64_t objectId = 0;
+    
+    // Original vertex indices in the object's mesh for deformation.
+    // If type is OBJECT, this contains all vertex indices.
+    std::set<unsigned int> movingVertices;
 };
 
 class MoveTool : public ITool {
@@ -5150,27 +5282,40 @@ public:
     void OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) override;
     void RenderUI() override;
     
-    // Public getters for the main loop to query state for rendering
+    // Public getters for the main loop to query state
     bool IsMoving() const;
-    uint64_t GetMovingObjectId() const;
-    glm::mat4 GetPreviewTransform() const;
+    uint64_t GetMovingObjectId() const; // ID of the object to hide
+    const CadKernel::MeshBuffers* GetGhostMesh() const;
 
 private:
+    void reset();
+    void startMove(const SnapResult& snap);
+    void finalizeMove();
+
+    // High-level state
     MoveToolState currentState = MoveToolState::IDLE;
-    uint64_t movingObjectId = 0;
+    MoveTarget currentTarget;
+
+    // Movement state
     glm::vec3 basePoint{0.0f};
     glm::vec3 currentTranslation{0.0f};
     
-    // --- NEW: Axis Locking State ---
+    // Axis Locking State
+    AxisLockState lockState = AxisLockState::FREE;
     glm::vec3 lockedAxisDir{0.0f};
-    SnapType lockedAxisType = SnapType::NONE;
     glm::vec3 inferenceAxisDir{0.0f};
+
+    // Ghost mesh for preview
+    CadKernel::MeshBuffers ghostMesh;
+    bool ghostMeshActive = false;
 
     // Input buffer for length
     char lengthInputBuf[64] = "";
 
-    void reset();
-    void finalizeMove();
+    // Helpers
+    void determineTargetFromSelection();
+    void determineTargetFromPick(int mouseX, int mouseY);
+    void updateGhostMeshDeformation();
     bool tryToLockAxis(const glm::vec3& currentTarget);
     glm::vec3 calculateAxisLockedPoint(const SnapResult& snap);
     glm::vec3 calculateInferenceLockedPoint(const SnapResult& snap);
@@ -5699,8 +5844,9 @@ ENCODINGUTF8ENCODINGUTF8--- File: shell/src/tools/MoveTool.cpp ---
 ENCODINGUTF8#define GLM_ENABLE_EXPERIMENTAL
 #include "tools/MoveTool.h"
 #include "engine/scene.h"
+#include "engine/scene_object.h"
 #include "engine/commands/MoveCommand.h"
-#include "camera.h" // For SnappingSystem::WorldToScreen
+#include "camera.h"
 #include "snapping.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/norm.hpp>
@@ -5712,9 +5858,82 @@ ENCODINGUTF8#define GLM_ENABLE_EXPERIMENTAL
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <numeric> // for std::iota
+#include <limits>
+#include <list>
+#include <map>
+#include <set>
+#include <algorithm>
 
 namespace { // Anonymous namespace for helpers
     
+    // Custom comparator for glm::vec3 to use it as a map key
+    struct Vec3Comparator {
+        bool operator()(const glm::vec3& a, const glm::vec3& b) const {
+            const float TOLERANCE = 1e-4f;
+            if (std::abs(a.x - b.x) > TOLERANCE) return a.x < b.x;
+            if (std::abs(a.y - b.y) > TOLERANCE) return a.y < b.y;
+            if (std::abs(a.z - b.z) > TOLERANCE) return a.z < b.z;
+            return false;
+        }
+    };
+    
+    // Helper to find all coplanar and adjacent triangles, starting from a given one.
+    std::vector<size_t> FindCoplanarAdjacentTriangles(
+        const Urbaxio::Engine::SceneObject& object,
+        size_t startTriangleBaseIndex)
+    {
+        const float NORMAL_DOT_TOLERANCE = 0.999f;
+        const float PLANE_DIST_TOLERANCE = 1e-4f;
+        const auto& mesh = object.get_mesh_buffers();
+        if (!object.has_mesh() || startTriangleBaseIndex + 2 >= mesh.indices.size()) { return { startTriangleBaseIndex }; }
+        std::map<std::pair<unsigned int, unsigned int>, std::vector<size_t>> edgeToTriangles;
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            unsigned int v_indices[3] = { mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2] };
+            for (int j = 0; j < 3; ++j) {
+                unsigned int v1_idx = v_indices[j];
+                unsigned int v2_idx = v_indices[(j + 1) % 3];
+                if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
+                edgeToTriangles[{v1_idx, v2_idx}].push_back(i);
+            }
+        }
+        std::vector<size_t> resultFaceTriangles;
+        std::list<size_t> queue;
+        std::set<size_t> visitedTriangles;
+        unsigned int i0 = mesh.indices[startTriangleBaseIndex];
+        glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+        glm::vec3 referenceNormal(mesh.normals[i0*3], mesh.normals[i0*3+1], mesh.normals[i0*3+2]);
+        float referencePlaneD = -glm::dot(referenceNormal, v0);
+        queue.push_back(startTriangleBaseIndex);
+        visitedTriangles.insert(startTriangleBaseIndex);
+        while (!queue.empty()) {
+            size_t currentTriangleIndex = queue.front();
+            queue.pop_front();
+            resultFaceTriangles.push_back(currentTriangleIndex);
+            unsigned int current_v_indices[3] = { mesh.indices[currentTriangleIndex], mesh.indices[currentTriangleIndex + 1], mesh.indices[currentTriangleIndex + 2] };
+            for (int j = 0; j < 3; ++j) {
+                unsigned int v1_idx = current_v_indices[j];
+                unsigned int v2_idx = current_v_indices[(j + 1) % 3];
+                if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
+                const auto& potentialNeighbors = edgeToTriangles.at({v1_idx, v2_idx});
+                for (size_t neighborIndex : potentialNeighbors) {
+                    if (neighborIndex == currentTriangleIndex) continue;
+                    if (visitedTriangles.find(neighborIndex) == visitedTriangles.end()) {
+                        visitedTriangles.insert(neighborIndex);
+                        unsigned int n_i0 = mesh.indices[neighborIndex];
+                        glm::vec3 n_v0(mesh.vertices[n_i0*3], mesh.vertices[n_i0*3+1], mesh.vertices[n_i0*3+2]);
+                        glm::vec3 neighborNormal(mesh.normals[n_i0*3], mesh.normals[n_i0*3+1], mesh.normals[n_i0*3+2]);
+                        if (glm::abs(glm::dot(referenceNormal, neighborNormal)) > NORMAL_DOT_TOLERANCE) {
+                            float dist = glm::abs(glm::dot(referenceNormal, n_v0) + referencePlaneD);
+                            if (dist < PLANE_DIST_TOLERANCE) queue.push_back(neighborIndex);
+                        }
+                    }
+                }
+            }
+        }
+        return resultFaceTriangles;
+    }
+
     glm::vec3 ClosestPointOnLine(const glm::vec3& lineOrigin, const glm::vec3& lineDir, const glm::vec3& point) {
         float t = glm::dot(point - lineOrigin, lineDir);
         return lineOrigin + lineDir * t;
@@ -5741,7 +5960,7 @@ namespace { // Anonymous namespace for helpers
                 return false;
         }
     }
-}
+} // Anonymous namespace end
 
 namespace Urbaxio::Tools {
 
@@ -5757,31 +5976,207 @@ void MoveTool::Deactivate() {
 
 void MoveTool::reset() {
     currentState = MoveToolState::IDLE;
-    movingObjectId = 0;
+    lockState = AxisLockState::FREE;
+    currentTarget = {};
     currentTranslation = glm::vec3(0.0f);
-    lockedAxisType = SnapType::NONE;
     inferenceAxisDir = glm::vec3(0.0f);
+    ghostMesh.clear();
+    ghostMeshActive = false;
     lengthInputBuf[0] = '\0';
+}
+
+void MoveTool::determineTargetFromSelection() {
+    currentTarget = {}; // Reset target
+    if (*context.selectedObjId != 0 && !context.selectedTriangleIndices->empty()) {
+        currentTarget.type = MoveTarget::TargetType::FACE;
+        currentTarget.objectId = *context.selectedObjId;
+        Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
+        if (obj && obj->has_mesh()) {
+            const auto& mesh = obj->get_mesh_buffers();
+            for (size_t triBaseIndex : *context.selectedTriangleIndices) {
+                currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
+                currentTarget.movingVertices.insert(mesh.indices[triBaseIndex + 1]);
+                currentTarget.movingVertices.insert(mesh.indices[triBaseIndex + 2]);
+            }
+        }
+    } else if (*context.selectedObjId != 0) {
+        currentTarget.type = MoveTarget::TargetType::OBJECT;
+        currentTarget.objectId = *context.selectedObjId;
+        Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
+        if (obj && obj->has_mesh()) {
+            size_t vertexCount = obj->get_mesh_buffers().vertices.size() / 3;
+            currentTarget.movingVertices.clear();
+            std::vector<unsigned int> all_indices(vertexCount);
+            std::iota(all_indices.begin(), all_indices.end(), 0);
+            currentTarget.movingVertices.insert(all_indices.begin(), all_indices.end());
+        }
+    }
+}
+
+void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
+    reset(); 
+    glm::vec3 rayOrigin, rayDir;
+    Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin, rayDir);
+
+    uint64_t hitObjectId = 0;
+    size_t hitTriangleBaseIndex = 0;
+    float closestHitDistance = std::numeric_limits<float>::max();
+
+    for (auto* obj : context.scene->get_all_objects()) {
+        const auto& name = obj->get_name();
+        if (!obj || !obj->has_mesh() || name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") continue;
+        
+        const auto& mesh = obj->get_mesh_buffers();
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
+            glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+            glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+            glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+            float t;
+            if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDistance) {
+                closestHitDistance = t;
+                hitObjectId = obj->get_id();
+                hitTriangleBaseIndex = i;
+            }
+        }
+    }
+
+    if (hitObjectId == 0) return;
+    
+    // --- NEW: Robust screen-space sub-object picking ---
+    Engine::SceneObject* hitObject = context.scene->get_object_by_id(hitObjectId);
+    const auto& mesh = hitObject->get_mesh_buffers();
+    glm::vec2 mousePos(mouseX, mouseY);
+    const float pick_threshold_pixels_sq = 10.0f * 10.0f;
+
+    // 1. Check for vertex hit
+    unsigned int best_v_idx = -1;
+    float min_dist_sq = pick_threshold_pixels_sq;
+    for (size_t i = 0; i < mesh.vertices.size() / 3; ++i) {
+        glm::vec3 v_world = {mesh.vertices[i*3], mesh.vertices[i*3+1], mesh.vertices[i*3+2]};
+        glm::vec2 v_screen;
+        if (SnappingSystem::WorldToScreen(v_world, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen)) {
+            float dist_sq = glm::distance2(mousePos, v_screen);
+            if (dist_sq < min_dist_sq) {
+                min_dist_sq = dist_sq;
+                best_v_idx = i;
+            }
+        }
+    }
+    if (best_v_idx != (unsigned int)-1) {
+        currentTarget.type = MoveTarget::TargetType::VERTEX;
+        currentTarget.objectId = hitObjectId;
+        currentTarget.movingVertices = { best_v_idx };
+        return;
+    }
+    
+    // 2. If no vertex, check for edge hit
+    std::pair<unsigned int, unsigned int> best_edge = {-1, -1};
+    min_dist_sq = pick_threshold_pixels_sq;
+    std::set<std::pair<unsigned int, unsigned int>> unique_edges;
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        unsigned int idxs[] = {mesh.indices[i], mesh.indices[i+1], mesh.indices[i+2]};
+        for(int j = 0; j < 3; ++j) {
+            unsigned int v1 = idxs[j], v2 = idxs[(j+1)%3];
+            if (v1 > v2) std::swap(v1,v2);
+            unique_edges.insert({v1, v2});
+        }
+    }
+
+    for (const auto& edge : unique_edges) {
+        glm::vec3 p1_world = {mesh.vertices[edge.first*3], mesh.vertices[edge.first*3+1], mesh.vertices[edge.first*3+2]};
+        glm::vec3 p2_world = {mesh.vertices[edge.second*3], mesh.vertices[edge.second*3+1], mesh.vertices[edge.second*3+2]};
+        glm::vec2 p1_screen, p2_screen;
+        if (SnappingSystem::WorldToScreen(p1_world, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, p1_screen) &&
+            SnappingSystem::WorldToScreen(p2_world, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, p2_screen)) {
+            glm::vec2 edge_vec = p2_screen - p1_screen;
+            float len_sq = glm::length2(edge_vec);
+            if (len_sq < 1e-6) continue;
+            float t = glm::dot(mousePos - p1_screen, edge_vec) / len_sq;
+            t = glm::clamp(t, 0.0f, 1.0f);
+            glm::vec2 closest_point = p1_screen + t * edge_vec;
+            float dist_sq = glm::distance2(mousePos, closest_point);
+            if (dist_sq < min_dist_sq) {
+                min_dist_sq = dist_sq;
+                best_edge = edge;
+            }
+        }
+    }
+    if (best_edge.first != (unsigned int)-1) {
+        currentTarget.type = MoveTarget::TargetType::EDGE;
+        currentTarget.objectId = hitObjectId;
+        currentTarget.movingVertices = {best_edge.first, best_edge.second};
+        return;
+    }
+
+    // 3. If nothing else, it's a face hit
+    currentTarget.type = MoveTarget::TargetType::FACE;
+    currentTarget.objectId = hitObjectId;
+    std::vector<size_t> faceTriangles = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex);
+    for(size_t triBaseIndex : faceTriangles) {
+        currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
+        currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+1]);
+        currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+2]);
+    }
+}
+
+
+void MoveTool::startMove(const SnapResult& snap) {
+    if (currentTarget.type == MoveTarget::TargetType::NONE) return;
+
+    Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
+    if (!obj || !obj->has_mesh()) return;
+
+    const auto& originalMesh = obj->get_mesh_buffers();
+
+    // --- NEW "STICKY" LOGIC ---
+    // 1. Build a map of unique positions to all indices at that position.
+    std::map<glm::vec3, std::vector<unsigned int>, Vec3Comparator> positionToIndices;
+    for (size_t i = 0; i < originalMesh.vertices.size() / 3; ++i) {
+        glm::vec3 pos(originalMesh.vertices[i*3], originalMesh.vertices[i*3+1], originalMesh.vertices[i*3+2]);
+        positionToIndices[pos].push_back(i);
+    }
+
+    // 2. Find the unique positions of the initially selected vertices.
+    std::set<glm::vec3, Vec3Comparator> movingPositions;
+    for (unsigned int v_idx : currentTarget.movingVertices) {
+        glm::vec3 pos(originalMesh.vertices[v_idx*3], originalMesh.vertices[v_idx*3+1], originalMesh.vertices[v_idx*3+2]);
+        movingPositions.insert(pos);
+    }
+
+    // 3. Expand the set of moving vertices to include all coincident vertices.
+    std::set<unsigned int> expandedMovingVertices;
+    for (const auto& pos : movingPositions) {
+        const auto& indices = positionToIndices.at(pos);
+        expandedMovingVertices.insert(indices.begin(), indices.end());
+    }
+    currentTarget.movingVertices = expandedMovingVertices;
+    // --- END NEW LOGIC ---
+
+    basePoint = snap.worldPoint;
+    currentState = MoveToolState::MOVING_PREVIEW;
+    lockState = AxisLockState::FREE;
+    lengthInputBuf[0] = '\0';
+    ghostMeshActive = true;
+    
+    ghostMesh = originalMesh;
+    std::cout << "MoveTool: Started moving." << std::endl;
 }
 
 void MoveTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {
     if (currentState == MoveToolState::IDLE) {
-        if (*context.selectedObjId != 0) {
-            movingObjectId = *context.selectedObjId;
-            basePoint = lastSnapResult.worldPoint;
-            currentState = MoveToolState::AWAITING_DESTINATION_FREE;
-            lengthInputBuf[0] = '\0';
-            std::cout << "MoveTool: Started moving object " << movingObjectId << " from base point." << std::endl;
-        } else {
-            std::cout << "MoveTool: Select an object before using the Move tool." << std::endl;
+        determineTargetFromSelection();
+        if (currentTarget.type == MoveTarget::TargetType::NONE) {
+            determineTargetFromPick(mouseX, mouseY);
         }
+        startMove(lastSnapResult);
     } else {
         finalizeMove();
     }
 }
 
 void MoveTool::OnRightMouseDown() {
-    if (currentState != MoveToolState::IDLE) {
+    if (currentState == MoveToolState::MOVING_PREVIEW) {
         reset();
     }
 }
@@ -5792,18 +6187,18 @@ void MoveTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
         return;
     }
 
-    if (currentState != MoveToolState::IDLE) {
+    if (currentState == MoveToolState::MOVING_PREVIEW) {
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
             float length_mm;
-            auto [ptr, ec] = std::from_chars(lengthInputBuf, lengthInputBuf + strlen(lengthInputBuf), length_mm);
-            if (ec == std::errc() && ptr == lengthInputBuf + strlen(lengthInputBuf)) {
+            auto result = std::from_chars(lengthInputBuf, lengthInputBuf + strlen(lengthInputBuf), length_mm);
+            if (result.ec == std::errc() && result.ptr == lengthInputBuf + strlen(lengthInputBuf)) {
                 float length_m = length_mm / 1000.0f;
                 if (length_m > 1e-4f) {
                     glm::vec3 direction;
-                    if (currentState == MoveToolState::AWAITING_DESTINATION_AXIS_LOCKED) {
+                    if (lockState == AxisLockState::AXIS_LOCKED) {
                         float dotProd = glm::dot(currentTranslation, lockedAxisDir);
                         direction = (dotProd >= 0.0f) ? lockedAxisDir : -lockedAxisDir;
-                    } else if (currentState == MoveToolState::AWAITING_DESTINATION_INFERENCE_LOCKED) {
+                    } else if (lockState == AxisLockState::INFERENCE_LOCKED) {
                         float dotProd = glm::dot(currentTranslation, inferenceAxisDir);
                         direction = (dotProd >= 0.0f) ? inferenceAxisDir : -inferenceAxisDir;
                     } else {
@@ -5830,77 +6225,92 @@ void MoveTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
 
 void MoveTool::OnUpdate(const SnapResult& snap) {
     lastSnapResult = snap;
-    if (currentState == MoveToolState::IDLE) return;
+    if (currentState != MoveToolState::MOVING_PREVIEW) return;
     
     const Uint8* keyboardState = SDL_GetKeyboardState(NULL);
     bool shiftDown = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
 
-    switch (currentState) {
-        case MoveToolState::AWAITING_DESTINATION_FREE:
-            if (shiftDown) {
-                if (snap.snapped && isValidGeometricSnap(snap.type)) {
-                    glm::vec3 direction_to_lock = snap.worldPoint - basePoint;
-                    if (glm::length2(direction_to_lock) > 1e-8f) {
-                        inferenceAxisDir = glm::normalize(direction_to_lock);
-                        currentState = MoveToolState::AWAITING_DESTINATION_INFERENCE_LOCKED;
-                        return;
-                    }
-                }
-                if (tryToLockAxis(snap.worldPoint)) {
-                    currentState = MoveToolState::AWAITING_DESTINATION_AXIS_LOCKED;
-                    return;
-                }
-            }
-            currentTranslation = snap.worldPoint - basePoint;
-            break;
-        
-        case MoveToolState::AWAITING_DESTINATION_AXIS_LOCKED:
-            if (!shiftDown) {
-                currentState = MoveToolState::AWAITING_DESTINATION_FREE;
-                return;
-            }
-            currentTranslation = calculateAxisLockedPoint(snap) - basePoint;
-            break;
+    glm::vec3 endPoint;
 
-        case MoveToolState::AWAITING_DESTINATION_INFERENCE_LOCKED:
-            if (!shiftDown) {
-                currentState = MoveToolState::AWAITING_DESTINATION_FREE;
-                return;
+    if (shiftDown && lockState == AxisLockState::FREE) {
+        if (snap.snapped && isValidGeometricSnap(snap.type)) {
+            glm::vec3 direction_to_lock = snap.worldPoint - basePoint;
+            if (glm::length2(direction_to_lock) > 1e-8f) {
+                inferenceAxisDir = glm::normalize(direction_to_lock);
+                lockState = AxisLockState::INFERENCE_LOCKED;
             }
-            currentTranslation = calculateInferenceLockedPoint(snap) - basePoint;
+        }
+        else if (tryToLockAxis(snap.worldPoint)) {
+            lockState = AxisLockState::AXIS_LOCKED;
+        }
+    } else if (!shiftDown && lockState != AxisLockState::FREE) {
+        lockState = AxisLockState::FREE;
+    }
+
+    switch (lockState) {
+        case AxisLockState::FREE:
+            endPoint = snap.worldPoint;
             break;
-        default:
-             currentTranslation = snap.worldPoint - basePoint;
-             break;
+        case AxisLockState::AXIS_LOCKED:
+            endPoint = calculateAxisLockedPoint(snap);
+            break;
+        case AxisLockState::INFERENCE_LOCKED:
+            endPoint = calculateInferenceLockedPoint(snap);
+            break;
+    }
+
+    currentTranslation = endPoint - basePoint;
+    updateGhostMeshDeformation();
+}
+
+void MoveTool::updateGhostMeshDeformation() {
+    if (!ghostMeshActive) return;
+
+    Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
+    if (!obj || !obj->has_mesh()) return;
+
+    ghostMesh = obj->get_mesh_buffers();
+
+    for (unsigned int v_idx : currentTarget.movingVertices) {
+        if (v_idx * 3 + 2 < ghostMesh.vertices.size()) {
+            ghostMesh.vertices[v_idx * 3 + 0] += currentTranslation.x;
+            ghostMesh.vertices[v_idx * 3 + 1] += currentTranslation.y;
+            ghostMesh.vertices[v_idx * 3 + 2] += currentTranslation.z;
+        }
     }
 }
 
 void MoveTool::finalizeMove() {
-    if (movingObjectId != 0 && glm::length2(currentTranslation) > 1e-8f) {
-        auto command = std::make_unique<Engine::MoveCommand>(
-            context.scene,
-            movingObjectId,
-            currentTranslation
-        );
-        context.scene->getCommandManager()->ExecuteCommand(std::move(command));
+    if (currentTarget.objectId != 0 && glm::length2(currentTranslation) > 1e-8f) {
+        if (currentTarget.type == MoveTarget::TargetType::OBJECT) {
+            auto command = std::make_unique<Engine::MoveCommand>(
+                context.scene,
+                currentTarget.objectId,
+                currentTranslation
+            );
+            context.scene->getCommandManager()->ExecuteCommand(std::move(command));
+        } else {
+            std::cout << "MoveTool: Sub-object B-Rep modification is not yet implemented. Preview only." << std::endl;
+        }
     }
     reset();
 }
 
 bool MoveTool::IsMoving() const {
-    return currentState != MoveToolState::IDLE;
+    return currentState == MoveToolState::MOVING_PREVIEW;
 }
 
 uint64_t MoveTool::GetMovingObjectId() const {
-    return movingObjectId;
+    return (currentState == MoveToolState::MOVING_PREVIEW) ? currentTarget.objectId : 0;
 }
 
-glm::mat4 MoveTool::GetPreviewTransform() const {
-    return glm::translate(glm::mat4(1.0f), currentTranslation);
+const CadKernel::MeshBuffers* MoveTool::GetGhostMesh() const {
+    return ghostMeshActive ? &ghostMesh : nullptr;
 }
+
 
 void MoveTool::RenderUI() {
-    if (currentState != MoveToolState::IDLE) {
+    if (currentState == MoveToolState::MOVING_PREVIEW) {
         ImGui::Separator();
         float length_mm = glm::length(currentTranslation) * 1000.0f;
         ImGui::Text("Distance (mm): %.2f", length_mm);
@@ -5919,9 +6329,8 @@ bool MoveTool::tryToLockAxis(const glm::vec3& currentTarget) {
 
     if (sVis && eVis && glm::length2(endScreenPos - startScreenPos) > SCREEN_VECTOR_MIN_LENGTH_SQ) {
         glm::vec2 rbDir = glm::normalize(endScreenPos - startScreenPos);
-        float maxDot = -1.0f;
+        float maxDot = 0.8f; // Require a strong alignment
         SnapType bestAxis = SnapType::NONE;
-        glm::vec3 bestDir;
         
         const std::vector<std::pair<SnapType, glm::vec3>> axes = {
             {SnapType::AXIS_X, AXIS_X_DIR}, {SnapType::AXIS_Y, AXIS_Y_DIR}, {SnapType::AXIS_Z, AXIS_Z_DIR}
@@ -5935,15 +6344,13 @@ bool MoveTool::tryToLockAxis(const glm::vec3& currentTarget) {
                     if (glm::length2(axisEndPointScreen - originScreen) > 1e-6) {
                         glm::vec2 axDir = glm::normalize(axisEndPointScreen - originScreen);
                         float d = abs(glm::dot(rbDir, axDir));
-                        if (d > maxDot) { maxDot = d; bestAxis = ax.first; bestDir = ax.second;}
+                        if (d > maxDot) { maxDot = d; bestAxis = ax.first; lockedAxisDir = ax.second;}
                     }
                 }
             }
         }
         
-        if(bestAxis != SnapType::NONE) {
-            lockedAxisType = bestAxis; lockedAxisDir = bestDir; return true;
-        }
+        return bestAxis != SnapType::NONE;
     }
     return false;
 }
@@ -5976,23 +6383,17 @@ glm::vec3 MoveTool::calculateAxisLockedPoint(const SnapResult& snap) {
     int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
     glm::vec3 rayOrigin, rayDir;
     Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin, rayDir);
-    if (lockedAxisType == SnapType::AXIS_X || lockedAxisType == SnapType::AXIS_Y) {
-        glm::vec3 pointOnGround;
-        if (SnappingSystem::RaycastToZPlane(mouseX, mouseY, *context.display_w, *context.display_h, *context.camera, pointOnGround)) {
-            return ClosestPointOnLine(basePoint, lockedAxisDir, pointOnGround);
-        }
-    } else if (lockedAxisType == SnapType::AXIS_Z) {
-        glm::vec3 planeOrigin = basePoint;
-        glm::vec3 planeNormal = glm::cross(AXIS_Z_DIR, context.camera->Right);
-        float denominator = glm::dot(rayDir, planeNormal);
-        if (std::abs(denominator) > 1e-6) {
-            float t = glm::dot(planeOrigin - rayOrigin, planeNormal) / denominator;
-            if (t > 0) {
-                glm::vec3 intersectionPoint = rayOrigin + t * rayDir;
-                return ClosestPointOnLine(basePoint, lockedAxisDir, intersectionPoint);
-            }
-        }
+    
+    glm::vec3 w0 = basePoint - rayOrigin;
+    float b = glm::dot(lockedAxisDir, rayDir);
+    float d = glm::dot(lockedAxisDir, w0);
+    float e = glm::dot(rayDir, w0);
+    float denom = 1.0f - b * b;
+    if (std::abs(denom) > 1e-6f) {
+        float s = (b * e - d) / denom;
+        return basePoint + s * lockedAxisDir;
     }
+    
     return basePoint + currentTranslation;
 }
 
@@ -6023,7 +6424,7 @@ ENCODINGUTF8#include "tools/PushPullTool.h"
 namespace { // Anonymous namespace for helpers
 
 // Re-using FindCoplanarAdjacentTriangles from SelectTool's anonymous namespace is tricky.
-// Так что просто копируем сюда улучшенную версию.
+// So we just copy the improved version here.
 std::vector<size_t> FindCoplanarAdjacentTriangles_ForPushPull(
     const Urbaxio::Engine::SceneObject& object,
     size_t startTriangleBaseIndex)
@@ -6193,10 +6594,8 @@ void PushPullTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
     if (isPushPullActive) {
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
             float length_mm;
-            // FIX: Check the return value of std::from_chars to silence the [[nodiscard]] warning
-            auto [ptr, ec] = std::from_chars(lengthInputBuf, lengthInputBuf + strlen(lengthInputBuf), length_mm);
-            if (ec == std::errc() && ptr == lengthInputBuf + strlen(lengthInputBuf)) {
-                // NEW: Apply the sign from the current mouse-drag direction
+            auto result = std::from_chars(lengthInputBuf, lengthInputBuf + strlen(lengthInputBuf), length_mm);
+            if (result.ec == std::errc() && result.ptr == lengthInputBuf + strlen(lengthInputBuf)) {
                 float sign = (pushPullCurrentLength < 0.0f) ? -1.0f : 1.0f;
                 pushPullCurrentLength = (length_mm / 1000.0f) * sign;
                 finalizePushPull(ctrl);

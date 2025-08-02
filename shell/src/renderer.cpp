@@ -102,12 +102,18 @@ namespace Urbaxio {
             "uniform float ambientStrength;\n"
             "uniform vec3 viewPos;\n"
             "uniform float overrideAlpha = 1.0;\n"
+            "uniform bool u_unlit = false;\n" // <-- ДОБАВИТЬ uniform
             "void main() {\n"
-            "    vec3 norm = normalize(NormalWorld);\n"
-            "    vec3 ambient = ambientStrength * lightColor * objectColor;\n"
-            "    float diff = max(dot(norm, normalize(lightDir)), 0.0);\n"
-            "    vec3 diffuse = diff * lightColor * objectColor;\n"
-            "    vec3 result = ambient + diffuse;\n"
+            "    vec3 result;\n"
+            "    if (u_unlit) {\n" // <-- ДОБАВИТЬ ЭТОТ БЛОК
+            "        result = objectColor;\n"
+            "    } else {\n"
+            "        vec3 norm = normalize(NormalWorld);\n"
+            "        vec3 ambient = ambientStrength * lightColor * objectColor;\n"
+            "        float diff = max(dot(norm, normalize(lightDir)), 0.0);\n"
+            "        vec3 diffuse = diff * lightColor * objectColor;\n"
+            "        result = ambient + diffuse;\n"
+            "    }\n"
             "    FragColor = vec4(result, overrideAlpha);\n"
             "}\n";
 
@@ -404,6 +410,7 @@ namespace Urbaxio {
             glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength);
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "viewPos"), 1, glm::value_ptr(camera.Position));
             glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+            glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), 0); // Убедимся, что освещение включено
             for (const auto* obj : scene->get_all_objects()) {
                 if (obj && obj->vao != 0 && obj->index_count > 0) {
                     if (obj->get_id() == previewObjectId) { // This is the object being moved, hide it.
@@ -420,27 +427,39 @@ namespace Urbaxio {
             }
         }
 
-        // --- Render Ghost Mesh (as opaque object with wireframe) ---
-        if (ghostMeshVAO != 0 && ghostMeshIndexCount > 0) {
+        // --- Render Ghost Mesh (as opaque object with boundary wireframe) ---
+        // ЗАМЕНИТЕ ВЕСЬ СТАРЫЙ БЛОК "Render Ghost Mesh" НА ЭТОТ
+        if (ghostMeshVAO != 0 && ghostMeshTriangleIndexCount > 0) {
             glUseProgram(objectShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
             glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
             
             // 1. Solid fill pass
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(1.0f, 1.0f); // Push the solid fill back slightly
+            glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), 0); // Lighting ON
             glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
-            glEnable(GL_POLYGON_OFFSET_FILL);
-            glPolygonOffset(1.0f, 1.0f);
+            
             glBindVertexArray(ghostMeshVAO);
-            glDrawElements(GL_TRIANGLES, ghostMeshIndexCount, GL_UNSIGNED_INT, 0);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO_triangles);
+            glDrawElements(GL_TRIANGLES, ghostMeshTriangleIndexCount, GL_UNSIGNED_INT, 0);
+            
             glDisable(GL_POLYGON_OFFSET_FILL);
-
-            // 2. Wireframe overlay pass
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-            glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(glm::vec3(1.0f))); // White wireframe
-            glLineWidth(1.5f);
-            glDrawElements(GL_TRIANGLES, ghostMeshIndexCount, GL_UNSIGNED_INT, 0);
-            glLineWidth(1.0f);
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        
+            // 2. Wireframe overlay pass (if there are lines to draw)
+            if (ghostMeshLineIndexCount > 0) {
+                glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), 1); // Lighting OFF for pure white
+                glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(glm::vec3(1.0f))); // White wireframe
+                glLineWidth(1.5f);
+                
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO_lines);
+                glDrawElements(GL_LINES, ghostMeshLineIndexCount, GL_UNSIGNED_INT, 0);
+                
+                glLineWidth(1.0f);
+                glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), 0); // Reset lighting state
+            }
             
             glBindVertexArray(0);
         }
@@ -795,7 +814,11 @@ namespace Urbaxio {
         if (previewVAO != 0) glDeleteVertexArrays(1, &previewVAO); previewVAO = 0; if (previewVBO != 0) glDeleteBuffers(1, &previewVBO); previewVBO = 0;
         if (previewLineVAO != 0) glDeleteVertexArrays(1, &previewLineVAO); previewLineVAO = 0; if (previewLineVBO != 0) glDeleteBuffers(1, &previewLineVBO); previewLineVBO = 0;
         if (previewOutlineVAO != 0) glDeleteVertexArrays(1, &previewOutlineVAO); previewOutlineVAO = 0; if (previewOutlineVBO != 0) glDeleteBuffers(1, &previewOutlineVBO); previewOutlineVBO = 0;
-        ClearGhostMesh(); // <-- NEW: Cleanup ghost mesh
+        if (ghostMeshVAO != 0) { glDeleteVertexArrays(1, &ghostMeshVAO); ghostMeshVAO = 0; }
+        if (ghostMeshVBO_vertices != 0) { glDeleteBuffers(1, &ghostMeshVBO_vertices); ghostMeshVBO_vertices = 0; }
+        if (ghostMeshVBO_normals != 0) { glDeleteBuffers(1, &ghostMeshVBO_normals); ghostMeshVBO_normals = 0; }
+        if (ghostMeshEBO_triangles != 0) { glDeleteBuffers(1, &ghostMeshEBO_triangles); ghostMeshEBO_triangles = 0; }
+        if (ghostMeshEBO_lines != 0) { glDeleteBuffers(1, &ghostMeshEBO_lines); ghostMeshEBO_lines = 0; }
         for (auto const& [shape, vao] : markerVAOs) { if (vao != 0) glDeleteVertexArrays(1, &vao); } markerVAOs.clear();
         for (auto const& [shape, vbo] : markerVBOs) { if (vbo != 0) glDeleteBuffers(1, &vbo); } markerVBOs.clear();
         markerVertexCounts.clear();
@@ -1066,7 +1089,8 @@ namespace Urbaxio {
         glGenVertexArrays(1, &ghostMeshVAO);
         glGenBuffers(1, &ghostMeshVBO_vertices);
         glGenBuffers(1, &ghostMeshVBO_normals);
-        glGenBuffers(1, &ghostMeshEBO);
+        glGenBuffers(1, &ghostMeshEBO_triangles); // <-- ПЕРЕИМЕНОВАТЬ
+        glGenBuffers(1, &ghostMeshEBO_lines);     // <-- ДОБАВИТЬ
 
         glBindVertexArray(ghostMeshVAO);
         
@@ -1078,20 +1102,18 @@ namespace Urbaxio {
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(1);
         
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO);
+        // EBOs are bound during drawing, not here.
         
         glBindVertexArray(0);
         std::cout << "Renderer: Ghost Mesh VAO/VBO/EBOs created." << std::endl;
-        return ghostMeshVAO != 0 && ghostMeshVBO_vertices != 0 && ghostMeshVBO_normals != 0 && ghostMeshEBO != 0;
+        return ghostMeshVAO != 0 && ghostMeshVBO_vertices != 0 && ghostMeshVBO_normals != 0 && ghostMeshEBO_triangles != 0 && ghostMeshEBO_lines != 0;
     }
 
-    void Renderer::UpdateGhostMesh(const CadKernel::MeshBuffers& mesh) {
+    void Renderer::UpdateGhostMesh(const CadKernel::MeshBuffers& mesh, const std::vector<unsigned int>& wireframeIndices) {
         if (ghostMeshVAO == 0 || mesh.isEmpty()) {
             ClearGhostMesh();
             return;
         }
-
-        glBindVertexArray(ghostMeshVAO);
 
         // Update vertices
         glBindBuffer(GL_ARRAY_BUFFER, ghostMeshVBO_vertices);
@@ -1101,18 +1123,24 @@ namespace Urbaxio {
         glBindBuffer(GL_ARRAY_BUFFER, ghostMeshVBO_normals);
         glBufferData(GL_ARRAY_BUFFER, mesh.normals.size() * sizeof(float), mesh.normals.data(), GL_DYNAMIC_DRAW);
 
-        // Update indices
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO);
+        // Update triangle indices
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO_triangles);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(unsigned int), mesh.indices.data(), GL_DYNAMIC_DRAW);
-        ghostMeshIndexCount = static_cast<GLsizei>(mesh.indices.size());
+        ghostMeshTriangleIndexCount = static_cast<GLsizei>(mesh.indices.size());
 
-        glBindVertexArray(0);
+        // Update line indices
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO_lines);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireframeIndices.size() * sizeof(unsigned int), wireframeIndices.data(), GL_DYNAMIC_DRAW);
+        ghostMeshLineIndexCount = static_cast<GLsizei>(wireframeIndices.size());
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     }
 
     void Renderer::ClearGhostMesh() {
         if (ghostMeshVAO != 0) {
-            ghostMeshIndexCount = 0;
-            // No need to delete buffers, just stop drawing by setting index count to 0
+            ghostMeshTriangleIndexCount = 0;
+            ghostMeshLineIndexCount = 0; // <-- ДОБАВИТЬ
         }
     }
 

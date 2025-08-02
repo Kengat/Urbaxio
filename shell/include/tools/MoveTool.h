@@ -49,6 +49,7 @@ public:
     bool IsMoving() const;
     uint64_t GetMovingObjectId() const; // ID of the object to hide
     const CadKernel::MeshBuffers* GetGhostMesh() const;
+    const std::vector<unsigned int>* GetGhostWireframeIndices() const; // <-- ДОБАВИТЬ ЭТОТ МЕТОД
 
 private:
     void reset();
@@ -70,6 +71,7 @@ private:
 
     // Ghost mesh for preview
     CadKernel::MeshBuffers ghostMesh;
+    std::vector<unsigned int> ghostWireframeIndices; // <-- ИЗМЕНИТЬ ЭТО
     bool ghostMeshActive = false;
 
     // Input buffer for length

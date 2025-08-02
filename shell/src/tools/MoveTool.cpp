@@ -21,6 +21,7 @@
 #include <map>
 #include <set>
 #include <algorithm>
+#include "engine/line.h" // For Line struct
 
 namespace { // Anonymous namespace for helpers
     
@@ -138,6 +139,7 @@ void MoveTool::reset() {
     currentTranslation = glm::vec3(0.0f);
     inferenceAxisDir = glm::vec3(0.0f);
     ghostMesh.clear();
+    ghostWireframeIndices.clear(); // <-- ДОБАВИТЬ ЭТУ СТРОКУ
     ghostMeshActive = false;
     lengthInputBuf[0] = '\0';
 }
@@ -287,36 +289,57 @@ void MoveTool::startMove(const SnapResult& snap) {
     const auto& originalMesh = obj->get_mesh_buffers();
 
     // --- NEW "STICKY" LOGIC ---
-    // 1. Build a map of unique positions to all indices at that position.
     std::map<glm::vec3, std::vector<unsigned int>, Vec3Comparator> positionToIndices;
     for (size_t i = 0; i < originalMesh.vertices.size() / 3; ++i) {
         glm::vec3 pos(originalMesh.vertices[i*3], originalMesh.vertices[i*3+1], originalMesh.vertices[i*3+2]);
         positionToIndices[pos].push_back(i);
     }
-
-    // 2. Find the unique positions of the initially selected vertices.
     std::set<glm::vec3, Vec3Comparator> movingPositions;
     for (unsigned int v_idx : currentTarget.movingVertices) {
         glm::vec3 pos(originalMesh.vertices[v_idx*3], originalMesh.vertices[v_idx*3+1], originalMesh.vertices[v_idx*3+2]);
         movingPositions.insert(pos);
     }
-
-    // 3. Expand the set of moving vertices to include all coincident vertices.
     std::set<unsigned int> expandedMovingVertices;
     for (const auto& pos : movingPositions) {
         const auto& indices = positionToIndices.at(pos);
         expandedMovingVertices.insert(indices.begin(), indices.end());
     }
     currentTarget.movingVertices = expandedMovingVertices;
-    // --- END NEW LOGIC ---
+    // --- END STICKY LOGIC ---
 
     basePoint = snap.worldPoint;
     currentState = MoveToolState::MOVING_PREVIEW;
     lockState = AxisLockState::FREE;
     lengthInputBuf[0] = '\0';
-    ghostMeshActive = true;
     
-    ghostMesh = originalMesh;
+    ghostMeshActive = true;
+    ghostMesh = originalMesh; // Full copy for deformation
+    
+    // --- Build the ghost wireframe indices ---
+    ghostWireframeIndices.clear();
+    // 1. Build a reverse map from position to vertex index
+    std::map<glm::vec3, unsigned int, Vec3Comparator> positionToIndexMap;
+    for (size_t i = 0; i < originalMesh.vertices.size() / 3; ++i) {
+        glm::vec3 pos(originalMesh.vertices[i*3], originalMesh.vertices[i*3+1], originalMesh.vertices[i*3+2]);
+        if (positionToIndexMap.find(pos) == positionToIndexMap.end()) {
+            positionToIndexMap[pos] = i;
+        }
+    }
+    // 2. Look up line endpoints and add indices to the list
+    const auto& allLines = context.scene->GetAllLines();
+    for (uint64_t lineId : obj->boundaryLineIDs) {
+        auto it = allLines.find(lineId);
+        if (it != allLines.end()) {
+            const auto& line = it->second;
+            auto it_start = positionToIndexMap.find(line.start);
+            auto it_end = positionToIndexMap.find(line.end);
+            if (it_start != positionToIndexMap.end() && it_end != positionToIndexMap.end()) {
+                ghostWireframeIndices.push_back(it_start->second);
+                ghostWireframeIndices.push_back(it_end->second);
+            }
+        }
+    }
+
     std::cout << "MoveTool: Started moving." << std::endl;
 }
 
@@ -426,6 +449,8 @@ void MoveTool::updateGhostMeshDeformation() {
     Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
     if (!obj || !obj->has_mesh()) return;
 
+    // This is not the most efficient way, but it's correct and simple for now.
+    // It re-copies the original mesh and applies the total translation.
     ghostMesh = obj->get_mesh_buffers();
 
     for (unsigned int v_idx : currentTarget.movingVertices) {
@@ -435,6 +460,8 @@ void MoveTool::updateGhostMeshDeformation() {
             ghostMesh.vertices[v_idx * 3 + 2] += currentTranslation.z;
         }
     }
+    // The wireframe indices do not need to be updated, as they point to the
+    // same vertices that are being deformed in the shared vertex buffer.
 }
 
 void MoveTool::finalizeMove() {
@@ -465,6 +492,9 @@ const CadKernel::MeshBuffers* MoveTool::GetGhostMesh() const {
     return ghostMeshActive ? &ghostMesh : nullptr;
 }
 
+const std::vector<unsigned int>* MoveTool::GetGhostWireframeIndices() const {
+    return ghostMeshActive ? &ghostWireframeIndices : nullptr;
+}
 
 void MoveTool::RenderUI() {
     if (currentState == MoveToolState::MOVING_PREVIEW) {

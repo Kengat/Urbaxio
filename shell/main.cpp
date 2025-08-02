@@ -203,15 +203,17 @@ int main(int argc, char* argv[]) {
         // --- Update Preview State ---
         uint64_t previewObjId = 0;
         const Urbaxio::CadKernel::MeshBuffers* ghostMesh = nullptr;
+        const std::vector<unsigned int>* ghostWireframeIndices = nullptr;
 
         if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
             auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
             previewObjId = moveTool->GetMovingObjectId(); // Will be 0 if not moving
             ghostMesh = moveTool->GetGhostMesh();
+            ghostWireframeIndices = moveTool->GetGhostWireframeIndices();
         }
-        
+
         if (ghostMesh) {
-            renderer.UpdateGhostMesh(*ghostMesh);
+            renderer.UpdateGhostMesh(*ghostMesh, ghostWireframeIndices ? *ghostWireframeIndices : std::vector<unsigned int>());
         } else {
             renderer.ClearGhostMesh();
         }
