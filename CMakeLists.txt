@@ -18,7 +18,8 @@ set(OCCT_LIB_DIR_RELEASE "${OCCT_INSTALL_DIR}/lib")
 set(OCCT_LIB_DIR_DEBUG "${OCCT_INSTALL_DIR}/debug/lib")
 
 # List of required modules for OCCT 7.9.1. TKBOP is now TKBool.
-set(OCCT_MODULES TKernel TKMath TKPrim TKBRep TKTopAlgo TKG2d TKG3d TKMesh TKBO TKService TKShHealing TKBool)
+# --- ИЗМЕНИТЬ ЭТУ СТРОКУ ---
+set(OCCT_MODULES TKernel TKMath TKPrim TKBRep TKTopAlgo TKG2d TKG3d TKMesh TKBO TKService TKShHealing TKBool TKOffset)
 set(OpenCASCADE_LIBRARIES "")
 foreach(module ${OCCT_MODULES})
     list(APPEND OpenCASCADE_LIBRARIES "optimized" "${OCCT_LIB_DIR_RELEASE}/${module}.lib" "debug" "${OCCT_LIB_DIR_DEBUG}/${module}.lib")

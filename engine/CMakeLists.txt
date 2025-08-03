@@ -8,6 +8,7 @@ add_library(engine STATIC
     src/commands/PushPullCommand.cpp
     src/commands/MoveCommand.cpp
     src/commands/CreateLineCommand.cpp
+    src/commands/MoveSubObjectCommand.cpp # <-- ДОБАВИТЬ ЭТУ СТРОКУ
 )
 
 # Указываем, где находятся публичные заголовочные файлы

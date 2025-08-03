@@ -4,6 +4,14 @@
 
 namespace Urbaxio::Engine {
 
+    // Enum to describe what is being moved.
+    // This will allow the Scene to choose the correct reconstruction algorithm.
+    enum class SubObjectType {
+        VERTEX,
+        EDGE,
+        FACE
+    };
+
 // Interface for all commands that modify the scene state.
 // This is the core of the Command design pattern.
 class ICommand {

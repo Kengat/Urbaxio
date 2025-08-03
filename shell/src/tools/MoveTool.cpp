@@ -3,6 +3,7 @@
 #include "engine/scene.h"
 #include "engine/scene_object.h"
 #include "engine/commands/MoveCommand.h"
+#include "engine/commands/MoveSubObjectCommand.h"
 #include "camera.h"
 #include "snapping.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -512,8 +513,40 @@ void MoveTool::finalizeMove() {
                 currentTranslation
             );
             context.scene->getCommandManager()->ExecuteCommand(std::move(command));
-        } else {
-            std::cout << "MoveTool: Sub-object B-Rep modification is not yet implemented. Preview only." << std::endl;
+        } else { // Vertex, Edge, or Face move
+            Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
+            if(obj && obj->has_mesh()) {
+                const auto& mesh = obj->get_mesh_buffers();
+                std::vector<glm::vec3> initialPositions;
+                initialPositions.reserve(currentTarget.movingVertices.size());
+                for (unsigned int v_idx : currentTarget.movingVertices) {
+                    if (v_idx * 3 + 2 < mesh.vertices.size()) {
+                        initialPositions.push_back({
+                            mesh.vertices[v_idx * 3 + 0],
+                            mesh.vertices[v_idx * 3 + 1],
+                            mesh.vertices[v_idx * 3 + 2]
+                        });
+                    }
+                }
+                
+                // --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+                Engine::SubObjectType subObjType;
+                switch (currentTarget.type) {
+                    case MoveTarget::TargetType::VERTEX: subObjType = Engine::SubObjectType::VERTEX; break;
+                    case MoveTarget::TargetType::EDGE:   subObjType = Engine::SubObjectType::EDGE;   break;
+                    case MoveTarget::TargetType::FACE:   subObjType = Engine::SubObjectType::FACE;   break;
+                    default: reset(); return;
+                }
+                
+                auto command = std::make_unique<Engine::MoveSubObjectCommand>(
+                    context.scene,
+                    currentTarget.objectId,
+                    subObjType,
+                    initialPositions,
+                    currentTranslation
+                );
+                context.scene->getCommandManager()->ExecuteCommand(std::move(command));
+            }
         }
     }
     reset();

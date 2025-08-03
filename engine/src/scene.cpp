@@ -16,11 +16,13 @@
 #include <glm/common.hpp> // For epsilonEqual
 #include <glm/gtx/intersect.hpp> // For glm::intersectRayPlane
 
-// OCCT Includes for face creation & modification
+// OCCT Includes
 #include <gp_Pnt.hxx>
 #include <gp_Vec.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pln.hxx>
+#include <gp_Trsf.hxx>
+#include <Geom_Surface.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Vertex.hxx>
@@ -37,6 +39,7 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -49,25 +52,31 @@
 #include <BRepBndLib.hxx>
 #include <GProp_GProps.hxx>
 #include <BRepGProp.hxx>
-#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopExp.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_ShapeMapHasher.hxx>
+#include <TopTools_HSequenceOfShape.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
-
-// --- INCLUDES FOR NEW PARAMETRIC SPLITTING ---
+#include <ShapeBuild_ReShape.hxx>
+#include <TColStd_MapOfAsciiString.hxx>
 #include <Geom2d_Line.hxx>
 #include <ShapeAnalysis_Surface.hxx>
 #include <BOPAlgo_Splitter.hxx>
 #include <BOPAlgo_Alerts.hxx>
 #include <gp_Pnt2d.hxx>
 #include <gp_Dir2d.hxx>
-#include <ShapeBuild_ReShape.hxx> // For tracking sub-shapes after healing
 #include <TopTools_ListOfShape.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx> 
-#include <ShapeFix_Wire.hxx> // NEW: Include for wire healing
-#include <ShapeExtend_Status.hxx> // NEW: Include for status flags
+#include <ShapeFix_Wire.hxx>
+#include <ShapeExtend_Status.hxx>
+#include <sstream>
+#include <BinTools.hxx>
 
-#include <sstream> // For stringstream
-#include <BinTools.hxx> // For serialization
+// --- NEW: Additional includes for deformation algorithm ---
+#include <BRepTools_ReShape.hxx>
+#include <BRepOffsetAPI_ThruSections.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
 
 
 namespace { // Anonymous namespace for utility functions
@@ -1219,6 +1228,134 @@ namespace Urbaxio::Engine {
             }
         }
         return nullptr;
+    }
+
+    void Scene::RebuildObjectByMovingVertices(
+        uint64_t objectId, 
+        Engine::SubObjectType type,
+        const std::vector<glm::vec3>& initialPositions, 
+        const glm::vec3& translation
+    ) {
+        SceneObject* obj = get_object_by_id(objectId);
+        if (!obj || !obj->has_shape()) return;
+
+        if (type == SubObjectType::FACE) {
+            try {
+                const TopoDS_Shape& originalShape = *obj->get_shape();
+                
+                // --- 1. Идентификация ---
+                if (initialPositions.size() < 3) {
+                     std::cerr << "Rebuild Error: Not enough points to define a face normal." << std::endl;
+                     return;
+                }
+                glm::vec3 guideNormal = glm::normalize(glm::cross(initialPositions[1] - initialPositions[0], initialPositions[2] - initialPositions[0]));
+                TopoDS_Face F_move = FindOriginalFace(originalShape, initialPositions, guideNormal);
+                if (F_move.IsNull()) {
+                    std::cerr << "Rebuild Error: Could not find the B-Rep face to move." << std::endl;
+                    return;
+                }
+
+                TopTools_IndexedDataMapOfShapeListOfShape shapeAncestors;
+                TopExp::MapShapesAndAncestors(originalShape, TopAbs_EDGE, TopAbs_FACE, shapeAncestors);
+
+                TopTools_ListOfShape facesToRemove;
+                facesToRemove.Append(F_move);
+
+                TopExp_Explorer edgeExp(F_move, TopAbs_EDGE);
+                for (; edgeExp.More(); edgeExp.Next()) {
+                    const TopTools_ListOfShape& parentFaces = shapeAncestors.FindFromKey(edgeExp.Current());
+                    for (const auto& parentFaceShape : parentFaces) {
+                        if (!parentFaceShape.IsSame(F_move)) {
+                            // Check if not already in the list to avoid duplicates
+                            bool found = false;
+                            for(const auto& f : facesToRemove) { if(f.IsSame(parentFaceShape)) { found = true; break; } }
+                            if (!found) facesToRemove.Append(parentFaceShape);
+                        }
+                    }
+                }
+
+                // --- 2. Деконструкция (создание дыры) с использованием BRepTools_ReShape ---
+                Handle(BRepTools_ReShape) remover = new BRepTools_ReShape();
+                for (const auto& faceToRemove : facesToRemove) {
+                    remover->Remove(faceToRemove);
+                }
+                TopoDS_Shape shapeWithHole = remover->Apply(originalShape);
+
+                // --- 3. Трансформация ---
+                gp_Trsf transform;
+                transform.SetTranslation(gp_Vec(translation.x, translation.y, translation.z));
+                TopoDS_Shape transformedFaceShape = BRepBuilderAPI_Transform(F_move, transform);
+                TopoDS_Face F_new = TopoDS::Face(transformedFaceShape);
+
+                // --- 4. Реконструкция (Лофтинг) ---
+                // Извлекаем контуры из дыры и новой грани
+                TopExp_Explorer holeWireExp(shapeWithHole, TopAbs_WIRE);
+                TopExp_Explorer newFaceWireExp(F_new, TopAbs_WIRE);
+
+                if (!holeWireExp.More() || !newFaceWireExp.More()) {
+                    std::cerr << "Rebuild Error: Could not find wires for lofting." << std::endl;
+                    return;
+                }
+
+                // Используем BRepOffsetAPI_ThruSections для создания боковых стенок
+                BRepOffsetAPI_ThruSections thruSections(Standard_False); // false = not a solid
+                thruSections.AddWire(TopoDS::Wire(holeWireExp.Current()));
+                thruSections.AddWire(TopoDS::Wire(newFaceWireExp.Current()));
+                thruSections.Build();
+                if (!thruSections.IsDone()) {
+                    std::cerr << "Rebuild Error: BRepOffsetAPI_ThruSections failed." << std::endl;
+                    return;
+                }
+                TopoDS_Shape sideShell = thruSections.Shape();
+
+                // --- 5. Интеграция (Сшивка) ---
+                Handle(BRepBuilderAPI_Sewing) sewer = new BRepBuilderAPI_Sewing(1e-4);
+                sewer->Add(shapeWithHole);
+                sewer->Add(sideShell);
+                sewer->Add(F_new);
+                sewer->Perform();
+                TopoDS_Shape sewnShape = sewer->SewedShape();
+
+                if (sewnShape.IsNull()) {
+                    std::cerr << "Rebuild Error: Sewing operation resulted in a null shape." << std::endl;
+                    return;
+                }
+
+                // --- 6. Финализация ---
+                BRepBuilderAPI_MakeSolid solidMaker;
+                TopExp_Explorer shellExp(sewnShape, TopAbs_SHELL);
+                for(; shellExp.More(); shellExp.Next()) {
+                    solidMaker.Add(TopoDS::Shell(shellExp.Current()));
+                }
+
+                TopoDS_Shape finalShape;
+                if (solidMaker.IsDone()) {
+                    finalShape = solidMaker.Solid();
+                } else {
+                    std::cerr << "Rebuild Warning: Could not form a solid. Using the sewn shell instead." << std::endl;
+                    finalShape = sewnShape;
+                }
+                
+                // --- 7. Обновление объекта в сцене ---
+                Handle(ShapeFix_Shape) shapeFixer = new ShapeFix_Shape(finalShape);
+                shapeFixer->Perform();
+                TopoDS_Shape fixedShape = shapeFixer->Shape();
+                
+                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(fixedShape)));
+                UpdateObjectBoundary(obj);
+                obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*obj->get_shape()));
+                obj->vao = 0;
+
+            } catch (const Standard_Failure& e) {
+                std::cerr << "OCCT Exception during rebuild: " << e.GetMessageString() << std::endl;
+            }
+            return;
+        }
+
+        if (type == SubObjectType::VERTEX || type == SubObjectType::EDGE) {
+            std::cout << "Warning: Vertex/Edge move reconstruction is currently not implemented." << std::endl;
+            return;
+        }
     }
 
 } // namespace Urbaxio

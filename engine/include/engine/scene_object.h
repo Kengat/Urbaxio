@@ -7,13 +7,24 @@
 #include <vector>
 #include <set> // <-- ADDED for boundaryLineIDs
 #include <unordered_map> // <-- ADDED
+// #include <map> // Больше не нужен здесь
 #include <cad_kernel/cad_kernel.h>
 #include <cad_kernel/MeshBuffers.h>
-#include <glad/glad.h> //     GLuint
+#include <glad/glad.h>
+#include <glm/glm.hpp>      // <-- ДОБАВИТЬ ЭТОТ ИНКЛУД
+#include "engine/scene.h"   // <-- ДОБАВИТЬ ЭТОТ ИНКЛУД ДЛЯ Vec3Comparator //     GLuint
 
 class TopoDS_Shape;
+class TopoDS_Vertex;
+
+// Forward-declaration for comparator
+// Urbaxio::Vec3Comparator теперь известен из scene.h
+// namespace Urbaxio { struct Vec3Comparator; }
 
 namespace Urbaxio::Engine {
+
+    // Forward-declaration for the PIMPL implementation struct
+    struct LocationToVertexMapImpl;
 
     class SceneObject {
     public:
@@ -53,11 +64,18 @@ namespace Urbaxio::Engine {
         // Maps a vertex index to a set of indices of its direct neighbors.
         std::unordered_map<unsigned int, std::set<unsigned int>> meshAdjacency;
 
+        // --- PIMPL for the location map ---
+        void buildLocationToVertexMap(); // Новый метод
+        const TopoDS_Vertex* findVertexAtLocation(const glm::vec3& location) const; // Новый метод
+
     private:
         uint64_t id_;
         std::string name_;
         Urbaxio::CadKernel::OCCT_ShapeUniquePtr shape_ = nullptr;
         Urbaxio::CadKernel::MeshBuffers mesh_buffers_;
+
+        // Указатель на реализацию, скрывающий std::map
+        std::unique_ptr<LocationToVertexMapImpl> locationToVertexMapPimpl_;
     };
 
 } // namespace Urbaxio::Engine

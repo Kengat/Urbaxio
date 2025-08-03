@@ -19,18 +19,27 @@ class gp_Pnt;
 class TopoDS_Shape;
 class TopoDS_Face;
 class TopoDS_Edge;
+class TopoDS_Vertex; // <-- Добавим сюда, чтобы не включать в scene_object.h
 
 namespace Urbaxio::Engine { class SceneObject; }
 
 namespace Urbaxio {
     const float SCENE_POINT_EQUALITY_TOLERANCE = 1e-4f;
 
+    // --- ЗАМЕНИТЬ ЭТУ СТРУКТУРУ ---
     struct Vec3Comparator {
         bool operator()(const glm::vec3& a, const glm::vec3& b) const {
-            if (std::abs(a.x - b.x) > SCENE_POINT_EQUALITY_TOLERANCE) return a.x < b.x;
-            if (std::abs(a.y - b.y) > SCENE_POINT_EQUALITY_TOLERANCE) return a.y < b.y;
-            if (std::abs(a.z - b.z) > SCENE_POINT_EQUALITY_TOLERANCE) return a.z < b.z;
-            return false;
+            // This implementation is robust against floating point inconsistencies
+            // and maintains strict weak ordering.
+            if (a.x < b.x - SCENE_POINT_EQUALITY_TOLERANCE) return true;
+            if (a.x > b.x + SCENE_POINT_EQUALITY_TOLERANCE) return false;
+            
+            if (a.y < b.y - SCENE_POINT_EQUALITY_TOLERANCE) return true;
+            if (a.y > b.y + SCENE_POINT_EQUALITY_TOLERANCE) return false;
+
+            if (a.z < b.z - SCENE_POINT_EQUALITY_TOLERANCE) return true;
+            
+            return false; // They are considered equal
         }
     };
 }
@@ -98,6 +107,14 @@ namespace Urbaxio::Engine {
         // --- Finders ---
         // Public helper to find an object containing a specific face
         SceneObject* FindObjectByFace(const std::vector<glm::vec3>& faceVertices);
+
+        // --- NEW: B-Rep Reconstruction ---
+        void RebuildObjectByMovingVertices(
+            uint64_t objectId, 
+            Engine::SubObjectType type, // <-- ДОБАВИТЬ ТИП
+            const std::vector<glm::vec3>& initialPositions, 
+            const glm::vec3& translation
+        );
 
     private:
         std::unordered_map<uint64_t, std::unique_ptr<SceneObject>> objects_;
