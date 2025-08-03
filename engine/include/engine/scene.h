@@ -154,6 +154,7 @@ namespace Urbaxio::Engine {
         void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
         
         TopoDS_Face FindOriginalFace(
+            SceneObject* obj, // <-- ДОБАВИТЬ ЭТОТ АРГУМЕНТ
             const TopoDS_Shape& shape, 
             const std::vector<glm::vec3>& faceVertices, 
             const glm::vec3& guideNormal

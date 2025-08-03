@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <iostream>
 #include <set>
 #include <cmath>
@@ -627,7 +628,7 @@ namespace Urbaxio::Engine {
             
             for (const auto& [id, obj_ptr] : objects_) {
                 if (obj_ptr && obj_ptr->has_shape()) {
-                    TopoDS_Face foundFace = FindOriginalFace(*obj_ptr->get_shape(), finalOrderedVertices, loopNormal);
+                    TopoDS_Face foundFace = FindOriginalFace(obj_ptr.get(), *obj_ptr->get_shape(), finalOrderedVertices, loopNormal);
                     if (!foundFace.IsNull()) {
                         hostObject = obj_ptr.get();
                         originalHostFace = foundFace;
@@ -807,44 +808,79 @@ namespace Urbaxio::Engine {
     
 
 
-    // --- PUSH/PULL (MODIFIED) ---
-    TopoDS_Face Scene::FindOriginalFace(const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& guideNormal) {
-        if (faceVertices.empty()) return TopoDS_Face();
-        // --- NEW: Refactored logic with normal-based tie-breaking ---
-        // Step 1: Find all candidate faces where all loop vertices lie on the face.
+    // --- УНИВЕРСАЛЬНЫЙ ГИБРИДНЫЙ ПОДХОД ---
+    TopoDS_Face Scene::FindOriginalFace(SceneObject* obj, const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& guideNormal) {
+        if (faceVertices.empty() || !obj) return TopoDS_Face();
+
+        // --- ШАГ 1: НАДЕЖНЫЙ ТОПОЛОГИЧЕСКИЙ ПОИСК (для MoveTool) ---
+        std::unordered_set<TopoDS_Vertex, TopTools_ShapeMapHasher> targetVertices;
+        for (const auto& pos : faceVertices) {
+            const TopoDS_Vertex* v = obj->findVertexAtLocation(pos);
+            if (v) {
+                targetVertices.insert(*v);
+            }
+        }
+
         std::vector<TopoDS_Face> candidates;
-        TopExp_Explorer faceExplorer(shape, TopAbs_FACE);
-        for (; faceExplorer.More(); faceExplorer.Next()) {
-            TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
-            try {
-                BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_False);
-                if(surfaceAdaptor.GetType() != GeomAbs_Plane) continue;
-                bool allPointsOnFace = true;
-                for(const auto& v : faceVertices) {
-                    BRepClass_FaceClassifier classifier;
-                    classifier.Perform(candidateFace, gp_Pnt(v.x, v.y, v.z), 1e-4); 
-                    TopAbs_State state = classifier.State();
-                    if(state != TopAbs_ON && state != TopAbs_IN) {
-                        allPointsOnFace = false;
+        if (!targetVertices.empty()) {
+            TopExp_Explorer faceExplorer(shape, TopAbs_FACE);
+            for (; faceExplorer.More(); faceExplorer.Next()) {
+                TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
+                std::unordered_set<TopoDS_Vertex, TopTools_ShapeMapHasher> faceVerticesSet;
+                TopExp_Explorer vertexExplorer(candidateFace, TopAbs_VERTEX);
+                for (; vertexExplorer.More(); vertexExplorer.Next()) {
+                    faceVerticesSet.insert(TopoDS::Vertex(vertexExplorer.Current()));
+                }
+
+                bool contains_all_targets = true;
+                for (const auto& targetV : targetVertices) {
+                    if (faceVerticesSet.find(targetV) == faceVerticesSet.end()) {
+                        contains_all_targets = false;
                         break;
                     }
                 }
-                if (allPointsOnFace) {
+                if (contains_all_targets) {
                     candidates.push_back(candidateFace);
                 }
-            } catch (const Standard_Failure&) {
-                continue;
             }
         }
-        // Step 2: Handle the results
+        
+        // --- ШАГ 2: ГИБКИЙ ГЕОМЕТРИЧЕСКИЙ ОТКАТ (для LineTool и PushPull) ---
+        // Если топологический поиск не дал точного совпадения, используем старый метод, основанный на геометрии.
         if (candidates.empty()) {
-            return TopoDS_Face(); // No suitable face found
+            TopExp_Explorer faceExplorer(shape, TopAbs_FACE);
+            for (; faceExplorer.More(); faceExplorer.Next()) {
+                TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
+                try {
+                    BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_False);
+                    if(surfaceAdaptor.GetType() != GeomAbs_Plane) continue;
+                    bool allPointsOnFace = true;
+                    for(const auto& v : faceVertices) {
+                        BRepClass_FaceClassifier classifier;
+                        classifier.Perform(candidateFace, gp_Pnt(v.x, v.y, v.z), 1e-4); 
+                        TopAbs_State state = classifier.State();
+                        if(state != TopAbs_ON && state != TopAbs_IN) {
+                            allPointsOnFace = false;
+                            break;
+                        }
+                    }
+                    if (allPointsOnFace) {
+                        candidates.push_back(candidateFace);
+                    }
+                } catch (const Standard_Failure&) {
+                    continue;
+                }
+            }
+        }
+
+        // 3. Логика выбора лучшего кандидата (остается без изменений)
+        if (candidates.empty()) {
+            return TopoDS_Face();
         }
         if (candidates.size() == 1) {
-            return candidates[0]; // Only one candidate, return it
+            return candidates[0];
         }
-        // Step 3: Multi-pass filtering to find the best match
-        // Pass 1: Filter by normal alignment. Keep only the faces that are most parallel to the guide normal.
+        
         std::vector<TopoDS_Face> alignedCandidates;
         double maxDotAbs = -1.0;
         gp_Dir targetDir(guideNormal.x, guideNormal.y, guideNormal.z);
@@ -877,10 +913,10 @@ namespace Urbaxio::Engine {
         if (alignedCandidates.size() == 1) {
             return alignedCandidates[0];
         }
-        if (alignedCandidates.empty()) { // Should not happen if initial candidates were found, but as a fallback
+        if (alignedCandidates.empty()) {
             alignedCandidates = candidates;
         }
-        // Pass 2: Tie-break using distance to center of mass.
+        
         glm::vec3 targetCenter(0.0f);
         for(const auto& v : faceVertices) targetCenter += v;
         targetCenter /= (float)faceVertices.size();
@@ -995,7 +1031,7 @@ namespace Urbaxio::Engine {
 
         const TopoDS_Shape* originalShape = obj->get_shape();
         
-        TopoDS_Face faceToExtrude = FindOriginalFace(*originalShape, faceVertices, direction);
+        TopoDS_Face faceToExtrude = FindOriginalFace(obj, *originalShape, faceVertices, direction);
         if (faceToExtrude.IsNull()) {
             std::cerr << "ExtrudeFace Error: Could not find corresponding B-Rep face." << std::endl;
             return false;
@@ -1222,7 +1258,7 @@ namespace Urbaxio::Engine {
         for (auto* obj : get_all_objects()) {
             if (!obj || !obj->has_shape()) continue;
             // Guide normal doesn't matter much here, we're just checking for containment.
-            TopoDS_Face foundFace = FindOriginalFace(*obj->get_shape(), faceVertices, glm::vec3(0,0,1));
+            TopoDS_Face foundFace = FindOriginalFace(obj, *obj->get_shape(), faceVertices, glm::vec3(0,0,1));
             if (!foundFace.IsNull()) {
                 return obj;
             }
@@ -1243,13 +1279,13 @@ namespace Urbaxio::Engine {
             try {
                 const TopoDS_Shape& originalShape = *obj->get_shape();
                 
-                // --- 1. Идентификация ---
-                if (initialPositions.size() < 3) {
-                     std::cerr << "Rebuild Error: Not enough points to define a face normal." << std::endl;
-                     return;
-                }
-                glm::vec3 guideNormal = glm::normalize(glm::cross(initialPositions[1] - initialPositions[0], initialPositions[2] - initialPositions[0]));
-                TopoDS_Face F_move = FindOriginalFace(originalShape, initialPositions, guideNormal);
+                            // --- 1. Идентификация (ОБНОВЛЕННЫЙ ВЫЗОВ) ---
+            if (initialPositions.size() < 3) {
+                 std::cerr << "Rebuild Error: Not enough points to define a face normal." << std::endl;
+                 return;
+            }
+            glm::vec3 guideNormal = glm::normalize(glm::cross(initialPositions[1] - initialPositions[0], initialPositions[2] - initialPositions[0]));
+            TopoDS_Face F_move = FindOriginalFace(obj, originalShape, initialPositions, guideNormal); // Передаем obj
                 if (F_move.IsNull()) {
                     std::cerr << "Rebuild Error: Could not find the B-Rep face to move." << std::endl;
                     return;
