@@ -81,7 +81,15 @@
 #include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
-
+#include <TopoDS_Shell.hxx>
+#include <TopoDS_Compound.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopAbs.hxx>
+#include <BRep_Builder.hxx>
+#include <BRepLib.hxx> // <-- ADD THIS LINE
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepLProp_SLProps.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 
 namespace { // Anonymous namespace for utility functions
     bool PointOnLineSegment(const glm::vec3& p, const glm::vec3& a, const glm::vec3& b) {
@@ -1405,17 +1413,113 @@ namespace Urbaxio::Engine {
 
                 // 4) Apply the replacement to the entire body - adjacent faces will stretch automatically
                 TopoDS_Shape movedShape = re->Apply(originalShape);
+                
+                // --- START OF NEW HARDENING PIPELINE ---
+                
+                // 0) Aggressive but safe tolerances (can be tightened if geometry is clean)
+                const Standard_Real prec     = 1.0e-6;
+                const Standard_Real sewTol   = 1.0e-4;   // if gaps remain, try 5e-4
+                const Standard_Real maxTol   = 1.0e-3;
+                
+                // 1) Rebuild 3D curves and align 3D/2D parameterization for the whole body
+                try {
+                    BRepLib::BuildCurves3d(movedShape);       // restore missing 3D curves
+                    BRepLib::SameParameter(movedShape, prec, Standard_True); // align 2D/3D
+                } catch (const Standard_Failure& e) {
+                    std::cerr << "SameParameter/BuildCurves3d: " << e.GetMessageString() << std::endl;
+                }
 
-                // 5) Healing (update p-curves, tolerances, etc.)
-                ShapeFix_Shape sfix(movedShape);
-                sfix.Perform();
-                TopoDS_Shape fixed = sfix.Shape();
+                // 2) Healing with ReShape CONTEXT - fixes p-curves on neighbors
+                try {
+                    ShapeFix_Shape sfix(movedShape);
+                    sfix.SetPrecision(prec);
+                    sfix.SetMaxTolerance(maxTol);
+                    sfix.Perform();
+                    movedShape = sfix.Shape();
+                } catch (const Standard_Failure& e) {
+                    std::cerr << "ShapeFix_Shape: " << e.GetMessageString() << std::endl;
+                }
 
-                // (No ThruSections, Sewing, or MakeSolid needed)
-                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(fixed)));
-                UpdateObjectBoundary(obj);
-                obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*obj->get_shape()));
-                obj->vao = 0;
+                AnalyzeShape(movedShape, "After ReShape + Heal (pre-sew)");
+
+                // 3) Sewing - stitch all open edges into a single shell
+                TopoDS_Shape sewnShape = movedShape;
+                try {
+                    BRepBuilderAPI_Sewing sew(sewTol, Standard_True, Standard_True, Standard_True, Standard_True);
+                    sew.SetNonManifoldMode(Standard_False);
+                    sew.Add(movedShape);
+                    sew.Perform();
+                    TopoDS_Shape sewed = sew.SewedShape();
+                    if (!sewed.IsNull()) {
+                        sewnShape = sewed;
+                    }
+                } catch (const Standard_Failure& e) {
+                    std::cerr << "Sewing: " << e.GetMessageString() << std::endl;
+                }
+
+                AnalyzeShape(sewnShape, "After Sewing");
+
+                // 4) If shells are produced after Sewing, build a solid
+                TopoDS_Shape solidShape = sewnShape;
+                try {
+                    int shellCount = 0;
+                    for (TopExp_Explorer ex(sewnShape, TopAbs_SHELL); ex.More(); ex.Next()) shellCount++;
+
+                    if (shellCount >= 1) {
+                        // Attempt to make solid(s)
+                        TopoDS_Compound comp;
+                        BRep_Builder bb;
+                        bb.MakeCompound(comp);
+
+                        bool madeAny = false;
+                        for (TopExp_Explorer ex(sewnShape, TopAbs_SHELL); ex.More(); ex.Next()) {
+                            const TopoDS_Shell& sh = TopoDS::Shell(ex.Current());
+                            BRepBuilderAPI_MakeSolid ms(sh);
+                            if (ms.IsDone()) {
+                                TopoDS_Solid sd = ms.Solid();
+                                bb.Add(comp, sd);
+                                madeAny = true;
+                            }
+                        }
+                        if (madeAny) solidShape = comp; // might be a set of solids
+                    }
+                } catch (const Standard_Failure& e) {
+                    std::cerr << "MakeSolid: " << e.GetMessageString() << std::endl;
+                }
+
+                AnalyzeShape(solidShape, "After MakeSolid");
+                
+                // 5) Final heal + unify - clean up internal duplicate faces/planes
+                try {
+                    ShapeFix_Shape finalFix(solidShape);
+                    finalFix.SetPrecision(prec);
+                    finalFix.SetMaxTolerance(maxTol);
+                    finalFix.Perform();
+                    TopoDS_Shape healed = finalFix.Shape();
+
+                    ShapeUpgrade_UnifySameDomain unif;
+                    unif.Initialize(healed);
+                    unif.SetLinearTolerance(1.0e-4);
+                    unif.SetAngularTolerance(1.0e-4);
+                    unif.AllowInternalEdges(Standard_True);
+                    unif.Build();
+
+                    TopoDS_Shape finalShape = unif.Shape();
+
+                    // Assign to object
+                    obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
+                    UpdateObjectBoundary(obj);
+
+                    // (prevent deflection from going wild due to large bbox)
+                    auto mesh = Urbaxio::CadKernel::TriangulateShape(*obj->get_shape(), /*optional clamp=*/0.05);
+                    obj->set_mesh_buffers(std::move(mesh));
+                    obj->vao = 0;
+
+                } catch (const Standard_Failure& e) {
+                    std::cerr << "Final Heal/Unify: " << e.GetMessageString() << std::endl;
+                }
+                
+                // --- END OF NEW HARDENING PIPELINE ---
 
             } catch (const Standard_Failure& e) {
                 std::cerr << "OCCT Exception during MoveFace: " << e.GetMessageString() << std::endl;
