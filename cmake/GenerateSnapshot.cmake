@@ -52,6 +52,14 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 # git commit -m \"A descriptive commit message\"
 # git push origin main
 
+# 6. Git reset (rollback to last commit)
+#    git reset --hard HEAD
+# -(view commit history with reflog)
+#    git reflog
+# -Git reset to specific commit (from reflog)
+#    git reset --hard HEAD@{n}
+#    (where n is the number from reflog, e.g., HEAD@{1}, HEAD@{2})
+
 --- END USER COMMANDS ---")
 
 # Assemble the full header

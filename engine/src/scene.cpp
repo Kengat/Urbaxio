@@ -12,6 +12,7 @@
 #include <set>
 #include <cmath>
 #include <algorithm> // for std::reverse, std::remove
+#include <deque> // For GrowCoplanarRegion helper
 
 #include <glm/gtx/norm.hpp>
 #include <glm/common.hpp> // For epsilonEqual
@@ -67,6 +68,8 @@
 #include <gp_Pnt2d.hxx>
 #include <gp_Dir2d.hxx>
 #include <TopTools_ListOfShape.hxx>
+#include <TopTools_ListIteratorOfListOfShape.hxx> // For GrowCoplanarRegion helper
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx> 
 #include <ShapeFix_Wire.hxx>
 #include <ShapeExtend_Status.hxx>
@@ -104,6 +107,89 @@ namespace { // Anonymous namespace for utility functions
         }
 
         return true;
+    }
+
+    // --- NEW: Helpers for coplanar region detection and boundary extraction ---
+    static bool IsPlanar(const TopoDS_Face& f, gp_Pln& out) {
+        BRepAdaptor_Surface sa(f, Standard_True);
+        if (sa.GetType() != GeomAbs_Plane) return false;
+        out = sa.Plane();
+        return true;
+    }
+
+    // "equality" of planes with tolerances
+    static bool SamePlane(const gp_Pln& a, const gp_Pln& b,
+                          double angTol = 1.0e-6, double linTol = 1.0e-6)
+    {
+        if (!a.Axis().Direction().IsParallel(b.Axis().Direction(), angTol)) return false;
+        // take a point from plane b and measure the distance to plane a
+        return std::abs(a.Distance(b.Location())) <= linTol;
+    }
+
+    // gather a connected coplanar region around a seed
+    static void GrowCoplanarRegion(const TopoDS_Shape& body, const TopoDS_Face& seed,
+                                   TopTools_ListOfShape& regionFaces, gp_Pln& regionPlane)
+    {
+        if (!IsPlanar(seed, regionPlane)) return;
+
+        TopTools_IndexedDataMapOfShapeListOfShape edge2faces;
+        TopExp::MapShapesAndAncestors(body, TopAbs_EDGE, TopAbs_FACE, edge2faces);
+
+        std::unordered_set<TopoDS_Shape, TopTools_ShapeMapHasher> visited;
+        std::deque<TopoDS_Face> q;
+        q.push_back(seed); visited.insert(seed);
+
+        while (!q.empty())
+        {
+            TopoDS_Face f = q.front(); q.pop_front();
+            regionFaces.Append(f);
+
+            // neighbors by edges
+            for (TopExp_Explorer ex(f, TopAbs_EDGE); ex.More(); ex.Next())
+            {
+                const TopoDS_Shape& e = ex.Current();
+                const TopTools_ListOfShape& parents = edge2faces.FindFromKey(e);
+                for (TopTools_ListIteratorOfListOfShape it(parents); it.More(); it.Next())
+                {
+                    TopoDS_Face n = TopoDS::Face(it.Value());
+                    if (n.IsSame(f) || visited.count(n)) continue;
+
+                    gp_Pln np; if (!IsPlanar(n, np)) continue;
+                    if (!SamePlane(regionPlane, np))  continue;
+
+                    visited.insert(n);
+                    q.push_back(n);
+                }
+            }
+        }
+    }
+
+    // outer wire of the region (edges that have only one owner within the region)
+    static TopoDS_Wire OuterWireOfRegion(const TopTools_ListOfShape& regionFaces)
+    {
+        std::unordered_map<TopoDS_Shape,int,TopTools_ShapeMapHasher> counter;
+
+        for (TopTools_ListIteratorOfListOfShape it(regionFaces); it.More(); it.Next())
+        {
+            TopoDS_Face f = TopoDS::Face(it.Value());
+            for (TopExp_Explorer ex(f, TopAbs_EDGE); ex.More(); ex.Next())
+            {
+                const TopoDS_Shape& e = ex.Current();
+                ++counter[e];
+            }
+        }
+
+        BRepBuilderAPI_MakeWire mw;
+        for (const auto& kv : counter)
+        {
+            if (kv.second == 1) mw.Add(TopoDS::Edge(kv.first)); // boundary
+        }
+
+        TopoDS_Wire raw = mw.Wire();
+        Handle(ShapeFix_Wire) fix = new ShapeFix_Wire();
+        fix->Load(raw);
+        fix->Perform();
+        return fix->Wire();
     }
 }
 
@@ -992,7 +1078,7 @@ namespace Urbaxio::Engine {
             BRepCheck_Analyzer analyzer(shape);
             std::cout << "Shape Valid: " << (analyzer.IsValid() ? "YES" : "NO") << std::endl;
         } catch (const Standard_Failure& e) {
-            std::cout << "Validity Check: ERROR - " << e.GetMessageString() << std::endl;
+            std::cout << "Validity Check: ERROR - " << e.GetMessageString() << ";;;" << std::endl;
         }
         
         std::cout << "=== END ANALYSIS ===" << std::endl << std::endl;
@@ -1267,9 +1353,9 @@ namespace Urbaxio::Engine {
     }
 
     void Scene::RebuildObjectByMovingVertices(
-        uint64_t objectId, 
+        uint64_t objectId,
         Engine::SubObjectType type,
-        const std::vector<glm::vec3>& initialPositions, 
+        const std::vector<glm::vec3>& initialPositions,
         const glm::vec3& translation
     ) {
         SceneObject* obj = get_object_by_id(objectId);
@@ -1278,112 +1364,61 @@ namespace Urbaxio::Engine {
         if (type == SubObjectType::FACE) {
             try {
                 const TopoDS_Shape& originalShape = *obj->get_shape();
-                
-                            // --- 1. Идентификация (ОБНОВЛЕННЫЙ ВЫЗОВ) ---
-            if (initialPositions.size() < 3) {
-                 std::cerr << "Rebuild Error: Not enough points to define a face normal." << std::endl;
-                 return;
-            }
-            glm::vec3 guideNormal = glm::normalize(glm::cross(initialPositions[1] - initialPositions[0], initialPositions[2] - initialPositions[0]));
-            TopoDS_Face F_move = FindOriginalFace(obj, originalShape, initialPositions, guideNormal); // Передаем obj
-                if (F_move.IsNull()) {
-                    std::cerr << "Rebuild Error: Could not find the B-Rep face to move." << std::endl;
-                    return;
-                }
 
-                TopTools_IndexedDataMapOfShapeListOfShape shapeAncestors;
-                TopExp::MapShapesAndAncestors(originalShape, TopAbs_EDGE, TopAbs_FACE, shapeAncestors);
+                // 1) Find the face to move (same as before)
+                if (initialPositions.size() < 3) { std::cerr << "Rebuild Error: Not enough points to define a face normal.\n"; return; }
+                glm::vec3 guideNormal = glm::normalize(glm::cross(initialPositions[1] - initialPositions[0],
+                                                                  initialPositions[2] - initialPositions[0]));
+                TopoDS_Face F_move = FindOriginalFace(obj, originalShape, initialPositions, guideNormal);
+                if (F_move.IsNull()) { std::cerr << "Rebuild Error: Face not found\n"; return; }
 
-                TopTools_ListOfShape facesToRemove;
-                facesToRemove.Append(F_move);
+                // 2) Transformation (arbitrary translation - NOT along normal, a simple Move)
+                gp_Trsf tr;
+                tr.SetTranslation(gp_Vec(translation.x, translation.y, translation.z));
 
-                TopExp_Explorer edgeExp(F_move, TopAbs_EDGE);
-                for (; edgeExp.More(); edgeExp.Next()) {
-                    const TopTools_ListOfShape& parentFaces = shapeAncestors.FindFromKey(edgeExp.Current());
-                    for (const auto& parentFaceShape : parentFaces) {
-                        if (!parentFaceShape.IsSame(F_move)) {
-                            // Check if not already in the list to avoid duplicates
-                            bool found = false;
-                            for(const auto& f : facesToRemove) { if(f.IsSame(parentFaceShape)) { found = true; break; } }
-                            if (!found) facesToRemove.Append(parentFaceShape);
-                        }
+                // 3) Prepare the replacement map: vertices, edges, and the face itself
+                Handle(BRepTools_ReShape) re = new BRepTools_ReShape();
+
+                // Replace the face
+                TopoDS_Shape F_new = BRepBuilderAPI_Transform(F_move, tr, Standard_True).Shape();
+                re->Replace(F_move, F_new);
+
+                // Replace all edges and vertices of the face (once each)
+                TopTools_IndexedMapOfShape doneE, doneV;
+                for (TopExp_Explorer ex(F_move, TopAbs_EDGE); ex.More(); ex.Next()) {
+                    const TopoDS_Edge& e = TopoDS::Edge(ex.Current());
+                    if (!doneE.Contains(e)) {
+                        doneE.Add(e);
+                        TopoDS_Shape e_new = BRepBuilderAPI_Transform(e, tr, Standard_True).Shape();
+                        re->Replace(e, e_new);
+                    }
+                    TopoDS_Vertex v1, v2; TopExp::Vertices(e, v1, v2);
+                    if (!v1.IsNull() && !doneV.Contains(v1)) {
+                        doneV.Add(v1);
+                        re->Replace(v1, BRepBuilderAPI_Transform(v1, tr, Standard_True).Shape());
+                    }
+                    if (!v2.IsNull() && !doneV.Contains(v2)) {
+                        doneV.Add(v2);
+                        re->Replace(v2, BRepBuilderAPI_Transform(v2, tr, Standard_True).Shape());
                     }
                 }
 
-                // --- 2. Деконструкция (создание дыры) с использованием BRepTools_ReShape ---
-                Handle(BRepTools_ReShape) remover = new BRepTools_ReShape();
-                for (const auto& faceToRemove : facesToRemove) {
-                    remover->Remove(faceToRemove);
-                }
-                TopoDS_Shape shapeWithHole = remover->Apply(originalShape);
+                // 4) Apply the replacement to the entire body - adjacent faces will stretch automatically
+                TopoDS_Shape movedShape = re->Apply(originalShape);
 
-                // --- 3. Трансформация ---
-                gp_Trsf transform;
-                transform.SetTranslation(gp_Vec(translation.x, translation.y, translation.z));
-                TopoDS_Shape transformedFaceShape = BRepBuilderAPI_Transform(F_move, transform);
-                TopoDS_Face F_new = TopoDS::Face(transformedFaceShape);
+                // 5) Healing (update p-curves, tolerances, etc.)
+                ShapeFix_Shape sfix(movedShape);
+                sfix.Perform();
+                TopoDS_Shape fixed = sfix.Shape();
 
-                // --- 4. Реконструкция (Лофтинг) ---
-                // Извлекаем контуры из дыры и новой грани
-                TopExp_Explorer holeWireExp(shapeWithHole, TopAbs_WIRE);
-                TopExp_Explorer newFaceWireExp(F_new, TopAbs_WIRE);
-
-                if (!holeWireExp.More() || !newFaceWireExp.More()) {
-                    std::cerr << "Rebuild Error: Could not find wires for lofting." << std::endl;
-                    return;
-                }
-
-                // Используем BRepOffsetAPI_ThruSections для создания боковых стенок
-                BRepOffsetAPI_ThruSections thruSections(Standard_False); // false = not a solid
-                thruSections.AddWire(TopoDS::Wire(holeWireExp.Current()));
-                thruSections.AddWire(TopoDS::Wire(newFaceWireExp.Current()));
-                thruSections.Build();
-                if (!thruSections.IsDone()) {
-                    std::cerr << "Rebuild Error: BRepOffsetAPI_ThruSections failed." << std::endl;
-                    return;
-                }
-                TopoDS_Shape sideShell = thruSections.Shape();
-
-                // --- 5. Интеграция (Сшивка) ---
-                Handle(BRepBuilderAPI_Sewing) sewer = new BRepBuilderAPI_Sewing(1e-4);
-                sewer->Add(shapeWithHole);
-                sewer->Add(sideShell);
-                sewer->Add(F_new);
-                sewer->Perform();
-                TopoDS_Shape sewnShape = sewer->SewedShape();
-
-                if (sewnShape.IsNull()) {
-                    std::cerr << "Rebuild Error: Sewing operation resulted in a null shape." << std::endl;
-                    return;
-                }
-
-                // --- 6. Финализация ---
-                BRepBuilderAPI_MakeSolid solidMaker;
-                TopExp_Explorer shellExp(sewnShape, TopAbs_SHELL);
-                for(; shellExp.More(); shellExp.Next()) {
-                    solidMaker.Add(TopoDS::Shell(shellExp.Current()));
-                }
-
-                TopoDS_Shape finalShape;
-                if (solidMaker.IsDone()) {
-                    finalShape = solidMaker.Solid();
-                } else {
-                    std::cerr << "Rebuild Warning: Could not form a solid. Using the sewn shell instead." << std::endl;
-                    finalShape = sewnShape;
-                }
-                
-                // --- 7. Обновление объекта в сцене ---
-                Handle(ShapeFix_Shape) shapeFixer = new ShapeFix_Shape(finalShape);
-                shapeFixer->Perform();
-                TopoDS_Shape fixedShape = shapeFixer->Shape();
-                
-                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(fixedShape)));
+                // (No ThruSections, Sewing, or MakeSolid needed)
+                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(fixed)));
                 UpdateObjectBoundary(obj);
                 obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*obj->get_shape()));
                 obj->vao = 0;
 
             } catch (const Standard_Failure& e) {
-                std::cerr << "OCCT Exception during rebuild: " << e.GetMessageString() << std::endl;
+                std::cerr << "OCCT Exception during MoveFace: " << e.GetMessageString() << std::endl;
             }
             return;
         }
