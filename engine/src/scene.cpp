@@ -38,6 +38,11 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepLProp_SLProps.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <ShapeFix_Shape.hxx>
+#include <ShapeFix_Solid.hxx>
+#include <ShapeFix_Shell.hxx>
+#include <ShapeFix_Wireframe.hxx>
+#include <BRepCheck_Analyzer.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -1440,6 +1445,18 @@ namespace Urbaxio::Engine {
                     std::cerr << "ShapeFix_Shape: " << e.GetMessageString() << std::endl;
                 }
 
+                // 2.a) Wireframe pass: drop tiny edges and close small gaps before sewing
+                try {
+                    ShapeFix_Wireframe wf(movedShape);
+                    wf.SetPrecision(prec);
+                    wf.SetMaxTolerance(maxTol);
+                    wf.FixSmallEdges();
+                    wf.FixWireGaps();
+                    movedShape = wf.Shape();
+                } catch (const Standard_Failure& e) {
+                    std::cerr << "ShapeFix_Wireframe: " << e.GetMessageString() << std::endl;
+                }
+
                 AnalyzeShape(movedShape, "After ReShape + Heal (pre-sew)");
 
                 // 3) Sewing - stitch all open edges into a single shell
@@ -1458,6 +1475,44 @@ namespace Urbaxio::Engine {
                 }
 
                 AnalyzeShape(sewnShape, "After Sewing");
+
+                // 3.a) Fix shell orientations and minor defects
+                try {
+                    bool changed = false;
+                    TopoDS_Compound fixedShells; BRep_Builder bbfixed; bbfixed.MakeCompound(fixedShells);
+                    for (TopExp_Explorer ex(sewnShape, TopAbs_SHELL); ex.More(); ex.Next()) {
+                        TopoDS_Shell sh = TopoDS::Shell(ex.Current());
+                        ShapeFix_Shell sfs;
+                        sfs.Init(sh);
+                        sfs.Perform();
+                        TopoDS_Shape shFixed = sfs.Shell();
+                        if (!shFixed.IsNull()) { bbfixed.Add(fixedShells, shFixed); changed = true; }
+                    }
+                    if (changed) {
+                        sewnShape = fixedShells;
+                        AnalyzeShape(sewnShape, "After ShapeFix_Shell");
+                    }
+                } catch (const Standard_Failure& e) {
+                    std::cerr << "ShapeFix_Shell: " << e.GetMessageString() << std::endl;
+                }
+
+                // 3.b) If still invalid as shells, try a stronger sewing pass
+                try {
+                    BRepCheck_Analyzer anShell(sewnShape, Standard_True);
+                    if (!anShell.IsValid()) {
+                        BRepBuilderAPI_Sewing sew2(std::max(sewTol*5.0, 5e-4), Standard_True, Standard_True, Standard_True, Standard_True);
+                        sew2.SetNonManifoldMode(Standard_False);
+                        sew2.Add(sewnShape);
+                        sew2.Perform();
+                        TopoDS_Shape sewed2 = sew2.SewedShape();
+                        if (!sewed2.IsNull()) {
+                            sewnShape = sewed2;
+                            AnalyzeShape(sewnShape, "After Sewing (2nd pass)");
+                        }
+                    }
+                } catch (const Standard_Failure& e) {
+                    std::cerr << "Sewing(2nd): " << e.GetMessageString() << std::endl;
+                }
 
                 // 4) If shells are produced after Sewing, build a solid
                 TopoDS_Shape solidShape = sewnShape;
@@ -1488,6 +1543,32 @@ namespace Urbaxio::Engine {
                 }
 
                 AnalyzeShape(solidShape, "After MakeSolid");
+
+                // 4.a) Validate/repair solids if needed
+                try {
+                    BRepCheck_Analyzer anSolid(solidShape, Standard_True);
+                    if (!anSolid.IsValid()) {
+                        TopoDS_Compound compFixed; BRep_Builder bb;
+                        bb.MakeCompound(compFixed);
+                        bool any = false;
+                        for (TopExp_Explorer ex(solidShape, TopAbs_SOLID); ex.More(); ex.Next()) {
+                            TopoDS_Solid sd = TopoDS::Solid(ex.Current());
+                            ShapeFix_Solid sfs;
+                            sfs.SetPrecision(prec);
+                            sfs.SetMaxTolerance(maxTol);
+                            sfs.Init(sd);
+                            sfs.Perform();
+                            TopoDS_Shape fixed = sfs.Shape();
+                            if (!fixed.IsNull()) { bb.Add(compFixed, fixed); any = true; }
+                        }
+                        if (any) {
+                            solidShape = compFixed;
+                            AnalyzeShape(solidShape, "After ShapeFix_Solid");
+                        }
+                    }
+                } catch (const Standard_Failure& e) {
+                    std::cerr << "ShapeFix_Solid: " << e.GetMessageString() << std::endl;
+                }
                 
                 // 5) Final heal + unify - clean up internal duplicate faces/planes
                 try {

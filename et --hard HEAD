@@ -1,0 +1,85 @@
+[33m8aee1ec[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m HEAD@{0}: commit: feat: Implement robust shape hardening pipeline for MoveTool
+[33m5e5a8d0[m HEAD@{1}: reset: moving to HEAD
+[33m5e5a8d0[m HEAD@{2}: commit: refactor(engine): Implement true topological face move
+[33m71dae08[m HEAD@{3}: reset: moving to HEAD
+[33m71dae08[m HEAD@{4}: reset: moving to HEAD
+[33m71dae08[m HEAD@{5}: reset: moving to HEAD
+[33m71dae08[m HEAD@{6}: reset: moving to 71dae08
+[33m1bb9fb0[m HEAD@{7}: reset: moving to HEAD@{1}
+[33m1bb9fb0[m HEAD@{8}: reset: moving to HEAD
+[33m1bb9fb0[m HEAD@{9}: reset: moving to HEAD~1
+[33m71dae08[m HEAD@{10}: commit: Fix FindOriginalFace compatibility for MoveTool, LineTool and PushPull
+[33m1bb9fb0[m HEAD@{11}: commit: Implement face movement with deformation algorithm using BRepTools_ReShape and BRepOffsetAPI_ThruSections
+[33m76266c6[m HEAD@{12}: commit: Improved snapping during Move Tool preview v2
+[33m241ff63[m HEAD@{13}: commit: Improved snapping during Move Tool preview
+[33m3694c10[m HEAD@{14}: commit: Colors have been corrected during the Move Tool preview
+[33mc8b39a3[m HEAD@{15}: commit: Implemented move preview
+[33mb163deb[m HEAD@{16}: commit: Add shift-hold axis locking and millimeter distance input to MoveTool
+[33ma5078c8[m HEAD@{17}: commit: Feature: Implement Move Tool with B-Rep transformation and GPU preview, addressing all build errors.
+[33mf201267[m HEAD@{18}: commit: Fix: Refine selection tool with Shift-modified marquee/click behavior, improved window selection, and updated highlight color.
+[33m2fa9f0e[m HEAD@{19}: commit: Feat: Implement marquee selection with visual feedback, 'crossing' and 'window' modes, and Shift-additive functionality
+[33mf5b7fdf[m HEAD@{20}: commit: refactor: improve LineTool snapping logic
+[33m9127169[m HEAD@{21}: commit: Feat: Major camera and navigation overhaul
+[33mb6e14e6[m HEAD@{22}: commit: Feat: Standardize tool units to millimeters and improve naming
+[33mf41f747[m HEAD@{23}: commit: Feat: Implement camera-relative 'headlamp' lighting
+[33mbe96479[m HEAD@{24}: commit: Refactor: Implement robust multi-pass filter for FindOriginalFace
+[33mfb14695[m HEAD@{25}: commit: Fix: Correct lighting on transformed and boolean-operated shapes
+[33m64ee7e0[m HEAD@{26}: commit: Feat: Stabilize and enhance precision of geometric kernel
+[33m998fcef[m HEAD@{27}: commit: Feat(Snapping): Implement robust occlusion-aware snapping and intuitive axis inference
+[33mf707cdb[m HEAD@{28}: commit: Feat(Tools): Implement robust hybrid axis locking for LineTool
+[33m21d9efc[m HEAD@{29}: reset: moving to HEAD
+[33m21d9efc[m HEAD@{30}: commit: Fix edge snapping to use proper 3D ray-segment distance calculation
+[33mc3b2ee7[m HEAD@{31}: commit: Fix grid rendering order: draw grid after opaque geometry with depth mask off for correct transparency
+[33m0dabd6a[m HEAD@{32}: commit: Refactor axis markers: replace spheres with customizable capsule templates, add UI sliders
+[33md37ac9a[m HEAD@{33}: commit: Add dashed outline rendering for Push/Pull preview using custom shader
+[33me6672a2[m HEAD@{34}: commit: Push/Pull preview: show only boundary side walls for cleaner extrusion visualization
+[33m13e3ccf[m HEAD@{35}: commit: fix(undo): Improve state capture and make commands ID-independent
+[33m026852e[m HEAD@{36}: commit: feat(engine)!: Implement robust parametric face splitting and push/pull
+[33m81a31a3[m HEAD@{37}: commit: feat(undo): Implement Command pattern for Undo/Redo system
+[33ma37451c[m HEAD@{38}: commit: feat(engine)!: Implement robust parametric face splitting and push/pull
+[33m3859fb9[m HEAD@{39}: commit: feat(engine)!: Implement robust parametric face splitting
+[33m2eea4e5[m HEAD@{40}: reset: moving to HEAD
+[33m2eea4e5[m HEAD@{41}: commit: Fix(Engine): Final fix for face splitting using fully atomic parametric edges
+[33m58655b1[m HEAD@{42}: commit: refactor(Build): Upgrade to OpenCASCADE 7.9.1
+[33mcae577a[m HEAD@{43}: reset: moving to HEAD
+[33mcae577a[m HEAD@{44}: commit: Refactor split and push/pull logic
+[33m24087a1[m HEAD@{45}: commit: feat(engine): Implement robust object rebuilding for face splitting
+[33m2cc9ad5[m HEAD@{46}: reset: moving to HEAD
+[33m2cc9ad5[m HEAD@{47}: commit: fix(engine): Correct API for BRepAlgoAPI_Splitter and ShapeAnalysis
+[33mb7c848c[m HEAD@{48}: commit: fix(engine): Correct Splitter constructor usage and simplify face creation logic
+[33m93a7cad[m HEAD@{49}: commit: fix(engine): Use correct BRepAlgoAPI_Splitter API for OCCT 7.8
+[33me50b5c6[m HEAD@{50}: commit: Refactor tools architecture: move tools from separate library into shell module to eliminate circular dependencies and disable snapping for SelectTool
+[33m06768c1[m HEAD@{51}: reset: moving to HEAD
+[33m06768c1[m HEAD@{52}: commit: Refactor: Move tool logic to modular Tools library
+[33mec80299[m HEAD@{53}: commit: fix(markers): Allow center sphere to scale to zero and correct Z-axis capsule orientation
+[33m113c4dc[m HEAD@{54}: commit: fix(geometry): Correct capsule generation and marker interaction
+[33mc8aa8b7[m HEAD@{55}: commit: feat(ui): Add customizable fade colors for axes
+[33m24eee0f[m HEAD@{56}: commit: feat(visuals): Implement dynamic scaling for axis gradients and adjust defaults
+[33m4ca56c3[m HEAD@{57}: commit: feat(visuals): Refine center sphere and exclusions
+[33mec5be0b[m HEAD@{58}: commit: fix(renderer): Correct grid orientation and flashlight effect
+[33m212032b[m HEAD@{59}: commit: Feat: Unify coplanar faces after Push/Pull, with Ctrl override
+[33mb955842[m HEAD@{60}: commit: Feat: faces now connect automatically
+[33m77ddedf[m HEAD@{61}: commit: Feat: Implement line-geometry synchronization and auto-intersection
+[33md11d29b[m HEAD@{62}: commit: Fix: Corrected line intersection and coplanarity logic
+[33m091bfba[m HEAD@{63}: commit: Feat: Implement line-line intersection splitting
+[33m513be6b[m HEAD@{64}: commit: Feat: Implement line splitting when drawing from an edge/midpoint
+[33mccb24ab[m HEAD@{65}: commit: Fix: Stabilize and refactor Push/Pull functionality
+[33md8f823d[m HEAD@{66}: commit: feat: Add Push/Pull diagnostics and shape healing - stable checkpoint
+[33m4f35910[m HEAD@{67}: reset: moving to HEAD
+[33m4f35910[m HEAD@{68}: commit: Add Windows resource system for logo integration
+[33mb00e7c3[m HEAD@{69}: commit: feat(push-pull): Implement smart face selection with scoring system
+[33me7c91f4[m HEAD@{70}: commit: refactor(push-pull): Attempt to fix solid extrusion logic
+[33m8d6069e[m HEAD@{71}: commit: fix(push-pull): Enable keyboard input for numerical distance entry
+[33m05a1b7d[m HEAD@{72}: commit: fix(push-pull): Tune screen-space sensitivity for 1:1 feel
+[33m5145f70[m HEAD@{73}: commit: feat: Add real-time preview for Push/Pull operation
+[33me548a0e[m HEAD@{74}: commit: feat: Implement functional Push/Pull for 2D and 3D shapes
+[33m1be4c99[m HEAD@{75}: commit: feat: Implement first step of Push/Pull to capture face
+[33me8d9213[m HEAD@{76}: commit: feat: Hover push/pull
+[33md00b0ab[m HEAD@{77}: commit: feat: Implement face selection with single/double click
+[33m58c66eb[m HEAD@{78}: commit: feat: Add CMakePresets and .gitignore for clean builds
+[33mf8a709b[m HEAD@{79}: reset: moving to HEAD
+[33mf8a709b[m HEAD@{80}: reset: moving to HEAD
+[33mf8a709b[m HEAD@{81}: reset: moving to HEAD
+[33mf8a709b[m HEAD@{82}: commit: Docs: Update AI instructions and user commands for Git workflow
+[33m71b7a55[m HEAD@{83}: Branch: renamed refs/heads/master to refs/heads/main
+[33m71b7a55[m HEAD@{85}: commit (initial): Initial commit of restored Urbaxio project
