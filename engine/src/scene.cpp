@@ -1,3 +1,4 @@
+// engine/src/scene.cpp
 #define GLM_ENABLE_EXPERIMENTAL
 #include "engine/scene.h"
 #include "engine/scene_object.h"
@@ -86,10 +87,15 @@
 #include <TopExp_Explorer.hxx>
 #include <TopAbs.hxx>
 #include <BRep_Builder.hxx>
-#include <BRepLib.hxx> // <-- ADD THIS LINE
+#include <BRepLib.hxx> // ADD THIS LINE for BuildCurves3d and SameParameter
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepLProp_SLProps.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+
+// --- NEW: Additional includes for detailed validity check ---
+#include <BRepCheck_ListIteratorOfListOfStatus.hxx>
+#include <map>
+#include <BRepCheck_Status.hxx> // <-- THE CRUCIAL INCLUDE THAT WAS MISSING
 
 namespace { // Anonymous namespace for utility functions
     bool PointOnLineSegment(const glm::vec3& p, const glm::vec3& a, const glm::vec3& b) {
@@ -199,6 +205,55 @@ namespace { // Anonymous namespace for utility functions
         fix->Perform();
         return fix->Wire();
     }
+
+    // --- START OF MODIFIED HELPER FUNCTION ---
+    // Corrected for OCCT's plain enum `BRepCheck_Status` with the exact member list
+    static std::string BRepCheckStatusToString(const BRepCheck_Status theStatus)
+    {
+        switch (theStatus)
+        {
+            case BRepCheck_NoError: return "NoError";
+            case BRepCheck_InvalidPointOnCurve: return "InvalidPointOnCurve";
+            case BRepCheck_InvalidPointOnCurveOnSurface: return "InvalidPointOnCurveOnSurface";
+            case BRepCheck_InvalidPointOnSurface: return "InvalidPointOnSurface";
+            case BRepCheck_No3DCurve: return "No3DCurve";
+            case BRepCheck_Multiple3DCurve: return "Multiple3DCurve";
+            case BRepCheck_Invalid3DCurve: return "Invalid3DCurve";
+            case BRepCheck_NoCurveOnSurface: return "NoCurveOnSurface";
+            case BRepCheck_InvalidCurveOnSurface: return "InvalidCurveOnSurface";
+            case BRepCheck_InvalidCurveOnClosedSurface: return "InvalidCurveOnClosedSurface";
+            case BRepCheck_InvalidSameRangeFlag: return "InvalidSameRangeFlag";
+            case BRepCheck_InvalidSameParameterFlag: return "InvalidSameParameterFlag";
+            case BRepCheck_InvalidDegeneratedFlag: return "InvalidDegeneratedFlag";
+            case BRepCheck_FreeEdge: return "FreeEdge";
+            case BRepCheck_InvalidMultiConnexity: return "InvalidMultiConnexity";
+            case BRepCheck_InvalidRange: return "InvalidRange";
+            case BRepCheck_EmptyWire: return "EmptyWire";
+            case BRepCheck_RedundantEdge: return "RedundantEdge";
+            case BRepCheck_SelfIntersectingWire: return "SelfIntersectingWire";
+            case BRepCheck_NoSurface: return "NoSurface";
+            case BRepCheck_InvalidWire: return "InvalidWire";
+            case BRepCheck_RedundantWire: return "RedundantWire";
+            case BRepCheck_IntersectingWires: return "IntersectingWires";
+            case BRepCheck_InvalidImbricationOfWires: return "InvalidImbricationOfWires";
+            case BRepCheck_EmptyShell: return "EmptyShell";
+            case BRepCheck_RedundantFace: return "RedundantFace";
+            case BRepCheck_InvalidImbricationOfShells: return "InvalidImbricationOfShells";
+            case BRepCheck_UnorientableShape: return "UnorientableShape";
+            case BRepCheck_NotClosed: return "NotClosed";
+            case BRepCheck_NotConnected: return "NotConnected";
+            case BRepCheck_SubshapeNotInShape: return "SubshapeNotInShape";
+            case BRepCheck_BadOrientation: return "BadOrientation";
+            case BRepCheck_BadOrientationOfSubshape: return "BadOrientationOfSubshape";
+            case BRepCheck_InvalidPolygonOnTriangulation: return "InvalidPolygonOnTriangulation";
+            case BRepCheck_InvalidToleranceValue: return "InvalidToleranceValue";
+            case BRepCheck_EnclosedRegion: return "EnclosedRegion";
+            case BRepCheck_CheckFail: return "CheckFail";
+            default: return "UnknownError";
+        }
+    }
+    // --- END OF MODIFIED HELPER FUNCTION ---
+
 }
 
 namespace Urbaxio::Engine {
@@ -1030,28 +1085,22 @@ namespace Urbaxio::Engine {
         }
         return bestMatch;
     }
-
+    
+    // --- START OF MODIFIED AnalyzeShape FUNCTION ---
     void Scene::AnalyzeShape(const TopoDS_Shape& shape, const std::string& label) {
         if (shape.IsNull()) {
-             std::cout << "=== SHAPE ANALYSIS: " << label << " (SHAPE IS NULL) ===" << std::endl;
-             return;
+            std::cout << "=== SHAPE ANALYSIS: " << label << " (SHAPE IS NULL) ===" << std::endl;
+            return;
         }
         std::cout << "=== SHAPE ANALYSIS: " << label << " ===" << std::endl;
-        
+
         // Basic info
         std::cout << "Shape Type: " << shape.ShapeType() << " (0=Compound, 1=CompSolid, 2=Solid, 3=Shell, 4=Face, 5=Wire, 6=Edge, 7=Vertex)" << std::endl;
-        
-        // Count components
-        TopExp_Explorer solidExp(shape, TopAbs_SOLID);
-        int solidCount = 0;
-        for (; solidExp.More(); solidExp.Next()) solidCount++;
-        
-        TopExp_Explorer faceExp(shape, TopAbs_FACE);
-        int faceCount = 0;
-        for (; faceExp.More(); faceExp.Next()) faceCount++;
-        
+
+        TopExp_Explorer solidExp(shape, TopAbs_SOLID); int solidCount = 0; for (; solidExp.More(); solidExp.Next()) solidCount++;
+        TopExp_Explorer faceExp(shape, TopAbs_FACE); int faceCount = 0; for (; faceExp.More(); faceExp.Next()) faceCount++;
         std::cout << "Contains: " << solidCount << " solids, " << faceCount << " faces" << std::endl;
-        
+
         // Bounding box
         try {
             Bnd_Box boundingBox;
@@ -1059,38 +1108,62 @@ namespace Urbaxio::Engine {
             if (!boundingBox.IsVoid()) {
                 Standard_Real xmin, ymin, zmin, xmax, ymax, zmax;
                 boundingBox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
-                std::cout << "Bounding Box: (" << xmin << ", " << ymin << ", " << zmin << ") to (" 
-                         << xmax << ", " << ymax << ", " << zmax << ")" << std::endl;
-                std::cout << "Dimensions: " << (xmax-xmin) << " x " << (ymax-ymin) << " x " << (zmax-zmin) << std::endl;
-            } else {
-                std::cout << "Bounding Box: VOID" << std::endl;
-            }
-        } catch (const Standard_Failure& e) {
-            std::cout << "Bounding Box: ERROR - " << e.GetMessageString() << std::endl;
-        }
-        
+                std::cout << "Bounding Box: (" << xmin << ", " << ymin << ", " << zmin << ") to ("
+                    << xmax << ", " << ymax << ", " << zmax << ")" << std::endl;
+                std::cout << "Dimensions: " << (xmax - xmin) << " x " << (ymax - ymin) << " x " << (zmax - zmin) << std::endl;
+            } else { std::cout << "Bounding Box: VOID" << std::endl; }
+        } catch (const Standard_Failure& e) { std::cout << "Bounding Box: ERROR - " << e.GetMessageString() << std::endl; }
+
         // Volume/properties
         try {
-            GProp_GProps props;
-            BRepGProp::VolumeProperties(shape, props);
-            Standard_Real volume = props.Mass();
-            gp_Pnt center = props.CentreOfMass();
-            std::cout << "Volume: " << volume << std::endl;
-            std::cout << "Center of Mass: (" << center.X() << ", " << center.Y() << ", " << center.Z() << ")" << std::endl;
-        } catch (const Standard_Failure& e) {
-            std::cout << "Volume Properties: ERROR - " << e.GetMessageString() << std::endl;
-        }
-        
-        // Validity
+            GProp_GProps props; BRepGProp::VolumeProperties(shape, props); Standard_Real volume = props.Mass(); gp_Pnt center = props.CentreOfMass();
+            std::cout << "Volume: " << volume << std::endl; std::cout << "Center of Mass: (" << center.X() << ", " << center.Y() << ", " << center.Z() << ")" << std::endl;
+        } catch (const Standard_Failure& e) { std::cout << "Volume Properties: ERROR - " << e.GetMessageString() << std::endl; }
+
+        // --- Detailed Validity Check ---
         try {
             BRepCheck_Analyzer analyzer(shape);
-            std::cout << "Shape Valid: " << (analyzer.IsValid() ? "YES" : "NO") << std::endl;
-        } catch (const Standard_Failure& e) {
-            std::cout << "Validity Check: ERROR - " << e.GetMessageString() << ";;;" << std::endl;
+            if (analyzer.IsValid()) {
+                std::cout << "Shape Valid: YES" << std::endl;
+            }
+            else {
+                std::cout << "Shape Valid: NO. Analyzing errors..." << std::endl;
+                std::map<std::string, int> errorCounts;
+                TopTools_IndexedMapOfShape processedSubShapes;
+
+                for (TopExp_Explorer ex(shape, TopAbs_SHAPE); ex.More(); ex.Next()) {
+                    const TopoDS_Shape& subShape = ex.Current();
+                    if (processedSubShapes.Contains(subShape)) continue;
+                    processedSubShapes.Add(subShape);
+
+                    if (!analyzer.IsValid(subShape)) {
+                        Handle(BRepCheck_Result) result = analyzer.Result(subShape);
+                        if (!result.IsNull()) {
+                            const BRepCheck_ListOfStatus& statuses = result->StatusOnShape(subShape);
+                            for (BRepCheck_ListIteratorOfListOfStatus it(statuses); it.More(); it.Next()) {
+                                errorCounts[BRepCheckStatusToString(it.Value())]++;
+                            }
+                        }
+                    }
+                }
+
+                if (errorCounts.empty()) {
+                    std::cout << "  No specific errors found on sub-shapes, but the global check failed." << std::endl;
+                } else {
+                    std::cout << "  Error Summary:" << std::endl;
+                    for (const auto& pair : errorCounts) {
+                        std::cout << "    - " << pair.first << ": " << pair.second << " instance(s)." << std::endl;
+                    }
+                }
+            }
         }
-        
+        catch (const Standard_Failure& e) {
+            std::cout << "Validity Check: CRITICAL OCCT EXCEPTION - " << e.GetMessageString() << std::endl;
+        }
+
         std::cout << "=== END ANALYSIS ===" << std::endl << std::endl;
     }
+    // --- END OF MODIFIED AnalyzeShape FUNCTION ---
 
     
     bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance, bool disableMerge) {
@@ -1414,19 +1487,19 @@ namespace Urbaxio::Engine {
                 // 4) Apply the replacement to the entire body - adjacent faces will stretch automatically
                 TopoDS_Shape movedShape = re->Apply(originalShape);
                 
-                // --- START OF NEW HARDENING PIPELINE ---
+                // --- START OF HARDENING PIPELINE (IMPROVED) ---
                 
                 // 0) Aggressive but safe tolerances (can be tightened if geometry is clean)
                 const Standard_Real prec     = 1.0e-6;
                 const Standard_Real sewTol   = 1.0e-4;   // if gaps remain, try 5e-4
                 const Standard_Real maxTol   = 1.0e-3;
                 
-                // 1) Rebuild 3D curves and align 3D/2D parameterization for the whole body
+                // 1) PREPARATION STEP: Rebuild 3D curves and align 3D/2D parameterization for the whole body
                 try {
                     BRepLib::BuildCurves3d(movedShape);       // restore missing 3D curves
                     BRepLib::SameParameter(movedShape, prec, Standard_True); // align 2D/3D
                 } catch (const Standard_Failure& e) {
-                    std::cerr << "SameParameter/BuildCurves3d: " << e.GetMessageString() << std::endl;
+                    std::cerr << "Rebuild Warning: BRepLib preparation failed: " << e.GetMessageString() << std::endl;
                 }
 
                 // 2) Healing with ReShape CONTEXT - fixes p-curves on neighbors
@@ -1437,7 +1510,7 @@ namespace Urbaxio::Engine {
                     sfix.Perform();
                     movedShape = sfix.Shape();
                 } catch (const Standard_Failure& e) {
-                    std::cerr << "ShapeFix_Shape: " << e.GetMessageString() << std::endl;
+                    std::cerr << "Rebuild Warning: ShapeFix_Shape failed: " << e.GetMessageString() << std::endl;
                 }
 
                 AnalyzeShape(movedShape, "After ReShape + Heal (pre-sew)");
@@ -1454,7 +1527,7 @@ namespace Urbaxio::Engine {
                         sewnShape = sewed;
                     }
                 } catch (const Standard_Failure& e) {
-                    std::cerr << "Sewing: " << e.GetMessageString() << std::endl;
+                    std::cerr << "Rebuild Warning: Sewing failed: " << e.GetMessageString() << std::endl;
                 }
 
                 AnalyzeShape(sewnShape, "After Sewing");
@@ -1484,7 +1557,7 @@ namespace Urbaxio::Engine {
                         if (madeAny) solidShape = comp; // might be a set of solids
                     }
                 } catch (const Standard_Failure& e) {
-                    std::cerr << "MakeSolid: " << e.GetMessageString() << std::endl;
+                    std::cerr << "Rebuild Warning: MakeSolid failed: " << e.GetMessageString() << std::endl;
                 }
 
                 AnalyzeShape(solidShape, "After MakeSolid");
@@ -1510,16 +1583,16 @@ namespace Urbaxio::Engine {
                     obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
                     UpdateObjectBoundary(obj);
 
-                    // (prevent deflection from going wild due to large bbox)
-                    auto mesh = Urbaxio::CadKernel::TriangulateShape(*obj->get_shape(), /*optional clamp=*/0.05);
+                    // Triangulate with a clamped deflection to avoid mesh explosion on large objects
+                    auto mesh = Urbaxio::CadKernel::TriangulateShape(*obj->get_shape(), -1.0, 0.35, 0.05); // Use default lin/ang, but clamp result
                     obj->set_mesh_buffers(std::move(mesh));
                     obj->vao = 0;
 
                 } catch (const Standard_Failure& e) {
-                    std::cerr << "Final Heal/Unify: " << e.GetMessageString() << std::endl;
+                    std::cerr << "Rebuild Error: Final Heal/Unify failed: " << e.GetMessageString() << std::endl;
                 }
                 
-                // --- END OF NEW HARDENING PIPELINE ---
+                // --- END OF HARDENING PIPELINE ---
 
             } catch (const Standard_Failure& e) {
                 std::cerr << "OCCT Exception during MoveFace: " << e.GetMessageString() << std::endl;

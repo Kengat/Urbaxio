@@ -111,7 +111,7 @@ namespace Urbaxio::Engine {
         // --- NEW: B-Rep Reconstruction ---
         void RebuildObjectByMovingVertices(
             uint64_t objectId, 
-            Engine::SubObjectType type, // <-- ДОБАВИТЬ ТИП
+            Engine::SubObjectType type, // <-- ADDED type
             const std::vector<glm::vec3>& initialPositions, 
             const glm::vec3& translation
         );

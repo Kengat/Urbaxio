@@ -31,12 +31,14 @@
 #include <cmath>
 #include <vector>
 #include <iostream>
+#include <algorithm> // For std::min/max
 
 namespace Urbaxio::CadKernel {
 
     MeshBuffers TriangulateShape(const TopoDS_Shape& shape,
         double linDefl,
-        double angDefl)
+        double angDefl,
+        double clampDefl) // Optional clamp for auto-calculated linDefl
     {
         MeshBuffers out;
         if (shape.IsNull()) { /*...*/ return out; }
@@ -56,9 +58,12 @@ namespace Urbaxio::CadKernel {
             else {
                 double diag = bb.SquareExtent() > 1.e-16 ? std::sqrt(bb.SquareExtent()) : 1.0;
                 linDefl = diag * 0.002;
-                if (linDefl < 1e-6) linDefl = 1e-6;
+                if (clampDefl > 0) {
+                    linDefl = std::min(linDefl, clampDefl);
+                }
+                linDefl = std::max(linDefl, 1e-6); // Set a minimum threshold to avoid issues with tiny objects
             }
-            Message::SendInfo() << "TriangulateShape: Using linear deflection: " << linDefl << ", angular deflection: " << angDefl;
+            Message::SendInfo() << "TriangulateShape: Using auto-calculated linear deflection: " << linDefl << ", angular deflection: " << angDefl;
         }
 
         // --- 2.                     ---
