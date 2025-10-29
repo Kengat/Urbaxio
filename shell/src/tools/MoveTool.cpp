@@ -93,8 +93,8 @@ namespace { // Anonymous namespace for helpers
         return resultFaceTriangles;
     }
 
-    glm::vec3 ClosestPointOnLine(const glm::vec3& lineOrigin, const glm::vec3& lineDir, const glm::vec3& point) {
-        float t = glm::dot(point - lineOrigin, lineDir);
+    glm::dvec3 ClosestPointOnLine(const glm::dvec3& lineOrigin, const glm::dvec3& lineDir, const glm::dvec3& point) {
+        double t = glm::dot(point - lineOrigin, lineDir);
         return lineOrigin + lineDir * t;
     }
     
@@ -137,10 +137,10 @@ void MoveTool::reset() {
     currentState = MoveToolState::IDLE;
     lockState = AxisLockState::FREE;
     currentTarget = {};
-    currentTranslation = glm::vec3(0.0f);
-    inferenceAxisDir = glm::vec3(0.0f);
+    currentTranslation = glm::dvec3(0.0);
+    inferenceAxisDir = glm::dvec3(0.0);
     ghostMesh.clear();
-    ghostWireframeIndices.clear(); // <-- ДОБАВИТЬ ЭТУ СТРОКУ
+    ghostWireframeIndices.clear();
     ghostMeshActive = false;
     lengthInputBuf[0] = '\0';
 }
@@ -328,11 +328,11 @@ void MoveTool::startMove(const SnapResult& snap) {
 
     const auto& originalMesh = obj->get_mesh_buffers();
 
-    // --- NEW "STICKY" LOGIC ---
+    // --- sticky logic ---
     std::map<glm::vec3, std::vector<unsigned int>, Vec3Comparator> positionToIndices;
     for (size_t i = 0; i < originalMesh.vertices.size() / 3; ++i) {
         glm::vec3 pos(originalMesh.vertices[i*3], originalMesh.vertices[i*3+1], originalMesh.vertices[i*3+2]);
-        positionToIndices[pos].push_back(i);
+        positionToIndices[pos].push_back(static_cast<unsigned int>(i));
     }
     std::set<glm::vec3, Vec3Comparator> movingPositions;
     for (unsigned int v_idx : currentTarget.movingVertices) {
@@ -345,27 +345,25 @@ void MoveTool::startMove(const SnapResult& snap) {
         expandedMovingVertices.insert(indices.begin(), indices.end());
     }
     currentTarget.movingVertices = expandedMovingVertices;
-    // --- END STICKY LOGIC ---
+    // --- end sticky logic ---
 
-    basePoint = snap.worldPoint;
+    basePoint = glm::dvec3(snap.worldPoint);
     currentState = MoveToolState::MOVING_PREVIEW;
     lockState = AxisLockState::FREE;
     lengthInputBuf[0] = '\0';
-    
+
     ghostMeshActive = true;
     ghostMesh = originalMesh; // Full copy for deformation
-    
-    // --- Build the ghost wireframe indices ---
+
+    // Build the ghost wireframe indices
     ghostWireframeIndices.clear();
-    // 1. Build a reverse map from position to vertex index
     std::map<glm::vec3, unsigned int, Vec3Comparator> positionToIndexMap;
     for (size_t i = 0; i < originalMesh.vertices.size() / 3; ++i) {
         glm::vec3 pos(originalMesh.vertices[i*3], originalMesh.vertices[i*3+1], originalMesh.vertices[i*3+2]);
         if (positionToIndexMap.find(pos) == positionToIndexMap.end()) {
-            positionToIndexMap[pos] = i;
+            positionToIndexMap[pos] = static_cast<unsigned int>(i);
         }
     }
-    // 2. Look up line endpoints and add indices to the list
     const auto& allLines = context.scene->GetAllLines();
     for (uint64_t lineId : obj->boundaryLineIDs) {
         auto it = allLines.find(lineId);
@@ -422,7 +420,7 @@ void MoveTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
                         float dotProd = glm::dot(currentTranslation, inferenceAxisDir);
                         direction = (dotProd >= 0.0f) ? inferenceAxisDir : -inferenceAxisDir;
                     } else {
-                        if (glm::length2(currentTranslation) < 1e-8f) { reset(); return; }
+                        if (glm::length2(currentTranslation) < 1e-12) { reset(); return; }
                         direction = glm::normalize(currentTranslation);
                     }
                     currentTranslation = direction * length_m;
@@ -446,21 +444,21 @@ void MoveTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
 void MoveTool::OnUpdate(const SnapResult& snap) {
     lastSnapResult = snap;
     if (currentState != MoveToolState::MOVING_PREVIEW) return;
-    
+
     const Uint8* keyboardState = SDL_GetKeyboardState(NULL);
     bool shiftDown = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
 
-    glm::vec3 endPoint;
+    glm::dvec3 endPoint;
+    glm::dvec3 snappedPoint(snap.worldPoint);
 
     if (shiftDown && lockState == AxisLockState::FREE) {
         if (snap.snapped && isValidGeometricSnap(snap.type)) {
-            glm::vec3 direction_to_lock = snap.worldPoint - basePoint;
-            if (glm::length2(direction_to_lock) > 1e-8f) {
+            glm::dvec3 direction_to_lock = snappedPoint - basePoint;
+            if (glm::length2(direction_to_lock) > 1e-8) {
                 inferenceAxisDir = glm::normalize(direction_to_lock);
                 lockState = AxisLockState::INFERENCE_LOCKED;
             }
-        }
-        else if (tryToLockAxis(snap.worldPoint)) {
+        } else if (tryToLockAxis(snappedPoint)) {
             lockState = AxisLockState::AXIS_LOCKED;
         }
     } else if (!shiftDown && lockState != AxisLockState::FREE) {
@@ -469,7 +467,7 @@ void MoveTool::OnUpdate(const SnapResult& snap) {
 
     switch (lockState) {
         case AxisLockState::FREE:
-            endPoint = snap.worldPoint;
+            endPoint = snappedPoint;
             break;
         case AxisLockState::AXIS_LOCKED:
             endPoint = calculateAxisLockedPoint(snap);
@@ -489,31 +487,27 @@ void MoveTool::updateGhostMeshDeformation() {
     Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
     if (!obj || !obj->has_mesh()) return;
 
-    // This is not the most efficient way, but it's correct and simple for now.
-    // It re-copies the original mesh and applies the total translation.
     ghostMesh = obj->get_mesh_buffers();
 
     for (unsigned int v_idx : currentTarget.movingVertices) {
         if (v_idx * 3 + 2 < ghostMesh.vertices.size()) {
-            ghostMesh.vertices[v_idx * 3 + 0] += currentTranslation.x;
-            ghostMesh.vertices[v_idx * 3 + 1] += currentTranslation.y;
-            ghostMesh.vertices[v_idx * 3 + 2] += currentTranslation.z;
+            ghostMesh.vertices[v_idx * 3 + 0] += static_cast<float>(currentTranslation.x);
+            ghostMesh.vertices[v_idx * 3 + 1] += static_cast<float>(currentTranslation.y);
+            ghostMesh.vertices[v_idx * 3 + 2] += static_cast<float>(currentTranslation.z);
         }
     }
-    // The wireframe indices do not need to be updated, as they point to the
-    // same vertices that are being deformed in the shared vertex buffer.
 }
 
 void MoveTool::finalizeMove() {
-    if (currentTarget.objectId != 0 && glm::length2(currentTranslation) > 1e-8f) {
+    if (currentTarget.objectId != 0 && glm::length2(currentTranslation) > 1e-12) {
         if (currentTarget.type == MoveTarget::TargetType::OBJECT) {
             auto command = std::make_unique<Engine::MoveCommand>(
                 context.scene,
                 currentTarget.objectId,
-                currentTranslation
+                glm::vec3(currentTranslation)
             );
             context.scene->getCommandManager()->ExecuteCommand(std::move(command));
-        } else { // Vertex, Edge, or Face move
+        } else {
             Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
             if(obj && obj->has_mesh()) {
                 const auto& mesh = obj->get_mesh_buffers();
@@ -528,8 +522,7 @@ void MoveTool::finalizeMove() {
                         });
                     }
                 }
-                
-                // --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+
                 Engine::SubObjectType subObjType;
                 switch (currentTarget.type) {
                     case MoveTarget::TargetType::VERTEX: subObjType = Engine::SubObjectType::VERTEX; break;
@@ -537,13 +530,13 @@ void MoveTool::finalizeMove() {
                     case MoveTarget::TargetType::FACE:   subObjType = Engine::SubObjectType::FACE;   break;
                     default: reset(); return;
                 }
-                
+
                 auto command = std::make_unique<Engine::MoveSubObjectCommand>(
                     context.scene,
                     currentTarget.objectId,
                     subObjType,
                     initialPositions,
-                    currentTranslation
+                    glm::vec3(currentTranslation)
                 );
                 context.scene->getCommandManager()->ExecuteCommand(std::move(command));
             }
@@ -578,29 +571,29 @@ void MoveTool::RenderUI() {
     }
 }
 
-bool MoveTool::tryToLockAxis(const glm::vec3& currentTarget) {
+bool MoveTool::tryToLockAxis(const glm::dvec3& currentTarget) {
     glm::mat4 view = context.camera->GetViewMatrix();
     glm::mat4 proj = context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h);
     glm::vec2 startScreenPos, endScreenPos;
 
-    bool sVis = SnappingSystem::WorldToScreen(basePoint, view, proj, *context.display_w, *context.display_h, startScreenPos);
-    bool eVis = SnappingSystem::WorldToScreen(currentTarget, view, proj, *context.display_w, *context.display_h, endScreenPos);
+    bool sVis = SnappingSystem::WorldToScreen(glm::vec3(basePoint), view, proj, *context.display_w, *context.display_h, startScreenPos);
+    bool eVis = SnappingSystem::WorldToScreen(glm::vec3(currentTarget), view, proj, *context.display_w, *context.display_h, endScreenPos);
 
     if (sVis && eVis && glm::length2(endScreenPos - startScreenPos) > SCREEN_VECTOR_MIN_LENGTH_SQ) {
         glm::vec2 rbDir = glm::normalize(endScreenPos - startScreenPos);
-        float maxDot = 0.8f; // Require a strong alignment
+        float maxDot = 0.8f;
         SnapType bestAxis = SnapType::NONE;
-        
-        const std::vector<std::pair<SnapType, glm::vec3>> axes = {
-            {SnapType::AXIS_X, AXIS_X_DIR}, {SnapType::AXIS_Y, AXIS_Y_DIR}, {SnapType::AXIS_Z, AXIS_Z_DIR}
+
+        const std::vector<std::pair<SnapType, glm::dvec3>> axes = {
+            {SnapType::AXIS_X, glm::dvec3(AXIS_X_DIR)}, {SnapType::AXIS_Y, glm::dvec3(AXIS_Y_DIR)}, {SnapType::AXIS_Z, glm::dvec3(AXIS_Z_DIR)}
         };
 
         glm::vec2 originScreen;
-        if(SnappingSystem::WorldToScreen(basePoint, view, proj, *context.display_w, *context.display_h, originScreen)) {
+        if(SnappingSystem::WorldToScreen(glm::vec3(basePoint), view, proj, *context.display_w, *context.display_h, originScreen)) {
             for(const auto& ax : axes) {
                 glm::vec2 axisEndPointScreen;
-                if(SnappingSystem::WorldToScreen(basePoint + ax.second, view, proj, *context.display_w, *context.display_h, axisEndPointScreen)) {
-                    if (glm::length2(axisEndPointScreen - originScreen) > 1e-6) {
+                if(SnappingSystem::WorldToScreen(glm::vec3(basePoint + ax.second), view, proj, *context.display_w, *context.display_h, axisEndPointScreen)) {
+                    if (glm::length2(axisEndPointScreen - originScreen) > 1e-6f) {
                         glm::vec2 axDir = glm::normalize(axisEndPointScreen - originScreen);
                         float d = abs(glm::dot(rbDir, axDir));
                         if (d > maxDot) { maxDot = d; bestAxis = ax.first; lockedAxisDir = ax.second;}
@@ -608,51 +601,55 @@ bool MoveTool::tryToLockAxis(const glm::vec3& currentTarget) {
                 }
             }
         }
-        
+
         return bestAxis != SnapType::NONE;
     }
     return false;
 }
 
-glm::vec3 MoveTool::calculateInferenceLockedPoint(const SnapResult& snap) {
-    const glm::vec3& axisOrigin = basePoint;
-    const glm::vec3& axisDir = inferenceAxisDir; 
+glm::dvec3 MoveTool::calculateInferenceLockedPoint(const SnapResult& snap) {
+    const glm::dvec3& axisOrigin = basePoint;
+    const glm::dvec3& axisDir = inferenceAxisDir;
     if (snap.snapped && isValidGeometricSnap(snap.type)) {
-        return ClosestPointOnLine(axisOrigin, axisDir, snap.worldPoint);
+        return ClosestPointOnLine(axisOrigin, axisDir, glm::dvec3(snap.worldPoint));
     }
     int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
-    glm::vec3 rayOrigin, rayDir;
-    Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin, rayDir);
-    glm::vec3 w0 = axisOrigin - rayOrigin;
-    float b = glm::dot(axisDir, rayDir);
-    float d = glm::dot(axisDir, w0);
-    float e = glm::dot(rayDir, w0);
-    float denom = 1.0f - b * b;
-    if (std::abs(denom) > 1e-6f) {
-        float s = (b * e - d) / denom;
+    glm::vec3 rayOrigin_f, rayDir_f;
+    Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin_f, rayDir_f);
+    glm::dvec3 rayOrigin(rayOrigin_f);
+    glm::dvec3 rayDir(rayDir_f);
+    glm::dvec3 w0 = axisOrigin - rayOrigin;
+    double b = glm::dot(axisDir, rayDir);
+    double d = glm::dot(axisDir, w0);
+    double e = glm::dot(rayDir, w0);
+    double denom = 1.0 - b * b;
+    if (std::abs(denom) > 1e-9) {
+        double s = (b * e - d) / denom;
         return axisOrigin + s * axisDir;
     }
     return basePoint + currentTranslation;
 }
 
-glm::vec3 MoveTool::calculateAxisLockedPoint(const SnapResult& snap) {
+glm::dvec3 MoveTool::calculateAxisLockedPoint(const SnapResult& snap) {
     if (snap.snapped && isValidGeometricSnap(snap.type)) {
-        return ClosestPointOnLine(basePoint, lockedAxisDir, snap.worldPoint);
+        return ClosestPointOnLine(basePoint, lockedAxisDir, glm::dvec3(snap.worldPoint));
     }
     int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
-    glm::vec3 rayOrigin, rayDir;
-    Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin, rayDir);
-    
-    glm::vec3 w0 = basePoint - rayOrigin;
-    float b = glm::dot(lockedAxisDir, rayDir);
-    float d = glm::dot(lockedAxisDir, w0);
-    float e = glm::dot(rayDir, w0);
-    float denom = 1.0f - b * b;
-    if (std::abs(denom) > 1e-6f) {
-        float s = (b * e - d) / denom;
+    glm::vec3 rayOrigin_f, rayDir_f;
+    Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin_f, rayDir_f);
+
+    glm::dvec3 rayOrigin(rayOrigin_f);
+    glm::dvec3 rayDir(rayDir_f);
+    glm::dvec3 w0 = basePoint - rayOrigin;
+    double b = glm::dot(lockedAxisDir, rayDir);
+    double d = glm::dot(lockedAxisDir, w0);
+    double e = glm::dot(rayDir, w0);
+    double denom = 1.0 - b * b;
+    if (std::abs(denom) > 1e-9) {
+        double s = (b * e - d) / denom;
         return basePoint + s * lockedAxisDir;
     }
-    
+
     return basePoint + currentTranslation;
 }
 

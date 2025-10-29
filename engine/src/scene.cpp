@@ -96,6 +96,7 @@
 #include <BRepCheck_ListIteratorOfListOfStatus.hxx>
 #include <map>
 #include <BRepCheck_Status.hxx> // <-- THE CRUCIAL INCLUDE THAT WAS MISSING
+#include <ShapeFix_Face.hxx>
 
 namespace { // Anonymous namespace for utility functions
     bool PointOnLineSegment(const glm::vec3& p, const glm::vec3& a, const glm::vec3& b) {
@@ -204,6 +205,43 @@ namespace { // Anonymous namespace for utility functions
         fix->Load(raw);
         fix->Perform();
         return fix->Wire();
+    }
+
+    static TopoDS_Shape RefineFacesWithShapeFix(const TopoDS_Shape& shape, double precision, double maxTol)
+    {
+        Handle(ShapeBuild_ReShape) reshaper = new ShapeBuild_ReShape();
+        bool modified = false;
+
+        for (TopExp_Explorer faceExp(shape, TopAbs_FACE); faceExp.More(); faceExp.Next())
+        {
+            TopoDS_Face face = TopoDS::Face(faceExp.Current());
+
+            ShapeFix_Face fixer;
+            fixer.Init(face);
+            fixer.SetPrecision(precision);
+            fixer.SetMinTolerance(precision * 0.25);
+            fixer.SetMaxTolerance(maxTol);
+
+            Handle(ShapeFix_Wire) wireFix = fixer.FixWireTool();
+            if (!wireFix.IsNull()) {
+                wireFix->SetPrecision(precision);
+                wireFix->SetMaxTolerance(maxTol);
+                wireFix->SetMinTolerance(precision * 0.25);
+            }
+
+            fixer.Perform();
+
+            TopoDS_Face fixedFace = fixer.Face();
+            if (!fixedFace.IsNull() && !fixedFace.IsSame(face)) {
+                reshaper->Replace(face, fixedFace);
+                modified = true;
+            }
+        }
+
+        if (modified) {
+            return reshaper->Apply(shape);
+        }
+        return shape;
     }
 
     // --- START OF MODIFIED HELPER FUNCTION ---
@@ -1443,160 +1481,169 @@ namespace Urbaxio::Engine {
         if (!obj || !obj->has_shape()) return;
 
         if (type == SubObjectType::FACE) {
-            try {
-                const TopoDS_Shape& originalShape = *obj->get_shape();
-
-                // 1) Find the face to move (same as before)
-                if (initialPositions.size() < 3) { std::cerr << "Rebuild Error: Not enough points to define a face normal.\n"; return; }
-                glm::vec3 guideNormal = glm::normalize(glm::cross(initialPositions[1] - initialPositions[0],
-                                                                  initialPositions[2] - initialPositions[0]));
-                TopoDS_Face F_move = FindOriginalFace(obj, originalShape, initialPositions, guideNormal);
-                if (F_move.IsNull()) { std::cerr << "Rebuild Error: Face not found\n"; return; }
-
-                // 2) Transformation (arbitrary translation - NOT along normal, a simple Move)
-                gp_Trsf tr;
-                tr.SetTranslation(gp_Vec(translation.x, translation.y, translation.z));
-
-                // 3) Prepare the replacement map: vertices, edges, and the face itself
-                Handle(BRepTools_ReShape) re = new BRepTools_ReShape();
-
-                // Replace the face
-                TopoDS_Shape F_new = BRepBuilderAPI_Transform(F_move, tr, Standard_True).Shape();
-                re->Replace(F_move, F_new);
-
-                // Replace all edges and vertices of the face (once each)
-                TopTools_IndexedMapOfShape doneE, doneV;
-                for (TopExp_Explorer ex(F_move, TopAbs_EDGE); ex.More(); ex.Next()) {
-                    const TopoDS_Edge& e = TopoDS::Edge(ex.Current());
-                    if (!doneE.Contains(e)) {
-                        doneE.Add(e);
-                        TopoDS_Shape e_new = BRepBuilderAPI_Transform(e, tr, Standard_True).Shape();
-                        re->Replace(e, e_new);
-                    }
-                    TopoDS_Vertex v1, v2; TopExp::Vertices(e, v1, v2);
-                    if (!v1.IsNull() && !doneV.Contains(v1)) {
-                        doneV.Add(v1);
-                        re->Replace(v1, BRepBuilderAPI_Transform(v1, tr, Standard_True).Shape());
-                    }
-                    if (!v2.IsNull() && !doneV.Contains(v2)) {
-                        doneV.Add(v2);
-                        re->Replace(v2, BRepBuilderAPI_Transform(v2, tr, Standard_True).Shape());
-                    }
-                }
-
-                // 4) Apply the replacement to the entire body - adjacent faces will stretch automatically
-                TopoDS_Shape movedShape = re->Apply(originalShape);
-                
-                // --- START OF HARDENING PIPELINE (IMPROVED) ---
-                
-                // 0) Aggressive but safe tolerances (can be tightened if geometry is clean)
-                const Standard_Real prec     = 1.0e-6;
-                const Standard_Real sewTol   = 1.0e-4;   // if gaps remain, try 5e-4
-                const Standard_Real maxTol   = 1.0e-3;
-                
-                // 1) PREPARATION STEP: Rebuild 3D curves and align 3D/2D parameterization for the whole body
-                try {
-                    BRepLib::BuildCurves3d(movedShape);       // restore missing 3D curves
-                    BRepLib::SameParameter(movedShape, prec, Standard_True); // align 2D/3D
-                } catch (const Standard_Failure& e) {
-                    std::cerr << "Rebuild Warning: BRepLib preparation failed: " << e.GetMessageString() << std::endl;
-                }
-
-                // 2) Healing with ReShape CONTEXT - fixes p-curves on neighbors
-                try {
-                    ShapeFix_Shape sfix(movedShape);
-                    sfix.SetPrecision(prec);
-                    sfix.SetMaxTolerance(maxTol);
-                    sfix.Perform();
-                    movedShape = sfix.Shape();
-                } catch (const Standard_Failure& e) {
-                    std::cerr << "Rebuild Warning: ShapeFix_Shape failed: " << e.GetMessageString() << std::endl;
-                }
-
-                AnalyzeShape(movedShape, "After ReShape + Heal (pre-sew)");
-
-                // 3) Sewing - stitch all open edges into a single shell
-                TopoDS_Shape sewnShape = movedShape;
-                try {
-                    BRepBuilderAPI_Sewing sew(sewTol, Standard_True, Standard_True, Standard_True, Standard_True);
-                    sew.SetNonManifoldMode(Standard_False);
-                    sew.Add(movedShape);
-                    sew.Perform();
-                    TopoDS_Shape sewed = sew.SewedShape();
-                    if (!sewed.IsNull()) {
-                        sewnShape = sewed;
-                    }
-                } catch (const Standard_Failure& e) {
-                    std::cerr << "Rebuild Warning: Sewing failed: " << e.GetMessageString() << std::endl;
-                }
-
-                AnalyzeShape(sewnShape, "After Sewing");
-
-                // 4) If shells are produced after Sewing, build a solid
-                TopoDS_Shape solidShape = sewnShape;
-                try {
-                    int shellCount = 0;
-                    for (TopExp_Explorer ex(sewnShape, TopAbs_SHELL); ex.More(); ex.Next()) shellCount++;
-
-                    if (shellCount >= 1) {
-                        // Attempt to make solid(s)
-                        TopoDS_Compound comp;
-                        BRep_Builder bb;
-                        bb.MakeCompound(comp);
-
-                        bool madeAny = false;
-                        for (TopExp_Explorer ex(sewnShape, TopAbs_SHELL); ex.More(); ex.Next()) {
-                            const TopoDS_Shell& sh = TopoDS::Shell(ex.Current());
-                            BRepBuilderAPI_MakeSolid ms(sh);
-                            if (ms.IsDone()) {
-                                TopoDS_Solid sd = ms.Solid();
-                                bb.Add(comp, sd);
-                                madeAny = true;
-                            }
-                        }
-                        if (madeAny) solidShape = comp; // might be a set of solids
-                    }
-                } catch (const Standard_Failure& e) {
-                    std::cerr << "Rebuild Warning: MakeSolid failed: " << e.GetMessageString() << std::endl;
-                }
-
-                AnalyzeShape(solidShape, "After MakeSolid");
-                
-                // 5) Final heal + unify - clean up internal duplicate faces/planes
-                try {
-                    ShapeFix_Shape finalFix(solidShape);
-                    finalFix.SetPrecision(prec);
-                    finalFix.SetMaxTolerance(maxTol);
-                    finalFix.Perform();
-                    TopoDS_Shape healed = finalFix.Shape();
-
-                    ShapeUpgrade_UnifySameDomain unif;
-                    unif.Initialize(healed);
-                    unif.SetLinearTolerance(1.0e-4);
-                    unif.SetAngularTolerance(1.0e-4);
-                    unif.AllowInternalEdges(Standard_True);
-                    unif.Build();
-
-                    TopoDS_Shape finalShape = unif.Shape();
-
-                    // Assign to object
-                    obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
-                    UpdateObjectBoundary(obj);
-
-                    // Triangulate with a clamped deflection to avoid mesh explosion on large objects
-                    auto mesh = Urbaxio::CadKernel::TriangulateShape(*obj->get_shape(), -1.0, 0.35, 0.05); // Use default lin/ang, but clamp result
-                    obj->set_mesh_buffers(std::move(mesh));
-                    obj->vao = 0;
-
-                } catch (const Standard_Failure& e) {
-                    std::cerr << "Rebuild Error: Final Heal/Unify failed: " << e.GetMessageString() << std::endl;
-                }
-                
-                // --- END OF HARDENING PIPELINE ---
-
-            } catch (const Standard_Failure& e) {
-                std::cerr << "OCCT Exception during MoveFace: " << e.GetMessageString() << std::endl;
+            if (glm::length2(translation) < 1.0e-10f) {
+                return;
             }
+
+            glm::vec3 v0 = initialPositions[0];
+            glm::vec3 v1 = initialPositions[1];
+            glm::vec3 v2 = initialPositions[2];
+            glm::vec3 faceNormal = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+            float projection = glm::dot(translation, faceNormal);
+
+            if (std::fabs(projection) > 1.0e-5f) {
+                glm::vec3 direction = projection >= 0.0f ? faceNormal : -faceNormal;
+                float distance = std::fabs(projection);
+            if (ExtrudeFace(objectId, initialPositions, direction, distance, false)) {
+                    return;
+                }
+                std::cerr << "MoveFace warning: ExtrudeFace fallback failed, trying direct reshape." << std::endl;
+            }
+
+            const TopoDS_Shape& originalShape = *obj->get_shape();
+            if (originalShape.IsNull()) {
+                std::cerr << "Rebuild Error: Object has no B-Rep shape." << std::endl;
+                return;
+            }
+
+            TopoDS_Face faceToMove = FindOriginalFace(obj, originalShape, initialPositions, translation);
+            if (faceToMove.IsNull()) {
+                std::cerr << "Rebuild Error: Could not locate face to move." << std::endl;
+                return;
+            }
+
+            gp_Trsf moveTransform;
+            moveTransform.SetTranslation(gp_Vec(translation.x, translation.y, translation.z));
+
+            Handle(ShapeBuild_ReShape) reshaper = new ShapeBuild_ReShape();
+
+            TopTools_IndexedMapOfShape vertexMap;
+            TopExp::MapShapes(faceToMove, TopAbs_VERTEX, vertexMap);
+            for (int i = 1; i <= vertexMap.Extent(); ++i) {
+                const TopoDS_Vertex& v = TopoDS::Vertex(vertexMap(i));
+                TopoDS_Shape transformedVertex = BRepBuilderAPI_Transform(v, moveTransform, Standard_True).Shape();
+                reshaper->Replace(v, transformedVertex);
+            }
+
+            TopTools_IndexedMapOfShape edgeMap;
+            TopExp::MapShapes(faceToMove, TopAbs_EDGE, edgeMap);
+            for (int i = 1; i <= edgeMap.Extent(); ++i) {
+                const TopoDS_Edge& e = TopoDS::Edge(edgeMap(i));
+                TopoDS_Shape transformedEdge = BRepBuilderAPI_Transform(e, moveTransform, Standard_True).Shape();
+                reshaper->Replace(e, transformedEdge);
+            }
+
+            TopoDS_Shape transformedFace = BRepBuilderAPI_Transform(faceToMove, moveTransform, Standard_True).Shape();
+            reshaper->Replace(faceToMove, transformedFace);
+
+            TopoDS_Shape movedShape = reshaper->Apply(originalShape);
+
+            Standard_Real diag = 1.0;
+            {
+                Bnd_Box movedBox;
+                BRepBndLib::Add(movedShape, movedBox);
+                if (!movedBox.IsVoid()) {
+                    Standard_Real sqExtent = movedBox.SquareExtent();
+                    if (sqExtent > gp::Resolution()) {
+                        diag = std::sqrt(sqExtent);
+                    }
+                }
+            }
+            Standard_Real scale = std::max(diag, 1.0);
+            const Standard_Real prec     = std::max(1.0e-6, scale * 5.0e-8);
+            const Standard_Real sewTol   = std::max(2.5e-4, scale * 2.5e-6);
+            const Standard_Real maxTol   = std::max(1.0e-3, scale * 1.0e-5);
+
+            try {
+                BRepLib::BuildCurves3d(movedShape);
+                BRepLib::SameParameter(movedShape, prec, Standard_True);
+            } catch (const Standard_Failure& e) {
+                std::cerr << "Rebuild Warning: BRepLib preparation failed: " << e.GetMessageString() << std::endl;
+            }
+
+            try {
+                ShapeFix_Shape sfix(movedShape);
+                sfix.SetPrecision(prec);
+                sfix.SetMaxTolerance(maxTol);
+                sfix.Perform();
+                movedShape = sfix.Shape();
+            } catch (const Standard_Failure& e) {
+                std::cerr << "Rebuild Warning: ShapeFix_Shape failed: " << e.GetMessageString() << std::endl;
+            }
+
+            TopoDS_Shape sewnShape = movedShape;
+            try {
+                BRepBuilderAPI_Sewing sew(sewTol, Standard_True, Standard_True, Standard_True, Standard_True);
+                sew.SetNonManifoldMode(Standard_False);
+                sew.Add(movedShape);
+                sew.Perform();
+                TopoDS_Shape sewed = sew.SewedShape();
+                if (!sewed.IsNull()) {
+                    sewnShape = sewed;
+                }
+            } catch (const Standard_Failure& e) {
+                std::cerr << "Rebuild Warning: Sewing failed: " << e.GetMessageString() << std::endl;
+            }
+
+            TopoDS_Shape solidShape = sewnShape;
+            try {
+                int shellCount = 0;
+                for (TopExp_Explorer ex(sewnShape, TopAbs_SHELL); ex.More(); ex.Next()) shellCount++;
+
+                if (shellCount >= 1) {
+                    TopoDS_Compound comp;
+                    BRep_Builder bb;
+                    bb.MakeCompound(comp);
+
+                    bool madeAny = false;
+                    for (TopExp_Explorer ex(sewnShape, TopAbs_SHELL); ex.More(); ex.Next()) {
+                        const TopoDS_Shell& sh = TopoDS::Shell(ex.Current());
+                        BRepBuilderAPI_MakeSolid ms(sh);
+                        if (ms.IsDone()) {
+                            TopoDS_Solid sd = ms.Solid();
+                            bb.Add(comp, sd);
+                            madeAny = true;
+                        }
+                    }
+                    if (madeAny) solidShape = comp;
+                }
+            } catch (const Standard_Failure& e) {
+                std::cerr << "Rebuild Warning: MakeSolid failed: " << e.GetMessageString() << std::endl;
+            }
+
+            TopoDS_Shape finalShape = solidShape;
+            try {
+                ShapeFix_Shape finalFix(finalShape);
+                finalFix.SetPrecision(prec);
+                finalFix.SetMaxTolerance(maxTol);
+                finalFix.Perform();
+                TopoDS_Shape healed = finalFix.Shape();
+
+                ShapeUpgrade_UnifySameDomain unif;
+                unif.Initialize(healed);
+                unif.SetLinearTolerance(1.0e-4);
+                unif.SetAngularTolerance(1.0e-4);
+                unif.AllowInternalEdges(Standard_True);
+                unif.Build();
+
+                finalShape = unif.Shape();
+            } catch (const Standard_Failure& e) {
+                std::cerr << "Rebuild Error: Final Heal/Unify failed: " << e.GetMessageString() << std::endl;
+                return;
+            }
+
+            BRepCheck_Analyzer analyzer(finalShape);
+            if (!analyzer.IsValid()) {
+                std::cerr << "Rebuild Error: Final shape invalid after face move." << std::endl;
+                return;
+            }
+
+            obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
+            UpdateObjectBoundary(obj);
+
+            auto mesh = Urbaxio::CadKernel::TriangulateShape(*obj->get_shape(), -1.0, 0.35, 0.05);
+            obj->set_mesh_buffers(std::move(mesh));
+            obj->vao = 0;
             return;
         }
 

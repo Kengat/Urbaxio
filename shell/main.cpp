@@ -10,6 +10,8 @@
 #include "camera.h"
 #include "input_handler.h"
 #include "renderer.h"
+#include "VRManager.h"
+#include "Framebuffer.h"
 
 #include <SDL2/SDL.h>
 #include <glad/glad.h>
@@ -93,7 +95,25 @@ bool UploadMeshToGPU(Urbaxio::Engine::SceneObject& object) { /* ... */ const Urb
 int main(int argc, char* argv[]) {
     std::cout << "Shell: Starting Urbaxio Application..." << std::endl;
     // --- Initialization ---
-    initialize_engine(); Urbaxio::Engine::Scene* scene_ptr = reinterpret_cast<Urbaxio::Engine::Scene*>(get_engine_scene()); if (!scene_ptr) return 1; if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1; const char* glsl_version = "#version 330 core"; SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE); SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8); SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN); SDL_Window* window = SDL_CreateWindow("Urbaxio", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags); if (!window) { SDL_Quit(); return 1; } SDL_GLContext gl_context = SDL_GL_CreateContext(window); if (!gl_context) { SDL_DestroyWindow(window); SDL_Quit(); return 1; } SDL_GL_MakeCurrent(window, gl_context); SDL_GL_SetSwapInterval(1); if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) { return 1; } std::cout << "Shell: OpenGL Initialized: V:" << glGetString(GL_VERSION) << std::endl; IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; ImGui::StyleColorsDark(); if (!ImGui_ImplSDL2_InitForOpenGL(window, gl_context)) return 1; if (!ImGui_ImplOpenGL3_Init(glsl_version)) return 1; std::cout << "Shell: All subsystems initialized." << std::endl;
+    initialize_engine(); Urbaxio::Engine::Scene* scene_ptr = reinterpret_cast<Urbaxio::Engine::Scene*>(get_engine_scene()); if (!scene_ptr) return 1; if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1; const char* glsl_version = "#version 330 core"; SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE); SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8); SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN); SDL_Window* window = SDL_CreateWindow("Urbaxio", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags); if (!window) { SDL_Quit(); return 1; } SDL_GLContext gl_context = SDL_GL_CreateContext(window); if (!gl_context) { SDL_DestroyWindow(window); SDL_Quit(); return 1; } SDL_GL_MakeCurrent(window, gl_context); SDL_GL_SetSwapInterval(1); if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) { return 1; } std::cout << "Shell: OpenGL Initialized: V:" << glGetString(GL_VERSION) << std::endl; IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; ImGui::StyleColorsDark(); if (!ImGui_ImplSDL2_InitForOpenGL(window, gl_context)) return 1; if (!ImGui_ImplOpenGL3_Init(glsl_version)) return 1;     std::cout << "Shell: All subsystems initialized." << std::endl;
+
+    // --- VR Initialization ---
+    bool vr_mode = true;
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--novr") == 0) {
+            vr_mode = false;
+            break;
+        }
+    }
+    std::unique_ptr<Urbaxio::VRManager> vrManager = nullptr;
+    if (vr_mode) {
+        vrManager = std::make_unique<Urbaxio::VRManager>();
+        if (!vrManager->Initialize(window)) {
+            std::cerr << "Failed to initialize VR. Falling back to 2D mode." << std::endl;
+            vr_mode = false;
+            vrManager.reset();
+        }
+    }
 
     Urbaxio::Renderer renderer; if (!renderer.Initialize()) { return 1; }
     Urbaxio::Camera camera; Urbaxio::InputHandler inputHandler;
@@ -182,7 +202,7 @@ int main(int argc, char* argv[]) {
             currentSnap.snapped = false;
         }
         
-        // --- Process Input ---
+        // --- Process Input (always, for ImGui and quitting) ---
         inputHandler.ProcessEvents(camera, should_quit, window, toolManager, scene_ptr);
 
         // --- Update Active Tool ---
@@ -200,31 +220,6 @@ int main(int argc, char* argv[]) {
             }
         }
         
-        // --- Update Preview State ---
-        uint64_t previewObjId = 0;
-        const Urbaxio::CadKernel::MeshBuffers* ghostMesh = nullptr;
-        const std::vector<unsigned int>* ghostWireframeIndices = nullptr;
-
-        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
-            auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
-            previewObjId = moveTool->GetMovingObjectId(); // Will be 0 if not moving
-            ghostMesh = moveTool->GetGhostMesh();
-            ghostWireframeIndices = moveTool->GetGhostWireframeIndices();
-        }
-
-        if (ghostMesh) {
-            renderer.UpdateGhostMesh(*ghostMesh, ghostWireframeIndices ? *ghostWireframeIndices : std::vector<unsigned int>());
-        } else {
-            renderer.ClearGhostMesh();
-        }
-        
-        renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), selectedLineIDs, previewObjId, scene_ptr);
-
-        // --- Get cursor world position for shaders ---
-        glm::vec3 cursorWorldPos = currentSnap.snapped
-            ? currentSnap.worldPoint
-            : inputHandler.GetCursorPointInWorld(camera, mouseX, mouseY, display_w, display_h, glm::vec3(0.0f));
-
         ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplSDL2_NewFrame(); ImGui::NewFrame();
 
         // --- Main Controls Window ---
@@ -324,32 +319,85 @@ int main(int argc, char* argv[]) {
         }
 
         ImGui::Render();
-        renderer.SetViewport(0, 0, display_w, display_h);
-        glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // --- Let the tool render its preview geometry ---
-        toolManager.RenderPreview(renderer, currentSnap);
-        
-        // --- Render the main frame ---
-        renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightColor, ambientStrength, 
-            showGrid, showAxes, axisLineWidth, negAxisLineWidth,
-            gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
-            cursorWorldPos, cursorRadius, effectIntensity, 
-            selectedObjId, selectedTriangleIndices, selectedLineIDs, selectionHighlightColor, 
-            hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor,
-            currentSnap, 
-            ImGui::GetDrawData(),
-            previewObjId
-        );
+        if (vr_mode && vrManager->IsSessionRunning()) {
+            // --- VR RENDER PATH ---
+            if (vrManager->BeginFrame()) {
+                const auto& vr_views = vrManager->GetViews();
+                for (uint32_t i = 0; i < vr_views.size(); ++i) {
+                    const auto& swapchain = vrManager->GetSwapchain(i);
+                    uint32_t imageIndex = vrManager->AcquireSwapchainImage(i);
+                    GLuint colorTexture = swapchain.images[imageIndex].image;
 
-        // --- Render selection box if needed ---
-        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) {
-            auto* selectTool = static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool());
-            if (selectTool->IsDragging()) {
-                glm::vec2 start, end;
-                selectTool->GetDragRect(start, end);
-                renderer.RenderSelectionBox(start, end, display_w, display_h);
+                    Urbaxio::Framebuffer fbo;
+                    if (fbo.Create(swapchain.width, swapchain.height, colorTexture)) {
+                        fbo.Bind();
+                        // --- Stage 1 Test: Render different colors to each eye ---
+                        if (i == 0) { glClearColor(1.0f, 0.0f, 0.0f, 1.0f); } // Left eye: Red
+                        else { glClearColor(0.0f, 0.0f, 1.0f, 1.0f); } // Right eye: Blue
+                        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                        // TODO: Render the actual scene here using vr_views[i] matrices
+                        fbo.Unbind();
+                    }
+                    vrManager->ReleaseSwapchainImage(i);
+                }
+                vrManager->EndFrame();
+            }
+
+            // Render desktop mirror view (can be one of the eyes or a separate camera)
+            renderer.SetViewport(0, 0, display_w, display_h);
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // Clear desktop window to black
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        } else {
+            // --- 2D RENDER PATH ---
+            uint64_t previewObjId = 0;
+            const Urbaxio::CadKernel::MeshBuffers* ghostMesh = nullptr;
+            const std::vector<unsigned int>* ghostWireframeIndices = nullptr;
+
+            if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
+                auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
+                previewObjId = moveTool->GetMovingObjectId();
+                ghostMesh = moveTool->GetGhostMesh();
+                ghostWireframeIndices = moveTool->GetGhostWireframeIndices();
+            }
+
+            if (ghostMesh) { renderer.UpdateGhostMesh(*ghostMesh, ghostWireframeIndices ? *ghostWireframeIndices : std::vector<unsigned int>()); } 
+            else { renderer.ClearGhostMesh(); }
+            
+            renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), selectedLineIDs, previewObjId, scene_ptr);
+
+            int mouseX, mouseY;
+            SDL_GetMouseState(&mouseX, &mouseY);
+            glm::vec3 cursorWorldPos = currentSnap.snapped
+                ? currentSnap.worldPoint
+                : inputHandler.GetCursorPointInWorld(camera, mouseX, mouseY, display_w, display_h, glm::vec3(0.0f));
+
+            renderer.SetViewport(0, 0, display_w, display_h);
+            glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            toolManager.RenderPreview(renderer, currentSnap);
+            
+            renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightColor, ambientStrength, 
+                showGrid, showAxes, axisLineWidth, negAxisLineWidth,
+                gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
+                cursorWorldPos, cursorRadius, effectIntensity, 
+                selectedObjId, selectedTriangleIndices, selectedLineIDs, selectionHighlightColor, 
+                hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor,
+                currentSnap, 
+                ImGui::GetDrawData(),
+                previewObjId
+            );
+
+            if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) {
+                auto* selectTool = static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool());
+                if (selectTool->IsDragging()) {
+                    glm::vec2 start, end;
+                    selectTool->GetDragRect(start, end);
+                    renderer.RenderSelectionBox(start, end, display_w, display_h);
+                }
             }
         }
             
@@ -357,5 +405,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "Shell: <<< Exiting main loop." << std::endl;
-    std::cout << "Shell: Cleaning up..." << std::endl; if (scene_ptr) { std::vector<Urbaxio::Engine::SceneObject*> objects_to_clean = scene_ptr->get_all_objects(); for (auto* obj : objects_to_clean) { if (obj && obj->vao != 0) glDeleteVertexArrays(1, &obj->vao); if (obj && obj->vbo_vertices != 0) glDeleteBuffers(1, &obj->vbo_vertices); if (obj && obj->vbo_normals != 0) glDeleteBuffers(1, &obj->vbo_normals); if (obj && obj->ebo != 0) glDeleteBuffers(1, &obj->ebo); } } ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui::DestroyContext(); SDL_GL_DeleteContext(gl_context); SDL_DestroyWindow(window); SDL_Quit(); std::cout << "Shell: Urbaxio Application finished gracefully." << std::endl; return 0;
+    std::cout << "Shell: Cleaning up..." << std::endl; 
+    if (vrManager) vrManager->Shutdown();
+    if (scene_ptr) { std::vector<Urbaxio::Engine::SceneObject*> objects_to_clean = scene_ptr->get_all_objects(); for (auto* obj : objects_to_clean) { if (obj && obj->vao != 0) glDeleteVertexArrays(1, &obj->vao); if (obj && obj->vbo_vertices != 0) glDeleteBuffers(1, &obj->vbo_vertices); if (obj && obj->vbo_normals != 0) glDeleteBuffers(1, &obj->vbo_normals); if (obj && obj->ebo != 0) glDeleteBuffers(1, &obj->ebo); } } ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui::DestroyContext(); SDL_GL_DeleteContext(gl_context); SDL_DestroyWindow(window); SDL_Quit(); std::cout << "Shell: Urbaxio Application finished gracefully." << std::endl; return 0;
 }

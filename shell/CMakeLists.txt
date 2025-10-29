@@ -16,6 +16,8 @@ add_executable(Urbaxio
     src/input_handler.cpp
     src/renderer.cpp
     src/snapping.cpp
+    src/VRManager.cpp
+    src/Framebuffer.cpp
     # Add tool source files
     src/tools/ToolManager.cpp
     src/tools/SelectTool.cpp
@@ -41,6 +43,8 @@ find_package(SDL2 CONFIG REQUIRED)
 find_package(glad CONFIG REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(imgui CONFIG REQUIRED)
+find_package(OpenXR CONFIG REQUIRED)
+# Note: OpenXR package provides the OpenXR::openxr_loader target
 
 # --- Link the application with libraries ---
 # The shell links against the engine, which provides OCCT and other core functionality
@@ -52,6 +56,7 @@ target_link_libraries(Urbaxio PRIVATE
     glad::glad
     OpenGL::GL
     imgui::imgui
+    OpenXR::openxr_loader
 )
 
 # --- Copy OpenCascade DLLs after build ---

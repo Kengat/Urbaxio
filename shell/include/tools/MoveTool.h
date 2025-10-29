@@ -61,13 +61,13 @@ private:
     MoveTarget currentTarget;
 
     // Movement state
-    glm::vec3 basePoint{0.0f};
-    glm::vec3 currentTranslation{0.0f};
+    glm::dvec3 basePoint{0.0};
+    glm::dvec3 currentTranslation{0.0};
     
     // Axis Locking State
     AxisLockState lockState = AxisLockState::FREE;
-    glm::vec3 lockedAxisDir{0.0f};
-    glm::vec3 inferenceAxisDir{0.0f};
+    glm::dvec3 lockedAxisDir{0.0};
+    glm::dvec3 inferenceAxisDir{0.0};
 
     // Ghost mesh for preview
     CadKernel::MeshBuffers ghostMesh;
@@ -81,9 +81,9 @@ private:
     void determineTargetFromSelection();
     void determineTargetFromPick(int mouseX, int mouseY);
     void updateGhostMeshDeformation();
-    bool tryToLockAxis(const glm::vec3& currentTarget);
-    glm::vec3 calculateAxisLockedPoint(const SnapResult& snap);
-    glm::vec3 calculateInferenceLockedPoint(const SnapResult& snap);
+    bool tryToLockAxis(const glm::dvec3& currentTarget);
+    glm::dvec3 calculateAxisLockedPoint(const SnapResult& snap);
+    glm::dvec3 calculateInferenceLockedPoint(const SnapResult& snap);
 };
 
 } // namespace Urbaxio::Tools
