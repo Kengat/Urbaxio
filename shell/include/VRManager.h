@@ -29,12 +29,14 @@ struct VRView {
     glm::mat4 viewMatrix;
 };
 
-// Holds an OpenXR swapchain and its associated OpenGL images
+// Holds an OpenXR swapchain and its associated OpenGL images + FBOs
 struct VRSwapchain {
     XrSwapchain swapchain = XR_NULL_HANDLE;
     int32_t width = 0;
     int32_t height = 0;
     std::vector<XrSwapchainImageOpenGLKHR> images;
+    std::vector<GLuint> fbos;          // One FBO per swapchain image
+    std::vector<GLuint> depthBuffers;  // One depth buffer per FBO
 };
 
 // Manages all OpenXR state and the VR frame loop
@@ -93,6 +95,7 @@ private:
     // Private initialization methods
     bool CreateInstance();
     bool GetSystem();
+    bool CheckGraphicsRequirements();
     bool CreateSession(SDL_Window* window);
     bool CreateSwapchains();
     bool CreateAppSpace();

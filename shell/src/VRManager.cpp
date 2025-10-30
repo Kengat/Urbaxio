@@ -72,20 +72,45 @@ VRManager::~VRManager() {
 bool VRManager::Initialize(SDL_Window* window) {
     if (!CreateInstance()) return false;
     if (!GetSystem()) return false;
+    if (!CheckGraphicsRequirements()) return false;
     if (!CreateSession(window)) return false;
     if (!CreateAppSpace()) return false;
     if (!CreateSwapchains()) return false;
 
     initialized = true;
     std::cout << "VRManager: Initialization successful." << std::endl;
+    
+    // Poll events to get initial state
+    std::cout << "VRManager: Polling for initial session state..." << std::endl;
+    for (int i = 0; i < 10; ++i) {
+        PollEvents();
+        if (sessionRunning) break;
+        SDL_Delay(10);
+    }
+    
+    if (sessionRunning) {
+        std::cout << "VRManager: Session is now running!" << std::endl;
+    } else {
+        std::cout << "VRManager: Session not yet running (state = " << sessionState << "), will continue polling in main loop" << std::endl;
+    }
+    
     return true;
 }
 
 void VRManager::Shutdown() {
     if (!initialized) return;
 
+    // Clean up OpenGL resources first
     for (auto& sc : swapchains) {
-        if (sc.swapchain != XR_NULL_HANDLE) xrDestroySwapchain(sc.swapchain);
+        if (!sc.fbos.empty()) {
+            glDeleteFramebuffers((GLsizei)sc.fbos.size(), sc.fbos.data());
+        }
+        if (!sc.depthBuffers.empty()) {
+            glDeleteRenderbuffers((GLsizei)sc.depthBuffers.size(), sc.depthBuffers.data());
+        }
+        if (sc.swapchain != XR_NULL_HANDLE) {
+            xrDestroySwapchain(sc.swapchain);
+        }
     }
     swapchains.clear();
 
@@ -108,7 +133,28 @@ bool VRManager::CreateInstance() {
     appInfo.applicationVersion = 1;
     strcpy_s(appInfo.engineName, "Urbaxio Engine");
     appInfo.engineVersion = 1;
-    appInfo.apiVersion = XR_CURRENT_API_VERSION;
+    appInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0); // Use explicit version instead of XR_CURRENT_API_VERSION
+
+    // List available extensions
+    uint32_t extensionCount = 0;
+    xrEnumerateInstanceExtensionProperties(nullptr, 0, &extensionCount, nullptr);
+    std::vector<XrExtensionProperties> availableExtensions(extensionCount, {XR_TYPE_EXTENSION_PROPERTIES});
+    xrEnumerateInstanceExtensionProperties(nullptr, extensionCount, &extensionCount, availableExtensions.data());
+    
+    std::cout << "VRManager: Available OpenXR extensions (" << extensionCount << "):" << std::endl;
+    bool openglSupported = false;
+    for (const auto& ext : availableExtensions) {
+        std::cout << "  - " << ext.extensionName << std::endl;
+        if (strcmp(ext.extensionName, XR_KHR_OPENGL_ENABLE_EXTENSION_NAME) == 0) {
+            openglSupported = true;
+        }
+    }
+    
+    if (!openglSupported) {
+        std::cerr << "VRManager: ERROR - OpenGL extension (XR_KHR_opengl_enable) is NOT supported by this runtime!" << std::endl;
+        std::cerr << "VRManager: This application requires OpenGL. Virtual Desktop may not support OpenGL." << std::endl;
+        return false;
+    }
 
     std::vector<const char*> extensions = { XR_KHR_OPENGL_ENABLE_EXTENSION_NAME };
 
@@ -140,6 +186,43 @@ bool VRManager::GetSystem() {
     return true;
 }
 
+bool VRManager::CheckGraphicsRequirements() {
+    // Get the function pointer for xrGetOpenGLGraphicsRequirementsKHR
+    PFN_xrGetOpenGLGraphicsRequirementsKHR pfnGetOpenGLGraphicsRequirementsKHR = nullptr;
+    XR_CHECK(xrGetInstanceProcAddr(instance, "xrGetOpenGLGraphicsRequirementsKHR",
+        (PFN_xrVoidFunction*)&pfnGetOpenGLGraphicsRequirementsKHR), 
+        "Failed to get xrGetOpenGLGraphicsRequirementsKHR function pointer");
+
+    XrGraphicsRequirementsOpenGLKHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR};
+    XR_CHECK(pfnGetOpenGLGraphicsRequirementsKHR(instance, systemId, &graphicsRequirements),
+        "Failed to get OpenGL graphics requirements");
+
+    std::cout << "VRManager: OpenGL requirements - Min version: " 
+              << XR_VERSION_MAJOR(graphicsRequirements.minApiVersionSupported) << "."
+              << XR_VERSION_MINOR(graphicsRequirements.minApiVersionSupported) 
+              << ", Max version: "
+              << XR_VERSION_MAJOR(graphicsRequirements.maxApiVersionSupported) << "."
+              << XR_VERSION_MINOR(graphicsRequirements.maxApiVersionSupported) << std::endl;
+
+    // Check current OpenGL version
+    GLint major, minor;
+    glGetIntegerv(GL_MAJOR_VERSION, &major);
+    glGetIntegerv(GL_MINOR_VERSION, &minor);
+    XrVersion currentGLVersion = XR_MAKE_VERSION(major, minor, 0);
+    
+    std::cout << "VRManager: Current OpenGL version: " << major << "." << minor << std::endl;
+    
+    if (currentGLVersion < graphicsRequirements.minApiVersionSupported) {
+        std::cerr << "VRManager: ERROR - Current OpenGL version " << major << "." << minor 
+                  << " is below minimum required " 
+                  << XR_VERSION_MAJOR(graphicsRequirements.minApiVersionSupported) << "."
+                  << XR_VERSION_MINOR(graphicsRequirements.minApiVersionSupported) << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
 bool VRManager::CreateSession(SDL_Window* window) {
     SDL_SysWMinfo wmInfo;
     SDL_VERSION(&wmInfo.version);
@@ -149,10 +232,15 @@ bool VRManager::CreateSession(SDL_Window* window) {
     }
 
 #if defined(XR_USE_PLATFORM_WIN32)
-    hdc = GetDC(wmInfo.info.win.window);
+    // Use wglGetCurrentDC() to get the DC associated with the current GL context
+    // This ensures HDC/HGLRC are from the same device (critical for hybrid GPU laptops)
+    hdc = wglGetCurrentDC();
     hglrc = wglGetCurrentContext();
+    
+    std::cout << "VRManager: HDC = " << (void*)hdc << ", HGLRC = " << (void*)hglrc << std::endl;
+    
     if (!hdc || !hglrc) {
-        std::cerr << "VR Error: Failed to get HDC or HGLRC from main window." << std::endl;
+        std::cerr << "VR Error: Failed to get HDC or HGLRC from current GL context." << std::endl;
         return false;
     }
 
@@ -160,15 +248,28 @@ bool VRManager::CreateSession(SDL_Window* window) {
     graphicsBinding.hDC = hdc;
     graphicsBinding.hGLRC = hglrc;
 
+    std::cout << "VRManager: Creating session with systemId = " << systemId << std::endl;
+
     XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
     sessionCreateInfo.next = &graphicsBinding;
     sessionCreateInfo.systemId = systemId;
 
-    XR_CHECK(xrCreateSession(instance, &sessionCreateInfo, &session), "Failed to create OpenXR session");
+    XrResult result = xrCreateSession(instance, &sessionCreateInfo, &session);
+    if (XR_FAILED(result)) {
+        char errorString[XR_MAX_RESULT_STRING_SIZE];
+        xrResultToString(instance, result, errorString);
+        std::cerr << "VRManager: xrCreateSession failed with error: " << errorString << std::endl;
+        std::cerr << "VRManager: This usually means:" << std::endl;
+        std::cerr << "  1. Virtual Desktop is not running in the headset" << std::endl;
+        std::cerr << "  2. Application was not launched from Virtual Desktop" << std::endl;
+        std::cerr << "  3. Virtual Desktop Streamer on PC is not running" << std::endl;
+        return false;
+    }
 #else
     #error "VRManager: Unsupported platform! Only Win32 is currently implemented."
     return false;
 #endif
+    std::cout << "VRManager: Session created successfully!" << std::endl;
     return true;
 }
 
@@ -212,6 +313,34 @@ bool VRManager::CreateSwapchains() {
         XR_CHECK(xrEnumerateSwapchainImages(swapchains[i].swapchain, 0, &imageCount, nullptr), "Failed to get swapchain image count");
         swapchains[i].images.resize(imageCount, {XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR});
         XR_CHECK(xrEnumerateSwapchainImages(swapchains[i].swapchain, imageCount, &imageCount, (XrSwapchainImageBaseHeader*)swapchains[i].images.data()), "Failed to enumerate swapchain images");
+        
+        // Create FBOs and depth buffers for all images in this swapchain
+        swapchains[i].fbos.resize(imageCount);
+        swapchains[i].depthBuffers.resize(imageCount);
+        glGenFramebuffers(imageCount, swapchains[i].fbos.data());
+        glGenRenderbuffers(imageCount, swapchains[i].depthBuffers.data());
+        
+        for (uint32_t imgIdx = 0; imgIdx < imageCount; ++imgIdx) {
+            // Setup depth buffer
+            glBindRenderbuffer(GL_RENDERBUFFER, swapchains[i].depthBuffers[imgIdx]);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, 
+                                swapchains[i].width, swapchains[i].height);
+            
+            // Setup FBO
+            glBindFramebuffer(GL_FRAMEBUFFER, swapchains[i].fbos[imgIdx]);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 
+                                 swapchains[i].images[imgIdx].image, 0);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 
+                                    swapchains[i].depthBuffers[imgIdx]);
+            
+            GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+            if (status != GL_FRAMEBUFFER_COMPLETE) {
+                std::cerr << "VR: FBO " << imgIdx << " for swapchain " << i << " is not complete! Status: " << status << std::endl;
+            }
+        }
+        
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
     }
 
     return true;
@@ -232,16 +361,20 @@ void VRManager::PollEvents() {
             case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
                 auto* stateChangedEvent = reinterpret_cast<XrEventDataSessionStateChanged*>(&eventData);
                 sessionState = stateChangedEvent->state;
-                std::cout << "VRManager: Session state changed to " << sessionState << std::endl;
                 switch (sessionState) {
                     case XR_SESSION_STATE_READY: {
                         XrSessionBeginInfo beginInfo{XR_TYPE_SESSION_BEGIN_INFO};
                         beginInfo.primaryViewConfigurationType = viewConfigType;
                         if (XR_SUCCEEDED(xrBeginSession(session, &beginInfo))) {
                              sessionRunning = true;
+                             std::cout << "VRManager: VR session started successfully." << std::endl;
                         }
                         break;
                     }
+                    case XR_SESSION_STATE_SYNCHRONIZED:
+                    case XR_SESSION_STATE_VISIBLE:
+                    case XR_SESSION_STATE_FOCUSED:
+                        break;
                     case XR_SESSION_STATE_STOPPING: {
                         sessionRunning = false;
                         xrEndSession(session);
@@ -249,15 +382,14 @@ void VRManager::PollEvents() {
                     }
                     case XR_SESSION_STATE_EXITING: {
                         sessionRunning = false;
-                        break; // Application should exit
+                        break;
                     }
                     default: break;
                 }
                 break;
             }
             case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
-                 std::cout << "VRManager: Instance loss pending. Exiting." << std::endl;
-                 sessionRunning = false; // Application should exit
+                 sessionRunning = false;
                  break;
             }
             default: break;
@@ -275,7 +407,12 @@ void VRManager::UpdateViews() {
     uint32_t viewCount = (uint32_t)viewConfigViews.size();
     views.resize(viewCount, {XR_TYPE_VIEW});
     XrViewState viewState{XR_TYPE_VIEW_STATE};
-    xrLocateViews(session, &viewLocateInfo, &viewState, viewCount, &viewCount, views.data());
+    XrResult result = xrLocateViews(session, &viewLocateInfo, &viewState, viewCount, &viewCount, views.data());
+    
+    if (XR_FAILED(result)) {
+        std::cerr << "VRManager: xrLocateViews failed: " << result << std::endl;
+        return;
+    }
 
     renderViews.resize(viewCount);
     for (uint32_t i = 0; i < viewCount; ++i) {
@@ -305,6 +442,7 @@ bool VRManager::BeginFrame() {
             projectionViews[i].subImage.swapchain = swapchains[i].swapchain;
             projectionViews[i].subImage.imageRect.offset = {0, 0};
             projectionViews[i].subImage.imageRect.extent = {swapchains[i].width, swapchains[i].height};
+            projectionViews[i].subImage.imageArrayIndex = 0;
         }
     }
     
@@ -329,7 +467,10 @@ void VRManager::EndFrame() {
         endInfo.layers = nullptr;
     }
     
-    xrEndFrame(session, &endInfo);
+    XrResult result = xrEndFrame(session, &endInfo);
+    if (XR_FAILED(result)) {
+        std::cerr << "VRManager: xrEndFrame failed: " << result << std::endl;
+    }
     frameInProgress = false;
 }
 

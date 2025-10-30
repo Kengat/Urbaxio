@@ -1,3 +1,9 @@
+// Force dGPU usage on hybrid laptops (NVIDIA/AMD)
+extern "C" {
+    __declspec(dllexport) unsigned long NvOptimusEnablement = 0x00000001;        // NVIDIA Optimus
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;          // AMD PowerXpress
+}
+
 // --- Includes ---
 #include <engine/engine.h>
 #include <engine/scene.h>
@@ -11,7 +17,6 @@
 #include "input_handler.h"
 #include "renderer.h"
 #include "VRManager.h"
-#include "Framebuffer.h"
 
 #include <SDL2/SDL.h>
 #include <glad/glad.h>
@@ -95,7 +100,7 @@ bool UploadMeshToGPU(Urbaxio::Engine::SceneObject& object) { /* ... */ const Urb
 int main(int argc, char* argv[]) {
     std::cout << "Shell: Starting Urbaxio Application..." << std::endl;
     // --- Initialization ---
-    initialize_engine(); Urbaxio::Engine::Scene* scene_ptr = reinterpret_cast<Urbaxio::Engine::Scene*>(get_engine_scene()); if (!scene_ptr) return 1; if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1; const char* glsl_version = "#version 330 core"; SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE); SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8); SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN); SDL_Window* window = SDL_CreateWindow("Urbaxio", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags); if (!window) { SDL_Quit(); return 1; } SDL_GLContext gl_context = SDL_GL_CreateContext(window); if (!gl_context) { SDL_DestroyWindow(window); SDL_Quit(); return 1; } SDL_GL_MakeCurrent(window, gl_context); SDL_GL_SetSwapInterval(1); if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) { return 1; } std::cout << "Shell: OpenGL Initialized: V:" << glGetString(GL_VERSION) << std::endl; IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; ImGui::StyleColorsDark(); if (!ImGui_ImplSDL2_InitForOpenGL(window, gl_context)) return 1; if (!ImGui_ImplOpenGL3_Init(glsl_version)) return 1;     std::cout << "Shell: All subsystems initialized." << std::endl;
+    initialize_engine(); Urbaxio::Engine::Scene* scene_ptr = reinterpret_cast<Urbaxio::Engine::Scene*>(get_engine_scene()); if (!scene_ptr) return 1; if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1; const char* glsl_version = "#version 430 core"; SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE); SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8); SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN); SDL_Window* window = SDL_CreateWindow("Urbaxio", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags); if (!window) { SDL_Quit(); return 1; } SDL_GLContext gl_context = SDL_GL_CreateContext(window); if (!gl_context) { SDL_DestroyWindow(window); SDL_Quit(); return 1; } SDL_GL_MakeCurrent(window, gl_context); SDL_GL_SetSwapInterval(1); if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) { return 1; } std::cout << "Shell: OpenGL Initialized: V:" << glGetString(GL_VERSION) << std::endl; std::cout << "Shell: OpenGL Renderer: " << glGetString(GL_RENDERER) << std::endl; std::cout << "Shell: OpenGL Vendor: " << glGetString(GL_VENDOR) << std::endl; IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; ImGui::StyleColorsDark(); if (!ImGui_ImplSDL2_InitForOpenGL(window, gl_context)) return 1; if (!ImGui_ImplOpenGL3_Init(glsl_version)) return 1;     std::cout << "Shell: All subsystems initialized." << std::endl;
 
     // --- VR Initialization ---
     bool vr_mode = true;
@@ -320,33 +325,40 @@ int main(int argc, char* argv[]) {
 
         ImGui::Render();
 
-        if (vr_mode && vrManager->IsSessionRunning()) {
+        if (vr_mode && vrManager->IsInitialized()) {
             // --- VR RENDER PATH ---
             if (vrManager->BeginFrame()) {
+                glDisable(GL_FRAMEBUFFER_SRGB);
+                
                 const auto& vr_views = vrManager->GetViews();
                 for (uint32_t i = 0; i < vr_views.size(); ++i) {
                     const auto& swapchain = vrManager->GetSwapchain(i);
                     uint32_t imageIndex = vrManager->AcquireSwapchainImage(i);
-                    GLuint colorTexture = swapchain.images[imageIndex].image;
-
-                    Urbaxio::Framebuffer fbo;
-                    if (fbo.Create(swapchain.width, swapchain.height, colorTexture)) {
-                        fbo.Bind();
-                        // --- Stage 1 Test: Render different colors to each eye ---
-                        if (i == 0) { glClearColor(1.0f, 0.0f, 0.0f, 1.0f); } // Left eye: Red
-                        else { glClearColor(0.0f, 0.0f, 1.0f, 1.0f); } // Right eye: Blue
-                        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-                        // TODO: Render the actual scene here using vr_views[i] matrices
-                        fbo.Unbind();
+                    
+                    // Bind pre-created FBO for this swapchain image
+                    glBindFramebuffer(GL_FRAMEBUFFER, swapchain.fbos[imageIndex]);
+                    glViewport(0, 0, swapchain.width, swapchain.height);
+                    
+                    // --- Stage 1 Test: Render different colors to each eye ---
+                    if (i == 0) { 
+                        glClearColor(1.0f, 0.0f, 0.0f, 1.0f); 
+                    } else { 
+                        glClearColor(0.0f, 0.0f, 1.0f, 1.0f); 
                     }
+                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                    // TODO: Render the actual scene here using vr_views[i] matrices
+                    
+                    glFinish();
+                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                    
                     vrManager->ReleaseSwapchainImage(i);
                 }
                 vrManager->EndFrame();
             }
 
-            // Render desktop mirror view (can be one of the eyes or a separate camera)
+            // Render desktop mirror view - show left eye
             renderer.SetViewport(0, 0, display_w, display_h);
-            glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // Clear desktop window to black
+            glClearColor(1.0f, 0.0f, 0.0f, 1.0f); // Red to match left eye
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
