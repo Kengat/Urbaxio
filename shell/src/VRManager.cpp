@@ -5,6 +5,7 @@
 #include <vector>
 #include <stdexcept>
 #include <algorithm>
+#include <cstring>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -75,6 +76,8 @@ bool VRManager::Initialize(SDL_Window* window) {
     if (!CheckGraphicsRequirements()) return false;
     if (!CreateSession(window)) return false;
     if (!CreateAppSpace()) return false;
+    if (!CreateActions()) return false;
+    if (!AttachActionSets()) return false;
     if (!CreateSwapchains()) return false;
 
     initialized = true;
@@ -113,6 +116,11 @@ void VRManager::Shutdown() {
         }
     }
     swapchains.clear();
+
+    // Clean up actions
+    if (triggerValueAction != XR_NULL_HANDLE) xrDestroyAction(triggerValueAction);
+    if (squeezeValueAction != XR_NULL_HANDLE) xrDestroyAction(squeezeValueAction);
+    if (actionSet != XR_NULL_HANDLE) xrDestroyActionSet(actionSet);
 
     if (appSpace != XR_NULL_HANDLE) xrDestroySpace(appSpace);
     if (session != XR_NULL_HANDLE) xrDestroySession(session);
@@ -354,6 +362,75 @@ bool VRManager::CreateAppSpace() {
     return true;
 }
 
+bool VRManager::CreateActions() {
+    // 1) Get paths for hands
+    XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left", &leftHandPath), "Failed to get left hand path");
+    XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right", &rightHandPath), "Failed to get right hand path");
+
+    // 2) Create action set
+    XrActionSetCreateInfo actionSetCI{XR_TYPE_ACTION_SET_CREATE_INFO};
+    strcpy_s(actionSetCI.actionSetName, "gameplay");
+    strcpy_s(actionSetCI.localizedActionSetName, "Gameplay");
+    actionSetCI.priority = 0;
+    XR_CHECK_INIT(xrCreateActionSet(instance, &actionSetCI, &actionSet), "Failed to create action set");
+
+    // 3) Create actions
+    XrPath subactionPaths[] = { leftHandPath, rightHandPath };
+    { // Scope for trigger action
+        XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
+        actionCI.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+        strcpy_s(actionCI.actionName, "trigger_value");
+        strcpy_s(actionCI.localizedActionName, "Trigger Value");
+        actionCI.countSubactionPaths = 2;
+        actionCI.subactionPaths = subactionPaths;
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &triggerValueAction), "Failed to create trigger value action");
+    }
+    { // Scope for squeeze action
+        XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
+        actionCI.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+        strcpy_s(actionCI.actionName, "squeeze_value");
+        strcpy_s(actionCI.localizedActionName, "Squeeze Value");
+        actionCI.countSubactionPaths = 2;
+        actionCI.subactionPaths = subactionPaths;
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &squeezeValueAction), "Failed to create squeeze value action");
+    }
+    
+    // 4) Suggest bindings for Oculus Touch profile
+    XrPath oculusTouchProfilePath;
+    XR_CHECK_INIT(xrStringToPath(instance, "/interaction_profiles/oculus/touch_controller", &oculusTouchProfilePath), "Failed to get oculus touch profile path");
+
+    std::vector<XrActionSuggestedBinding> bindings;
+    {
+        XrPath path;
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/input/trigger/value", &path), "Failed to get path");
+        bindings.push_back({ triggerValueAction, path });
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/trigger/value", &path), "Failed to get path");
+        bindings.push_back({ triggerValueAction, path });
+
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/input/squeeze/value", &path), "Failed to get path");
+        bindings.push_back({ squeezeValueAction, path });
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/squeeze/value", &path), "Failed to get path");
+        bindings.push_back({ squeezeValueAction, path });
+    }
+
+    XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+    suggestedBindings.interactionProfile = oculusTouchProfilePath;
+    suggestedBindings.countSuggestedBindings = static_cast<uint32_t>(bindings.size());
+    suggestedBindings.suggestedBindings = bindings.data();
+    
+    XR_CHECK_INIT(xrSuggestInteractionProfileBindings(instance, &suggestedBindings), "Failed to suggest bindings");
+    
+    return true;
+}
+
+bool VRManager::AttachActionSets() {
+    XrSessionActionSetsAttachInfo attachInfo{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
+    attachInfo.countActionSets = 1;
+    attachInfo.actionSets = &actionSet;
+    XR_CHECK_INIT(xrAttachSessionActionSets(session, &attachInfo), "Failed to attach action sets to session");
+    return true;
+}
+
 void VRManager::PollEvents() {
     XrEventDataBuffer eventData{XR_TYPE_EVENT_DATA_BUFFER};
     while (xrPollEvent(instance, &eventData) == XR_SUCCESS) {
@@ -427,6 +504,15 @@ bool VRManager::BeginFrame() {
     PollEvents();
     if (!sessionRunning) return false;
 
+    // This must be called once per frame. It snapshots the controller state for this frame.
+    XrActiveActionSet activeSet{ actionSet, XR_NULL_PATH };
+    XrActionsSyncInfo syncInfo{ XR_TYPE_ACTIONS_SYNC_INFO };
+    syncInfo.countActiveActionSets = 1;
+    syncInfo.activeActionSets = &activeSet;
+    if(XR_FAILED(xrSyncActions(session, &syncInfo))) {
+        std::cerr << "VRManager Error: xrSyncActions failed." << std::endl;
+    }
+
     frameState = {XR_TYPE_FRAME_STATE};
     if (XR_FAILED(xrWaitFrame(session, nullptr, &frameState))) return false;
     if (XR_FAILED(xrBeginFrame(session, nullptr))) return false;
@@ -492,6 +578,36 @@ uint32_t VRManager::AcquireSwapchainImage(uint32_t viewIndex) {
 void VRManager::ReleaseSwapchainImage(uint32_t viewIndex) {
     XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     xrReleaseSwapchainImage(swapchains[viewIndex].swapchain, &releaseInfo);
+}
+
+void VRManager::PollActions() {
+    if (!sessionRunning) return;
+
+    // Helper lambda to read a float action state and log it.
+    auto readFloat = [&](XrAction action, XrPath hand, const char* label) {
+        XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
+        getInfo.action = action;
+        getInfo.subactionPath = hand;
+
+        XrActionStateFloat state{XR_TYPE_ACTION_STATE_FLOAT};
+        xrGetActionStateFloat(session, &getInfo, &state);
+
+        // state.isActive indicates if the binding is active and the controller is tracking
+        if (state.isActive) {
+            float value = state.currentState; // This will be in the range [0.0, 1.0]
+            // Only log if the value is significant to avoid console spam
+            if (value > 0.01f) {
+                std::cout << "VR Input: " << label << " value is " << value 
+                          << " (" << (value * 100.0f) << "%)" << std::endl;
+            }
+        }
+    };
+
+    // Read and log the states for both hands and actions
+    readFloat(triggerValueAction, leftHandPath, "Left Trigger");
+    readFloat(triggerValueAction, rightHandPath, "Right Trigger");
+    readFloat(squeezeValueAction, leftHandPath, "Left Grip");
+    readFloat(squeezeValueAction, rightHandPath, "Right Grip");
 }
 
 } // namespace Urbaxio

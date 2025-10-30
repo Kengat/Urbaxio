@@ -331,6 +331,9 @@ int main(int argc, char* argv[]) {
             uint32_t leftEyeImageIndex = -1; // For mirror view
 
             if (vrManager->BeginFrame()) {
+                // Poll controller state after syncing actions in BeginFrame
+                vrManager->PollActions();
+
                 glDisable(GL_FRAMEBUFFER_SRGB); // Use linear color space for rendering
                 
                 const auto& vr_views = vrManager->GetViews();

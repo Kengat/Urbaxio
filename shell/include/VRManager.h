@@ -63,6 +63,9 @@ public:
     void ReleaseSwapchainImage(uint32_t viewIndex);
     const VRSwapchain& GetSwapchain(uint32_t viewIndex) const;
 
+    // --- NEW: Action Polling ---
+    void PollActions();
+
 private:
     bool initialized = false;
 
@@ -92,6 +95,13 @@ private:
     std::vector<XrView> views; // Raw views from xrLocateViews
     std::vector<VRView> renderViews; // Processed views with matrices
 
+    // --- NEW: OpenXR Actions ---
+    XrActionSet actionSet = XR_NULL_HANDLE;
+    XrAction triggerValueAction = XR_NULL_HANDLE;
+    XrAction squeezeValueAction = XR_NULL_HANDLE;
+    XrPath leftHandPath = XR_NULL_PATH;
+    XrPath rightHandPath = XR_NULL_PATH;
+
     // Private initialization methods
     bool CreateInstance();
     bool GetSystem();
@@ -99,6 +109,8 @@ private:
     bool CreateSession(SDL_Window* window);
     bool CreateSwapchains();
     bool CreateAppSpace();
+    bool CreateActions();
+    bool AttachActionSets();
 
     // Private per-frame methods
     void PollEvents();
