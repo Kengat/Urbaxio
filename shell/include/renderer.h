@@ -25,10 +25,10 @@ namespace Urbaxio {
     public:
         Renderer();
         ~Renderer();
-        bool Initialize();
-            void RenderFrame(
-        SDL_Window* window,
-        const Urbaxio::Camera& camera,
+    bool Initialize();
+        void RenderFrame(
+            SDL_Window* window,
+            const glm::mat4& view, const glm::mat4& projection, const glm::vec3& viewPos,
         Urbaxio::Engine::Scene* scene,
         // Appearance
         const glm::vec3& defaultObjectColor,
@@ -152,7 +152,7 @@ namespace Urbaxio {
         bool CreateSelectionBoxResources();
         bool CreateGhostMeshResources(); // <-- NEW
         void Cleanup();
-        void DrawSnapMarker(const SnapResult& snap, const Camera& camera, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight);
+        void DrawSnapMarker(const SnapResult& snap, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight);
 
         const char* objectVertexShaderSource; const char* objectFragmentShaderSource;
         const char* simpleLineVertexShaderSource; const char* simpleLineFragmentShaderSource;

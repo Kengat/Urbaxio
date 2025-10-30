@@ -27,6 +27,7 @@ extern "C" {
 
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/norm.hpp>
 
 #include <fmt/core.h>
@@ -327,59 +328,83 @@ int main(int argc, char* argv[]) {
 
         if (vr_mode && vrManager->IsInitialized()) {
             // --- VR RENDER PATH ---
+            uint32_t leftEyeImageIndex = -1; // For mirror view
+
             if (vrManager->BeginFrame()) {
-                glDisable(GL_FRAMEBUFFER_SRGB);
+                glDisable(GL_FRAMEBUFFER_SRGB); // Use linear color space for rendering
                 
                 const auto& vr_views = vrManager->GetViews();
                 for (uint32_t i = 0; i < vr_views.size(); ++i) {
                     const auto& swapchain = vrManager->GetSwapchain(i);
                     uint32_t imageIndex = vrManager->AcquireSwapchainImage(i);
+                    if (i == 0) { leftEyeImageIndex = imageIndex; }
                     
                     // Bind pre-created FBO for this swapchain image
                     glBindFramebuffer(GL_FRAMEBUFFER, swapchain.fbos[imageIndex]);
                     glViewport(0, 0, swapchain.width, swapchain.height);
                     
-                    // --- Stage 1 Test: Render different colors to each eye ---
-                    if (i == 0) { 
-                        glClearColor(1.0f, 0.0f, 0.0f, 1.0f); 
-                    } else { 
-                        glClearColor(0.0f, 0.0f, 1.0f, 1.0f); 
-                    }
+                    // Clear this eye's buffer
+                    glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
                     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-                    // TODO: Render the actual scene here using vr_views[i] matrices
+
+                    // Get view-specific data
+                    const auto& current_view = vr_views[i];
+                    
+                    // Coordinate system adaptation: OpenXR uses Y-up, app uses Z-up
+                    // Apply a 90° rotation around X to the world (inverse of rotating the camera)
+                    glm::mat4 worldRotation = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+                    glm::mat4 view = current_view.viewMatrix * worldRotation;
+                    
+                    const glm::mat4& projection = current_view.projectionMatrix;
+                    const glm::vec3 viewPos = glm::vec3(glm::inverse(current_view.viewMatrix)[3]);
+                    
+                    // Call the modified render function
+                    // Note: No selection, hover, snapping, or previews in VR yet. ImGui is only rendered to the desktop window.
+                    renderer.RenderFrame(
+                        window, view, projection, viewPos, scene_ptr,
+                        objectColor, lightColor, ambientStrength, 
+                        showGrid, showAxes, axisLineWidth, negAxisLineWidth,
+                        gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
+                        glm::vec3(0.0f), cursorRadius, effectIntensity, 
+                        0, {}, {}, selectionHighlightColor, 
+                        0, {}, hoverHighlightColor,
+                        {}, // No snap result
+                        nullptr, // No ImGui data for VR eyes
+                        0, glm::mat4(1.0f) // No preview object
+                    );
                     
                     glFinish();
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
                     
                     vrManager->ReleaseSwapchainImage(i);
                 }
+
                 vrManager->EndFrame();
             }
 
             // Render desktop mirror view - show left eye
-            renderer.SetViewport(0, 0, display_w, display_h);
-            glClearColor(1.0f, 0.0f, 0.0f, 1.0f); // Red to match left eye
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            if (leftEyeImageIndex != -1) {
+                const auto& leftSwapchain = vrManager->GetSwapchain(0);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, leftSwapchain.fbos[leftEyeImageIndex]);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // Default framebuffer (the window)
+                glBlitFramebuffer(
+                    0, 0, leftSwapchain.width, leftSwapchain.height,
+                    0, 0, display_w, display_h,
+                    GL_COLOR_BUFFER_BIT, GL_LINEAR
+                );
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            } else {
+                // Fallback if no frame was rendered
+                renderer.SetViewport(0, 0, display_w, display_h);
+                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            }
+
+            // Render ImGui on top of the mirrored view
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
         } else {
             // --- 2D RENDER PATH ---
-            uint64_t previewObjId = 0;
-            const Urbaxio::CadKernel::MeshBuffers* ghostMesh = nullptr;
-            const std::vector<unsigned int>* ghostWireframeIndices = nullptr;
-
-            if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
-                auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
-                previewObjId = moveTool->GetMovingObjectId();
-                ghostMesh = moveTool->GetGhostMesh();
-                ghostWireframeIndices = moveTool->GetGhostWireframeIndices();
-            }
-
-            if (ghostMesh) { renderer.UpdateGhostMesh(*ghostMesh, ghostWireframeIndices ? *ghostWireframeIndices : std::vector<unsigned int>()); } 
-            else { renderer.ClearGhostMesh(); }
-            
-            renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), selectedLineIDs, previewObjId, scene_ptr);
-
             int mouseX, mouseY;
             SDL_GetMouseState(&mouseX, &mouseY);
             glm::vec3 cursorWorldPos = currentSnap.snapped
@@ -390,9 +415,29 @@ int main(int argc, char* argv[]) {
             glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+            uint64_t previewObjId = 0;
+            const Urbaxio::CadKernel::MeshBuffers* ghostMesh = nullptr;
+            const std::vector<unsigned int>* ghostWireframeIndices = nullptr;
+            if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
+                auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
+                previewObjId = moveTool->GetMovingObjectId();
+                ghostMesh = moveTool->GetGhostMesh();
+                ghostWireframeIndices = moveTool->GetGhostWireframeIndices();
+            }
+            if (ghostMesh) { renderer.UpdateGhostMesh(*ghostMesh, ghostWireframeIndices ? *ghostWireframeIndices : std::vector<unsigned int>()); } 
+            else { renderer.ClearGhostMesh(); }
+            renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), selectedLineIDs, previewObjId, scene_ptr);
+
             toolManager.RenderPreview(renderer, currentSnap);
             
-            renderer.RenderFrame(window, camera, scene_ptr, objectColor, lightColor, ambientStrength, 
+            // Get matrices and position from camera for the 2D view
+            glm::mat4 view = camera.GetViewMatrix();
+            glm::mat4 projection = camera.GetProjectionMatrix((float)display_w / (float)display_h);
+
+            renderer.RenderFrame(
+                window, view, projection, camera.Position,
+                scene_ptr, 
+                objectColor, lightColor, ambientStrength, 
                 showGrid, showAxes, axisLineWidth, negAxisLineWidth,
                 gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
                 cursorWorldPos, cursorRadius, effectIntensity, 
@@ -400,8 +445,7 @@ int main(int argc, char* argv[]) {
                 hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor,
                 currentSnap, 
                 ImGui::GetDrawData(),
-                previewObjId
-            );
+                previewObjId);
 
             if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) {
                 auto* selectTool = static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool());
