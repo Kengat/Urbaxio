@@ -52,6 +52,14 @@ struct GrabState {
     glm::mat4 worldFromHandAnchor = glm::mat4(1.0f); // "Anchor" transform
 };
 
+// --- NEW: Struct for two-handed zoom/scale gesture ---
+struct TwoHandZoomState {
+    bool  active = false;
+    float startDistance = 1.0f;       // Initial distance between hands
+    glm::mat4 startWorldTransform = glm::mat4(1.0f); // worldTransform_ at gesture start
+    float previousScale = 1.0f;       // For smoothing
+};
+
 // Manages all OpenXR state and the VR frame loop
 class VRManager {
 public:
@@ -128,6 +136,7 @@ private:
     HandVisual rightHandVisual_;
     GrabState leftGrabState_;
     GrabState rightGrabState_;
+    TwoHandZoomState twoHandZoomState_;
     glm::mat4 worldTransform_ = glm::mat4(1.0f); // The transform for grab locomotion
 
     // Private initialization methods

@@ -365,14 +365,18 @@ int main(int argc, char* argv[]) {
                 std::map<uint64_t, glm::vec3> colorOverrides;
                 std::map<uint64_t, bool> unlitOverrides;
                 
-                // Get the cumulative world transform from the grab action
+                // Get the cumulative world transform from the grab/zoom action
                 const glm::mat4& worldTransform = vrManager->GetWorldTransform();
+
+                // Keep controller visuals at constant perceived size
+                float worldScale = glm::length(glm::vec3(worldTransform[0]));
+                glm::mat4 controllerCompensateScale = glm::scale(glm::mat4(1.0f), glm::vec3(1.0f / worldScale));
 
                 const auto& leftHand = vrManager->GetLeftHandVisual();
                 if (leftHand.isValid && leftControllerVisual) {
                     // Apply the world transform to the raw controller pose
                     glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(leftHand.pose);
-                    transformOverrides[leftControllerVisual->get_id()] = worldTransform * rawPoseMatrix * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
+                    transformOverrides[leftControllerVisual->get_id()] = worldTransform * rawPoseMatrix * controllerCompensateScale * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
                     colorOverrides[leftControllerVisual->get_id()] = MixColorFromPress(leftHand.pressValue);
                     unlitOverrides[leftControllerVisual->get_id()] = true;
                 }
@@ -381,7 +385,7 @@ int main(int argc, char* argv[]) {
                 if (rightHand.isValid && rightControllerVisual) {
                     // Apply the world transform to the raw controller pose
                     glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(rightHand.pose);
-                    transformOverrides[rightControllerVisual->get_id()] = worldTransform * rawPoseMatrix * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
+                    transformOverrides[rightControllerVisual->get_id()] = worldTransform * rawPoseMatrix * controllerCompensateScale * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
                     colorOverrides[rightControllerVisual->get_id()] = MixColorFromPress(rightHand.pressValue);
                     unlitOverrides[rightControllerVisual->get_id()] = true;
                 }

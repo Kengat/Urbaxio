@@ -683,6 +683,9 @@ void VRManager::PollActions() {
     // --- REVISED: Anchor-based Grab Locomotion with Hysteresis ---
     const float GRAB_ON_THRESHOLD = 0.75f;
     const float GRAB_OFF_THRESHOLD = 0.60f;
+    const float ZOOM_MIN = 0.10f;
+    const float ZOOM_MAX = 10.0f;
+    const float ZOOM_SMOOTH = 0.25f;
 
     auto wantsToGrab = [&](bool isCurrentlyGrabbing, float squeezeValue) {
         float threshold = isCurrentlyGrabbing ? GRAB_OFF_THRESHOLD : GRAB_ON_THRESHOLD;
@@ -698,30 +701,62 @@ void VRManager::PollActions() {
         return glm::translate(p) * glm::toMat4(q);
     };
 
-    auto updateGrab = [&](bool isGrabbingNow, GrabState& grabState, const HandVisual& hand) {
-        if (isGrabbingNow && !grabState.isGrabbing && hand.isValid) { // Grab started
-            grabState.isGrabbing = true;
-            glm::mat4 handToWorld = poseToMat4(hand.pose);
-            // The anchor is the current world transform multiplied by the hand's transform.
-            grabState.worldFromHandAnchor = worldTransform_ * handToWorld;
-        } else if (!isGrabbingNow && grabState.isGrabbing) { // Grab ended
-            grabState.isGrabbing = false;
-        } else if (isGrabbingNow && grabState.isGrabbing && hand.isValid) { // Grab continues
-            glm::mat4 handToWorld = poseToMat4(hand.pose);
-            // Recalculate the world transform from the constant anchor and the new hand position.
-            worldTransform_ = grabState.worldFromHandAnchor * glm::inverse(handToWorld);
-        }
-    };
+    // --- Two-Handed Zoom Logic ---
+    if (!twoHandZoomState_.active && leftWantsToGrab && rightWantsToGrab && leftHandVisual_.isValid && rightHandVisual_.isValid) {
+        twoHandZoomState_.active = true;
+        twoHandZoomState_.startWorldTransform = worldTransform_;
+        glm::vec3 pL(leftHandVisual_.pose.position.x, leftHandVisual_.pose.position.y, leftHandVisual_.pose.position.z);
+        glm::vec3 pR(rightHandVisual_.pose.position.x, rightHandVisual_.pose.position.y, rightHandVisual_.pose.position.z);
+        twoHandZoomState_.startDistance = glm::max(glm::length(pR - pL), 1e-4f);
+        twoHandZoomState_.previousScale = 1.0f;
 
-    if (leftWantsToGrab) {
-        updateGrab(true, leftGrabState_, leftHandVisual_);
-        updateGrab(false, rightGrabState_, rightHandVisual_);
-    } else if (rightWantsToGrab) {
-        updateGrab(true, rightGrabState_, rightHandVisual_);
-        updateGrab(false, leftGrabState_, leftHandVisual_);
+        leftGrabState_.isGrabbing = false;
+        rightGrabState_.isGrabbing = false;
+    } else if (twoHandZoomState_.active && (!leftWantsToGrab || !rightWantsToGrab)) {
+        twoHandZoomState_.active = false;
+    }
+
+    if (twoHandZoomState_.active && leftHandVisual_.isValid && rightHandVisual_.isValid) {
+        glm::vec3 pL(leftHandVisual_.pose.position.x, leftHandVisual_.pose.position.y, leftHandVisual_.pose.position.z);
+        glm::vec3 pR(rightHandVisual_.pose.position.x, rightHandVisual_.pose.position.y, rightHandVisual_.pose.position.z);
+        glm::vec3 pMid = 0.5f * (pL + pR);
+
+        float currentDist = glm::max(glm::length(pR - pL), 1e-4f);
+        float rawScale = glm::clamp(currentDist / twoHandZoomState_.startDistance, ZOOM_MIN, ZOOM_MAX);
+        float s = glm::mix(twoHandZoomState_.previousScale, rawScale, ZOOM_SMOOTH);
+        twoHandZoomState_.previousScale = s;
+
+        glm::vec4 pivotScene4 = twoHandZoomState_.startWorldTransform * glm::vec4(pMid, 1.0f);
+        glm::vec3 pivotScene = glm::vec3(pivotScene4);
+
+        worldTransform_ = glm::translate(glm::mat4(1.0f), pivotScene) *
+                          glm::scale(glm::mat4(1.0f), glm::vec3(s)) *
+                          glm::translate(glm::mat4(1.0f), -pivotScene) *
+                          twoHandZoomState_.startWorldTransform;
     } else {
-        updateGrab(false, leftGrabState_, leftHandVisual_);
-        updateGrab(false, rightGrabState_, rightHandVisual_);
+        auto updateGrab = [&](bool isGrabbingNow, GrabState& grabState, const HandVisual& hand) {
+            if (isGrabbingNow && !grabState.isGrabbing && hand.isValid) {
+                grabState.isGrabbing = true;
+                glm::mat4 handToWorld = poseToMat4(hand.pose);
+                grabState.worldFromHandAnchor = worldTransform_ * handToWorld;
+            } else if (!isGrabbingNow && grabState.isGrabbing) {
+                grabState.isGrabbing = false;
+            } else if (isGrabbingNow && grabState.isGrabbing && hand.isValid) {
+                glm::mat4 handToWorld = poseToMat4(hand.pose);
+                worldTransform_ = grabState.worldFromHandAnchor * glm::inverse(handToWorld);
+            }
+        };
+
+        if (leftWantsToGrab) {
+            updateGrab(true, leftGrabState_, leftHandVisual_);
+            updateGrab(false, rightGrabState_, rightHandVisual_);
+        } else if (rightWantsToGrab) {
+            updateGrab(true, rightGrabState_, rightHandVisual_);
+            updateGrab(false, leftGrabState_, leftHandVisual_);
+        } else {
+            updateGrab(false, leftGrabState_, leftHandVisual_);
+            updateGrab(false, rightGrabState_, rightHandVisual_);
+        }
     }
 }
 
