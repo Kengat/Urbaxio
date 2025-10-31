@@ -27,7 +27,7 @@ namespace Urbaxio {
         ~Renderer();
     bool Initialize();
         void RenderFrame(
-            SDL_Window* window,
+            int viewportWidth, int viewportHeight,
             const glm::mat4& view, const glm::mat4& projection, const glm::vec3& viewPos,
         Urbaxio::Engine::Scene* scene,
         // Appearance
@@ -171,7 +171,7 @@ namespace Urbaxio {
         bool CreateVRPointerResources(); // <-- NEW
         bool CreateGhostMeshResources(); // <-- NEW
         void Cleanup();
-        void DrawSnapMarker(const SnapResult& snap, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight);
+        void DrawSnapMarker(const SnapResult& snap, const glm::mat4& view, const glm::mat4& proj, int viewportWidth, int viewportHeight);
 
         const char* objectVertexShaderSource; const char* objectFragmentShaderSource;
         const char* simpleLineVertexShaderSource; const char* simpleLineFragmentShaderSource;

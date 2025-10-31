@@ -1,3 +1,5 @@
+// Ensure experimental GLM features are enabled before any GLM headers are pulled in
+#define GLM_ENABLE_EXPERIMENTAL
 #include "VRManager.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
@@ -6,7 +8,6 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cstring>
-#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>

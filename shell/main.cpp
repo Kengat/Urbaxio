@@ -4,6 +4,9 @@ extern "C" {
     __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;          // AMD PowerXpress
 }
 
+// Enable GLM experimental features (must be before any GLM includes via headers)
+#define GLM_ENABLE_EXPERIMENTAL
+
 // --- Includes ---
 #include <engine/engine.h>
 #include <engine/scene.h>
@@ -438,7 +441,11 @@ int main(int argc, char* argv[]) {
                     glm::quat tilt = glm::angleAxis(glm::radians(-65.0f), glm::vec3(1.0f, 0.0f, 0.0f));
                     glm::vec3 localDir = tilt * glm::vec3(0.0f, 0.0f, -1.0f);
                     glm::vec3 rayDirection = glm::normalize(glm::vec3(finalPoseMatrix * glm::vec4(localDir, 0.0f)));
-                    vrSnap = snappingSystem.FindSnapPointFromRay(rayOrigin, rayDirection, *scene_ptr);
+                    // Dynamic, scale-aware snap radius
+                    const float BASE_VR_SNAP_RADIUS = 0.01f; // 1 cm at 1:1 scale
+                    float worldScale = glm::length(glm::vec3(vrManager->GetWorldTransform()[0]));
+                    float dynamicSnapRadius = BASE_VR_SNAP_RADIUS * worldScale;
+                    vrSnap = snappingSystem.FindSnapPointFromRay(rayOrigin, rayDirection, *scene_ptr, dynamicSnapRadius);
                     float rayLength = 100.0f;
                     // Shorten only for real geometry (not GRID plane)
                     glm::vec3 rayEnd = (vrSnap.snapped && vrSnap.type != Urbaxio::SnapType::GRID)
@@ -501,7 +508,8 @@ int main(int argc, char* argv[]) {
                     
                     // Call the main render function ONCE with all scene data and overrides
                     renderer.RenderFrame(
-                        window, view, projection, viewPos, scene_ptr,
+                        swapchain.width, swapchain.height,
+                        view, projection, viewPos, scene_ptr,
                         objectColor, lightColor, ambientStrength, 
                         showGrid, showAxes, axisLineWidth, negAxisLineWidth,
                         gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
@@ -607,7 +615,8 @@ int main(int argc, char* argv[]) {
             glm::mat4 projection = camera.GetProjectionMatrix((float)display_w / (float)display_h);
 
             renderer.RenderFrame(
-                window, view, projection, camera.Position,
+                display_w, display_h,
+                view, projection, camera.Position,
                 scene_ptr, 
                 objectColor, lightColor, ambientStrength, 
                 showGrid, showAxes, axisLineWidth, negAxisLineWidth,

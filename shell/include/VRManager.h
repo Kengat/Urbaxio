@@ -15,6 +15,10 @@
 #include <string>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
+// For transforms
+#include <glm/gtc/matrix_transform.hpp>
+// For glm::rotation (explicit quaternion from two vectors)
+#include <glm/gtx/quaternion.hpp>
 
 // Forward declarations
 struct SDL_Window;
@@ -144,7 +148,26 @@ private:
     GrabState leftGrabState_;
     GrabState rightGrabState_;
     TwoHandZoomState twoHandZoomState_;
-    glm::mat4 worldTransform_ = glm::mat4(1.0f); // The transform for grab locomotion
+    // The transform for grab locomotion, initialized to the desired starting view.
+    // Place the rig at (2,2,2) and orient its local +Y (forward) to face the origin,
+    // with local +Z (up) as close as possible to global Z-up.
+    glm::mat4 worldTransform_ = [] {
+        glm::vec3 startPos = glm::vec3(2.0f, 2.0f, 2.0f);
+        glm::vec3 target   = glm::vec3(0.0f);
+        glm::vec3 worldUp  = glm::vec3(0.0f, 0.0f, 1.0f);
+
+        // Basis vectors for the rig: +Y (forward), +X (right), +Z (up)
+        glm::vec3 newY = glm::normalize(target - startPos);
+        glm::vec3 newX = glm::normalize(glm::cross(worldUp, newY));
+        glm::vec3 newZ = glm::cross(newY, newX);
+
+        return glm::mat4(
+            glm::vec4(newX, 0.0f),
+            glm::vec4(newY, 0.0f),
+            glm::vec4(newZ, 0.0f),
+            glm::vec4(startPos, 1.0f)
+        );
+    }();
 
     // Private initialization methods
     bool CreateInstance();
