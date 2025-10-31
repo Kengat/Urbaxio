@@ -92,6 +92,12 @@ public:
     // --- NEW: Getter for the world transform ---
     const glm::mat4& GetWorldTransform() const { return worldTransform_; }
 
+    // --- NEW: Public members for distance text display ---
+    bool isTwoHandZooming = false;
+    float zoomDistance = 0.0f;
+    glm::vec3 zoomMidPoint = glm::vec3(0.0f);
+    float zoomTextAlpha = 0.0f;
+
 private:
     bool initialized = false;
 

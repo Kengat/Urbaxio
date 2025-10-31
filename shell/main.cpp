@@ -64,6 +64,11 @@ namespace { // Anonymous namespace for helpers
         return translationMatrix * rotationMatrix;
     }
 
+    // Transform a 3D point by a 4x4 matrix
+    glm::vec3 TransformPoint(const glm::mat4& M, const glm::vec3& p) {
+        return glm::vec3(M * glm::vec4(p, 1.0f));
+    }
+
     // Helper to interpolate color from green to cyan
     glm::vec3 MixColorFromPress(float t) {
         return glm::mix(glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 1.0f, 1.0f), std::clamp(t, 0.0f, 1.0f));
@@ -252,6 +257,52 @@ int main(int argc, char* argv[]) {
         
         ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplSDL2_NewFrame(); ImGui::NewFrame();
 
+        // --- NEW: Render Distance Text (for desktop mirror view) ---
+        if (vr_mode && vrManager && vrManager->zoomTextAlpha > 0.01f) {
+            // Use left-eye matrices for projection to desktop mirror
+            const auto& vr_views = vrManager->GetViews();
+            if (!vr_views.empty()) {
+                glm::vec3 midpoint_world = vrManager->zoomMidPoint;
+                float distance_world = vrManager->zoomDistance;
+
+                // Transform midpoint by current world transform
+                glm::vec3 midpoint_transformed = TransformPoint(vrManager->GetWorldTransform(), midpoint_world);
+
+                glm::vec2 screenPos;
+                if (Urbaxio::SnappingSystem::WorldToScreen(
+                        midpoint_transformed,
+                        vr_views[0].viewMatrix,
+                        vr_views[0].projectionMatrix,
+                        display_w, display_h,
+                        screenPos))
+                {
+                    std::string distStr;
+                    if (distance_world > 1000.0f) {
+                        distStr = fmt::format("{:.2f} km", distance_world / 1000.0f);
+                    } else if (distance_world >= 1.0f) {
+                        distStr = fmt::format("{:.2f} m", distance_world);
+                    } else {
+                        distStr = fmt::format("{:.0f} mm", distance_world * 1000.0f);
+                    }
+
+                    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+                    ImVec2 textSize = ImGui::CalcTextSize(distStr.c_str());
+                    ImVec2 textPos = ImVec2(screenPos.x - textSize.x * 0.5f, screenPos.y - textSize.y * 0.5f);
+
+                    drawList->AddRectFilled(
+                        ImVec2(textPos.x - 5, textPos.y - 2),
+                        ImVec2(textPos.x + textSize.x + 5, textPos.y + textSize.y + 2),
+                        IM_COL32(0, 0, 0, (int)(128.0f * vrManager->zoomTextAlpha)),
+                        3.0f);
+
+                    drawList->AddText(
+                        textPos,
+                        IM_COL32(255, 255, 255, (int)(255.0f * vrManager->zoomTextAlpha)),
+                        distStr.c_str());
+                }
+            }
+        }
+
         // --- Main Controls Window ---
         { 
             ImGui::Begin("Urbaxio Controls");
@@ -368,15 +419,12 @@ int main(int argc, char* argv[]) {
                 // Get the cumulative world transform from the grab/zoom action
                 const glm::mat4& worldTransform = vrManager->GetWorldTransform();
 
-                // Keep controller visuals at constant perceived size
-                float worldScale = glm::length(glm::vec3(worldTransform[0]));
-                glm::mat4 controllerCompensateScale = glm::scale(glm::mat4(1.0f), glm::vec3(1.0f / worldScale));
-
                 const auto& leftHand = vrManager->GetLeftHandVisual();
                 if (leftHand.isValid && leftControllerVisual) {
                     // Apply the world transform to the raw controller pose
                     glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(leftHand.pose);
-                    transformOverrides[leftControllerVisual->get_id()] = worldTransform * rawPoseMatrix * controllerCompensateScale * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
+                    // REMOVED scale compensation. The controller now scales with the world.
+                    transformOverrides[leftControllerVisual->get_id()] = worldTransform * rawPoseMatrix * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
                     colorOverrides[leftControllerVisual->get_id()] = MixColorFromPress(leftHand.pressValue);
                     unlitOverrides[leftControllerVisual->get_id()] = true;
                 }
@@ -385,7 +433,8 @@ int main(int argc, char* argv[]) {
                 if (rightHand.isValid && rightControllerVisual) {
                     // Apply the world transform to the raw controller pose
                     glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(rightHand.pose);
-                    transformOverrides[rightControllerVisual->get_id()] = worldTransform * rawPoseMatrix * controllerCompensateScale * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
+                    // REMOVED scale compensation. The controller now scales with the world.
+                    transformOverrides[rightControllerVisual->get_id()] = worldTransform * rawPoseMatrix * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
                     colorOverrides[rightControllerVisual->get_id()] = MixColorFromPress(rightHand.pressValue);
                     unlitOverrides[rightControllerVisual->get_id()] = true;
                 }

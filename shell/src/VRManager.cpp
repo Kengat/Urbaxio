@@ -717,11 +717,17 @@ void VRManager::PollActions() {
     }
 
     if (twoHandZoomState_.active && leftHandVisual_.isValid && rightHandVisual_.isValid) {
+        // Update public flags and fade in alpha
+        isTwoHandZooming = true;
+        zoomTextAlpha = std::min(1.0f, zoomTextAlpha + 0.1f);
+
         glm::vec3 pL(leftHandVisual_.pose.position.x, leftHandVisual_.pose.position.y, leftHandVisual_.pose.position.z);
         glm::vec3 pR(rightHandVisual_.pose.position.x, rightHandVisual_.pose.position.y, rightHandVisual_.pose.position.z);
         glm::vec3 pMid = 0.5f * (pL + pR);
+        zoomMidPoint = pMid;
 
         float currentDist = glm::max(glm::length(pR - pL), 1e-4f);
+        zoomDistance = currentDist;
         float rawScale = glm::clamp(currentDist / twoHandZoomState_.startDistance, ZOOM_MIN, ZOOM_MAX);
         float s = glm::mix(twoHandZoomState_.previousScale, rawScale, ZOOM_SMOOTH);
         twoHandZoomState_.previousScale = s;
@@ -734,6 +740,10 @@ void VRManager::PollActions() {
                           glm::translate(glm::mat4(1.0f), -pivotScene) *
                           twoHandZoomState_.startWorldTransform;
     } else {
+        // Update public flags and fade out alpha
+        isTwoHandZooming = false;
+        zoomTextAlpha = std::max(0.0f, zoomTextAlpha - 0.1f);
+
         auto updateGrab = [&](bool isGrabbingNow, GrabState& grabState, const HandVisual& hand) {
             if (isGrabbingNow && !grabState.isGrabbing && hand.isValid) {
                 grabState.isGrabbing = true;
