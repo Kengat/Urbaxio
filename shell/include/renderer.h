@@ -52,7 +52,11 @@ namespace Urbaxio {
         ImDrawData* imguiDrawData,
         // --- NEW for Previews ---
         uint64_t previewObjectId = 0,
-        const glm::mat4& previewTransform = glm::mat4(1.0f)
+        const glm::mat4& previewTransform = glm::mat4(1.0f),
+        // --- NEW: Overrides for dynamic objects like controllers ---
+        const std::map<uint64_t, glm::mat4>& transformOverrides = {},
+        const std::map<uint64_t, glm::vec3>& colorOverrides = {},
+        const std::map<uint64_t, bool>& unlitOverrides = {}
     );
         void SetViewport(int x, int y, int width, int height);
         float GetMaxLineWidth() const { return maxLineWidth; }

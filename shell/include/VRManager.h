@@ -46,6 +46,12 @@ struct HandVisual {
     float pressValue = 0.0f; // Smoothed value from 0.0 to 1.0
 };
 
+// Struct to manage grab locomotion state
+struct GrabState {
+    bool isGrabbing = false;
+    glm::mat4 worldFromHandAnchor = glm::mat4(1.0f); // "Anchor" transform
+};
+
 // Manages all OpenXR state and the VR frame loop
 class VRManager {
 public:
@@ -74,6 +80,9 @@ public:
     void PollActions();
     const HandVisual& GetLeftHandVisual() const { return leftHandVisual_; }
     const HandVisual& GetRightHandVisual() const { return rightHandVisual_; }
+    
+    // --- NEW: Getter for the world transform ---
+    const glm::mat4& GetWorldTransform() const { return worldTransform_; }
 
 private:
     bool initialized = false;
@@ -112,11 +121,14 @@ private:
     XrPath leftHandPath = XR_NULL_PATH;
     XrPath rightHandPath = XR_NULL_PATH;
 
-    // --- NEW: Controller representation ---
+    // --- MODIFIED: Controller representation and world transform ---
     XrSpace leftGripSpace = XR_NULL_HANDLE;
     XrSpace rightGripSpace = XR_NULL_HANDLE;
     HandVisual leftHandVisual_;
     HandVisual rightHandVisual_;
+    GrabState leftGrabState_;
+    GrabState rightGrabState_;
+    glm::mat4 worldTransform_ = glm::mat4(1.0f); // The transform for grab locomotion
 
     // Private initialization methods
     bool CreateInstance();

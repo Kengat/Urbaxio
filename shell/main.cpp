@@ -212,8 +212,9 @@ int main(int argc, char* argv[]) {
     Urbaxio::Engine::SceneObject* leftControllerVisual = nullptr;
     Urbaxio::Engine::SceneObject* rightControllerVisual = nullptr;
     if (vr_mode) {
-        leftControllerVisual = scene_ptr->create_box_object("LeftControllerVisual", 0.06, 0.06, 0.06);
-        rightControllerVisual = scene_ptr->create_box_object("RightControllerVisual", 0.06, 0.06, 0.06);
+        // Create 1x1x1 unit cubes. The scaling will be done in the render loop.
+        leftControllerVisual = scene_ptr->create_box_object("LeftControllerVisual", 1.0, 1.0, 1.0);
+        rightControllerVisual = scene_ptr->create_box_object("RightControllerVisual", 1.0, 1.0, 1.0);
     }
 
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
@@ -359,6 +360,32 @@ int main(int argc, char* argv[]) {
 
                 glDisable(GL_FRAMEBUFFER_SRGB); // Use linear color space for rendering
                 
+                // --- REVISED: Prepare override maps for dynamic objects ---
+                std::map<uint64_t, glm::mat4> transformOverrides;
+                std::map<uint64_t, glm::vec3> colorOverrides;
+                std::map<uint64_t, bool> unlitOverrides;
+                
+                // Get the cumulative world transform from the grab action
+                const glm::mat4& worldTransform = vrManager->GetWorldTransform();
+
+                const auto& leftHand = vrManager->GetLeftHandVisual();
+                if (leftHand.isValid && leftControllerVisual) {
+                    // Apply the world transform to the raw controller pose
+                    glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(leftHand.pose);
+                    transformOverrides[leftControllerVisual->get_id()] = worldTransform * rawPoseMatrix * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
+                    colorOverrides[leftControllerVisual->get_id()] = MixColorFromPress(leftHand.pressValue);
+                    unlitOverrides[leftControllerVisual->get_id()] = true;
+                }
+
+                const auto& rightHand = vrManager->GetRightHandVisual();
+                if (rightHand.isValid && rightControllerVisual) {
+                    // Apply the world transform to the raw controller pose
+                    glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(rightHand.pose);
+                    transformOverrides[rightControllerVisual->get_id()] = worldTransform * rawPoseMatrix * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
+                    colorOverrides[rightControllerVisual->get_id()] = MixColorFromPress(rightHand.pressValue);
+                    unlitOverrides[rightControllerVisual->get_id()] = true;
+                }
+
                 const auto& vr_views = vrManager->GetViews();
                 for (uint32_t i = 0; i < vr_views.size(); ++i) {
                     const auto& swapchain = vrManager->GetSwapchain(i);
@@ -375,16 +402,11 @@ int main(int argc, char* argv[]) {
 
                     // Get view-specific data
                     const auto& current_view = vr_views[i];
-                    
-                    // The view matrix from VRManager is now correctly oriented for a Z-up world.
                     const glm::mat4& view = current_view.viewMatrix;
                     const glm::mat4& projection = current_view.projectionMatrix;
-                    
-                    // Correctly calculate view position from the final view matrix for lighting.
                     const glm::vec3 viewPos = glm::vec3(glm::inverse(view)[3]);
                     
-                    // Call the modified render function
-                    // Note: No selection, hover, snapping, or previews in VR yet. ImGui is only rendered to the desktop window.
+                    // Call the main render function ONCE with all scene data and overrides
                     renderer.RenderFrame(
                         window, view, projection, viewPos, scene_ptr,
                         objectColor, lightColor, ambientStrength, 
@@ -395,23 +417,11 @@ int main(int argc, char* argv[]) {
                         0, {}, hoverHighlightColor,
                         {}, // No snap result
                         nullptr, // No ImGui data for VR eyes
-                        0, glm::mat4(1.0f) // No preview object
+                        0, glm::mat4(1.0f), // No preview object
+                        transformOverrides, // Pass the controller transforms
+                        colorOverrides,     // Pass the controller colors
+                        unlitOverrides      // Pass the controller lighting flags
                     );
-
-                    // --- Render Controller Visuals ---
-                    const auto& leftHand = vrManager->GetLeftHandVisual();
-                    const auto& rightHand = vrManager->GetRightHandVisual();
-
-                    auto renderHand = [&](const Urbaxio::HandVisual& hand, Urbaxio::Engine::SceneObject* visual) {
-                        if (hand.isValid && visual && visual->vao != 0) {
-                            glm::mat4 modelMatrix = XrPoseToModelMatrix(hand.pose);
-                            glm::vec3 color = MixColorFromPress(hand.pressValue);
-                            renderer.RenderSingleObject(view, projection, visual, modelMatrix, color, true);
-                        }
-                    };
-
-                    renderHand(leftHand, leftControllerVisual);
-                    renderHand(rightHand, rightControllerVisual);
                     
                     glFinish();
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -485,7 +495,7 @@ int main(int argc, char* argv[]) {
                 hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor,
                 currentSnap, 
                 ImGui::GetDrawData(),
-                previewObjId);
+                previewObjId, glm::mat4(1.0f), {}, {}, {});
 
             if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) {
                 auto* selectTool = static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool());

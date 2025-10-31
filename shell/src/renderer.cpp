@@ -389,7 +389,11 @@ namespace Urbaxio {
         ImDrawData* imguiDrawData,
         // --- NEW for Previews ---
         uint64_t previewObjectId,
-        const glm::mat4& previewTransform
+        const glm::mat4& previewTransform,
+        // --- NEW: Overrides for dynamic objects like controllers ---
+        const std::map<uint64_t, glm::mat4>& transformOverrides,
+        const std::map<uint64_t, glm::vec3>& colorOverrides,
+        const std::map<uint64_t, bool>& unlitOverrides
     ) {
         int display_w, display_h; SDL_GetWindowSize(window, &display_w, &display_h); if (display_w <= 0 || display_h <= 0) return; glm::mat4 identityModel = glm::mat4(1.0f);
         
@@ -407,19 +411,45 @@ namespace Urbaxio {
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor));
             glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength);
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "viewPos"), 1, glm::value_ptr(viewPos));
-            glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
-            glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), 0); // Убедимся, что освещение включено
             for (const auto* obj : scene->get_all_objects()) {
                 if (obj && obj->vao != 0 && obj->index_count > 0) {
-                    if (obj->get_id() == previewObjectId) { // This is the object being moved, hide it.
+                    
+                    // Skip the object if it's being moved by the MoveTool (handled by ghost mesh)
+                    if (obj->get_id() == previewObjectId) { 
                         continue;
                     }
+
+                    // 1. Set Transform (Model Matrix)
+                    glm::mat4 modelMatrix = identityModel;
+                    auto transformIt = transformOverrides.find(obj->get_id());
+                    if (transformIt != transformOverrides.end()) {
+                        modelMatrix = transformIt->second;
+                    }
+                    glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
+                    
+                    // 2. Set Color
+                    glm::vec3 currentColor = defaultObjectColor;
+                    auto colorIt = colorOverrides.find(obj->get_id());
+                    if (colorIt != colorOverrides.end()) {
+                        currentColor = colorIt->second;
+                    }
+                    glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(currentColor));
+                    
+                    // 3. Set Lighting
+                    bool isUnlit = false;
+                    auto unlitIt = unlitOverrides.find(obj->get_id());
+                    if (unlitIt != unlitOverrides.end()) {
+                        isUnlit = unlitIt->second;
+                    }
+                    glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), isUnlit);
+                    glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+                    
+                    // Skip rendering special markers in this main pass
                     const auto& name = obj->get_name();
-                    if (name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m" && name != "LeftControllerVisual" && name != "RightControllerVisual") {
-                        glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
-                        glBindVertexArray(obj->vao);
-                        glDrawElements(GL_TRIANGLES, obj->index_count, GL_UNSIGNED_INT, 0);
-                        glBindVertexArray(0);
+                    if (name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
+                         glBindVertexArray(obj->vao);
+                         glDrawElements(GL_TRIANGLES, obj->index_count, GL_UNSIGNED_INT, 0);
+                         glBindVertexArray(0);
                     }
                 }
             }

@@ -10,6 +10,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <glm/gtx/transform.hpp> // For glm::scale, glm::translate
 #include <cmath> // For std::sin, std::cos
 
 // Helper macro for checking OpenXR function results during initialization
@@ -543,7 +544,11 @@ void VRManager::UpdateViews() {
     for (uint32_t i = 0; i < viewCount; ++i) {
         renderViews[i].pose = views[i].pose;
         renderViews[i].fov = views[i].fov;
-        renderViews[i].viewMatrix = XrPoseToMat4(views[i].pose);
+
+        // Apply the INVERSE of the world transform to the camera's view matrix
+        glm::mat4 rawViewMatrix = XrPoseToMat4(views[i].pose);
+        renderViews[i].viewMatrix = rawViewMatrix * glm::inverse(worldTransform_);
+
         renderViews[i].projectionMatrix = XrFovToProjMat4(views[i].fov, 0.1f, 1000.0f);
     }
 }
@@ -667,13 +672,57 @@ void VRManager::PollActions() {
     float rightTrigger = readFloat(triggerValueAction, rightHandPath);
     float rightSqueeze = readFloat(squeezeValueAction, rightHandPath);
 
-    // --- Combine and Smooth Values ---
+    // --- Combine and Smooth Values for Visuals ---
     float targetLeftPress = std::max(leftTrigger, leftSqueeze);
     float targetRightPress = std::max(rightTrigger, rightSqueeze);
 
     const float smoothingFactor = 0.25f;
     leftHandVisual_.pressValue += smoothingFactor * (targetLeftPress - leftHandVisual_.pressValue);
     rightHandVisual_.pressValue += smoothingFactor * (targetRightPress - rightHandVisual_.pressValue);
+    
+    // --- REVISED: Anchor-based Grab Locomotion with Hysteresis ---
+    const float GRAB_ON_THRESHOLD = 0.75f;
+    const float GRAB_OFF_THRESHOLD = 0.60f;
+
+    auto wantsToGrab = [&](bool isCurrentlyGrabbing, float squeezeValue) {
+        float threshold = isCurrentlyGrabbing ? GRAB_OFF_THRESHOLD : GRAB_ON_THRESHOLD;
+        return squeezeValue > threshold;
+    };
+
+    bool leftWantsToGrab = wantsToGrab(leftGrabState_.isGrabbing, leftSqueeze);
+    bool rightWantsToGrab = wantsToGrab(rightGrabState_.isGrabbing, rightSqueeze);
+
+    auto poseToMat4 = [](const XrPosef& pose) {
+        glm::quat q(pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z);
+        glm::vec3 p(pose.position.x, pose.position.y, pose.position.z);
+        return glm::translate(p) * glm::toMat4(q);
+    };
+
+    auto updateGrab = [&](bool isGrabbingNow, GrabState& grabState, const HandVisual& hand) {
+        if (isGrabbingNow && !grabState.isGrabbing && hand.isValid) { // Grab started
+            grabState.isGrabbing = true;
+            glm::mat4 handToWorld = poseToMat4(hand.pose);
+            // The anchor is the current world transform multiplied by the hand's transform.
+            grabState.worldFromHandAnchor = worldTransform_ * handToWorld;
+        } else if (!isGrabbingNow && grabState.isGrabbing) { // Grab ended
+            grabState.isGrabbing = false;
+        } else if (isGrabbingNow && grabState.isGrabbing && hand.isValid) { // Grab continues
+            glm::mat4 handToWorld = poseToMat4(hand.pose);
+            // Recalculate the world transform from the constant anchor and the new hand position.
+            worldTransform_ = grabState.worldFromHandAnchor * glm::inverse(handToWorld);
+        }
+    };
+
+    if (leftWantsToGrab) {
+        updateGrab(true, leftGrabState_, leftHandVisual_);
+        updateGrab(false, rightGrabState_, rightHandVisual_);
+    } else if (rightWantsToGrab) {
+        updateGrab(true, rightGrabState_, rightHandVisual_);
+        updateGrab(false, leftGrabState_, leftHandVisual_);
+    } else {
+        updateGrab(false, leftGrabState_, leftHandVisual_);
+        updateGrab(false, rightGrabState_, rightHandVisual_);
+    }
 }
 
 } // namespace Urbaxio

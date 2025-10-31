@@ -56,7 +56,8 @@ namespace Urbaxio::CadKernel {
         try {
             OCC_CATCH_SIGNALS
                 if (dx <= 0 || dy <= 0 || dz <= 0) { return nullptr; }
-            BRepPrimAPI_MakeBox mkBox(dx, dy, dz);
+            // --- MODIFIED LINE: Create a centered box ---
+            BRepPrimAPI_MakeBox mkBox(gp_Pnt(-dx / 2.0, -dy / 2.0, -dz / 2.0), gp_Pnt(dx / 2.0, dy / 2.0, dz / 2.0));
             mkBox.Build();
             if (!mkBox.IsDone()) {
                 Message::SendFail() << "CAD Kernel: Error! BRepPrimAPI_MakeBox failed. IsDone() returned false.";
