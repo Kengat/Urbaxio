@@ -451,16 +451,10 @@ int main(int argc, char* argv[]) {
                     glm::vec3 localDir = tilt * glm::vec3(0.0f, 0.0f, -1.0f);
                     vrRayDirection = glm::normalize(glm::vec3(finalPoseMatrix * glm::vec4(localDir, 0.0f)));
                     // Dynamic, scale-aware snap radius
-                    const float BASE_VR_SNAP_RADIUS = 0.01f; // 1 cm at 1:1 scale
+                    const float BASE_VR_SNAP_RADIUS = 0.05f;
                     float worldScale = glm::length(glm::vec3(vrManager->GetWorldTransform()[0]));
                     float dynamicSnapRadius = BASE_VR_SNAP_RADIUS * worldScale;
                     vrSnap = snappingSystem.FindSnapPointFromRay(vrRayOrigin, vrRayDirection, *scene_ptr, dynamicSnapRadius);
-                    float rayLength = 100.0f;
-                    // Shorten only for real geometry (not GRID plane)
-                    glm::vec3 rayEnd = (vrSnap.snapped && vrSnap.type != Urbaxio::SnapType::GRID)
-                        ? vrSnap.worldPoint
-                        : (vrRayOrigin + vrRayDirection * rayLength);
-                    renderer.UpdateVRPointer(vrRayOrigin, rayEnd, true);
                 } else {
                     renderer.UpdateVRPointer({}, {}, false);
                 }
@@ -493,6 +487,39 @@ int main(int argc, char* argv[]) {
                     transformOverrides[rightControllerVisual->get_id()] = worldTransform * rawPoseMatrix * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
                     colorOverrides[rightControllerVisual->get_id()] = MixColorFromPress(rightHandVisual.pressValue);
                     unlitOverrides[rightControllerVisual->get_id()] = true;
+                }
+
+                // Update VR pointer with menu clipping
+                if (rightHandVisual.isValid) {
+                    float rayLength = 100.0f;
+                    glm::vec3 rayEnd = (vrSnap.snapped && vrSnap.type != Urbaxio::SnapType::GRID) 
+                                       ? vrSnap.worldPoint 
+                                       : vrRayOrigin + vrRayDirection * rayLength;
+                    if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual) {
+                        float closestHit = std::numeric_limits<float>::max();
+                        auto it = transformOverrides.find(leftControllerVisual->get_id());
+                         if (it != transformOverrides.end()) {
+                            const glm::mat4& controllerTransform = it->second;
+                            float worldScale = glm::length(glm::vec3(vrManager->GetWorldTransform()[0]));
+                            glm::vec3 controllerRight = glm::normalize(glm::vec3(controllerTransform[0]));
+                            glm::quat menuTilt = glm::angleAxis(glm::radians(-70.0f), controllerRight);
+                            glm::vec3 menuUp = menuTilt * glm::normalize(glm::vec3(controllerTransform[1]));
+                            glm::vec3 menuStartPos = glm::vec3(controllerTransform[3]) + controllerRight * (0.1f * worldScale);
+                            float lineSpacing = 0.05f * worldScale;
+                            float sphereRadius = 0.02f * worldScale;
+                            for (size_t tool_idx = 0; tool_idx < 4; ++tool_idx) {
+                                glm::vec3 sphereCenter = menuStartPos - menuUp * (float)tool_idx * lineSpacing - controllerRight * (sphereRadius * 2.0f);
+                                float dist;
+                                if (glm::intersectRaySphere(vrRayOrigin, vrRayDirection, sphereCenter, sphereRadius * sphereRadius, dist) && dist < closestHit) {
+                                    closestHit = dist;
+                                }
+                            }
+                         }
+                        if (closestHit < std::numeric_limits<float>::max() && closestHit < glm::distance(vrRayOrigin, rayEnd)) {
+                            rayEnd = vrRayOrigin + vrRayDirection * closestHit;
+                        }
+                    }
+                    renderer.UpdateVRPointer(vrRayOrigin, rayEnd, true);
                 }
 
                 const auto& vr_views = vrManager->GetViews();
@@ -531,57 +558,121 @@ int main(int argc, char* argv[]) {
 
                             // Offset and spacing scale with worldScale to keep menu attached to the controller
                             glm::vec3 menuStartPos = controllerPos + controllerRight * (0.1f * worldScale);
-                            float lineSpacing = 0.03f * worldScale;
+                            float lineSpacing = 0.05f * worldScale;
 
-                            const std::vector<std::string> toolNames = {"Select", "Line", "Move", "Push/Pull"};
+                            const std::vector<std::string> toolNames = {"Select", "Line", "Push/Pull", "Move"};
                             if (toolMenuAlphas.size() != toolNames.size()) {
                                 toolMenuAlphas.assign(toolNames.size(), 0.0f);
                             }
 
                             // Ray-menu hit testing
                             hoveredToolIndex = -1;
-                            if (glm::length(vrRayDirection) > 0.0f) {
-                                float closestHit = std::numeric_limits<float>::max();
+                            float closestHit = std::numeric_limits<float>::max();
+                            float hitboxHeight = 0.04f * worldScale;
+                            float hitboxWidth = 0.2f * worldScale;
+                            
+                            if (rightHandVisual.isValid) {
                                 for (size_t tool_idx = 0; tool_idx < toolNames.size(); ++tool_idx) {
-                                    glm::vec3 itemPos = menuStartPos - menuUp * (float)tool_idx * lineSpacing;
-                                    float hitboxWidth = 0.2f * worldScale;
-                                    float hitboxHeight = 0.04f * worldScale;
-
-                                    glm::vec3 p0 = itemPos - controllerRight * (hitboxWidth * 0.5f) + menuUp * (hitboxHeight * 0.5f);
-                                    glm::vec3 p1 = itemPos + controllerRight * (hitboxWidth * 0.5f) + menuUp * (hitboxHeight * 0.5f);
-                                    glm::vec3 p2 = itemPos + controllerRight * (hitboxWidth * 0.5f) - menuUp * (hitboxHeight * 0.5f);
-                                    glm::vec3 p3 = itemPos - controllerRight * (hitboxWidth * 0.5f) - menuUp * (hitboxHeight * 0.5f);
-
-                                    glm::vec2 baryPosition; // required by GLM API, not used further
-                                    float d1, d2;
-                                    bool h1 = glm::intersectRayTriangle(vrRayOrigin, vrRayDirection, p0, p1, p2, baryPosition, d1);
-                                    bool h2 = glm::intersectRayTriangle(vrRayOrigin, vrRayDirection, p0, p2, p3, baryPosition, d2);
-                                    if (h1 && d1 < closestHit) { closestHit = d1; hoveredToolIndex = (int)tool_idx; }
-                                    if (h2 && d2 < closestHit) { closestHit = d2; hoveredToolIndex = (int)tool_idx; }
+                                    glm::vec3 itemTextPos = menuStartPos - menuUp * (float)tool_idx * lineSpacing;
+                                    
+                                    glm::vec3 p0 = itemTextPos - controllerRight * (hitboxWidth / 2.0f) + menuUp * (hitboxHeight / 2.0f);
+                                    glm::vec3 p1 = itemTextPos + controllerRight * (hitboxWidth / 2.0f) + menuUp * (hitboxHeight / 2.0f);
+                                    glm::vec3 p2 = itemTextPos + controllerRight * (hitboxWidth / 2.0f) - menuUp * (hitboxHeight / 2.0f);
+                                    glm::vec3 p3 = itemTextPos - controllerRight * (hitboxWidth / 2.0f) - menuUp * (hitboxHeight / 2.0f);
+                                    glm::vec2 baryPosition;
+                                    float dist1, dist2;
+                                    bool hit1 = glm::intersectRayTriangle(vrRayOrigin, vrRayDirection, p0, p1, p2, baryPosition, dist1);
+                                    bool hit2 = glm::intersectRayTriangle(vrRayOrigin, vrRayDirection, p0, p2, p3, baryPosition, dist2);
+                                    if ((hit1 && dist1 < closestHit) || (hit2 && dist2 < closestHit)) {
+                                        closestHit = hit1 ? dist1 : dist2;
+                                        hoveredToolIndex = static_cast<int>(tool_idx);
+                                    }
                                 }
                             }
 
-                            // Render with per-item highlight fade
-                            const float HIGHLIGHT_FADE_SPEED = 0.15f;
-                            for (size_t tool_idx = 0; tool_idx < toolNames.size(); ++tool_idx) {
-                                glm::vec3 itemPos = menuStartPos - menuUp * (float)tool_idx * lineSpacing;
+                            // --- Tool Selection Logic ---
+                            if (rightHandVisual.triggerClicked && hoveredToolIndex != -1) {
+                                Urbaxio::Tools::ToolType selectedToolType;
+                                switch (hoveredToolIndex) {
+                                    case 0: selectedToolType = Urbaxio::Tools::ToolType::Select; break;
+                                    case 1: selectedToolType = Urbaxio::Tools::ToolType::Line; break;
+                                    case 2: selectedToolType = Urbaxio::Tools::ToolType::PushPull; break;
+                                    case 3: selectedToolType = Urbaxio::Tools::ToolType::Move; break;
+                                    default: selectedToolType = Urbaxio::Tools::ToolType::Select; break;
+                                }
+                                toolManager.SetTool(selectedToolType);
+                            }
 
-                                // Constant apparent size (same logic as zoom text)
-                                const float desiredPxHeight = 40.0f;
+                            const float HIGHLIGHT_FADE_SPEED = 0.15f;
+                            Urbaxio::Tools::ToolType activeToolType = toolManager.GetActiveToolType();
+                            for (size_t tool_idx = 0; tool_idx < toolNames.size(); ++tool_idx) {
+                                Urbaxio::Tools::ToolType toolType;
+                                switch (tool_idx) {
+                                    case 0: toolType = Urbaxio::Tools::ToolType::Select; break;
+                                    case 1: toolType = Urbaxio::Tools::ToolType::Line; break;
+                                    case 2: toolType = Urbaxio::Tools::ToolType::PushPull; break;
+                                    case 3: toolType = Urbaxio::Tools::ToolType::Move; break;
+                                    default: toolType = Urbaxio::Tools::ToolType::Select; break;
+                                }
+                                bool isSelected = activeToolType == toolType;
+                                bool isHovered = hoveredToolIndex == static_cast<int>(tool_idx);
+                                
+                                float targetAlpha = isHovered ? 1.0f : (isSelected ? 0.8f : 0.5f);
+                                toolMenuAlphas[tool_idx] += (targetAlpha - toolMenuAlphas[tool_idx]) * HIGHLIGHT_FADE_SPEED;
+                                glm::vec3 itemTextPos = menuStartPos - menuUp * (float)tool_idx * lineSpacing;
+
+                                // Render Sprite Widget (Quad)
+                                float widget_diameter_scaled = 0.03f * worldScale;
+                                glm::vec3 widgetCenter = itemTextPos - controllerRight * (widget_diameter_scaled * 0.75f + 0.01f * worldScale);
+                                
+                                // --- Build Model Matrix for the Billboard ---
+                                // 1. Get camera's world-space orientation vectors from the inverse view matrix.
+                                // These vectors are guaranteed to be orthogonal and define the camera's orientation.
+                                glm::mat4 cameraWorld = glm::inverse(view);
+                                glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
+                                glm::vec3 camUp    = glm::normalize(glm::vec3(cameraWorld[1]));
+                                glm::vec3 camFwd   = glm::normalize(glm::vec3(cameraWorld[2]));
+                                
+                                // 2. Construct the model matrix manually.
+                                // The rotation part aligns the widget with the camera, the scale part sizes it,
+                                // and the translation part positions it.
+                                glm::mat4 finalModel = glm::translate(glm::mat4(1.0f), widgetCenter) * // 3. Translate
+                                                       glm::mat4(glm::mat3(camRight, camUp, camFwd)) * // 2. Rotate to face camera
+                                                       glm::scale(glm::mat4(1.0f), glm::vec3(widget_diameter_scaled)); // 1. Scale
+                                // --- End Build Model Matrix ---
+                                
+                                // Define colors
+                                glm::vec3 selectedColor = glm::vec3(1.0f, 0.65f, 0.0f);
+                                glm::vec3 inactiveColor = glm::vec3(0.3f, 0.75f, 1.0f);
+                                
+                                // Smoothly interpolate between inactive and selected colors based on selection state and hover
+                                float selectionFactor = toolMenuAlphas[tool_idx];
+                                glm::vec3 baseColor = isSelected ? glm::mix(inactiveColor, selectedColor, selectionFactor) : inactiveColor;
+                                if (isHovered && !isSelected) {
+                                    baseColor = glm::mix(inactiveColor, glm::vec3(1.0f), 0.5f);
+                                }
+                                
+                                float aberration = toolMenuAlphas[tool_idx] * 0.1f;
+                                
+                                renderer.RenderVRMenuWidget(
+                                    view, projection,
+                                    finalModel,
+                                    baseColor, aberration, vrManager->leftMenuAlpha
+                                );
+                                
+                                // Render Text
+                                const float desiredPxHeight = 40.0f; 
                                 float viewportH = static_cast<float>(swapchain.height);
                                 const auto& fov = current_view.fov;
-                                float viewZ = -(view * glm::vec4(itemPos, 1.0f)).z;
+                                float viewZ = -(view * glm::vec4(itemTextPos, 1.0f)).z;
                                 viewZ = std::max(0.1f, viewZ);
                                 float worldUnitsPerPixel = viewZ * (tanf(fov.angleUp) - tanf(fov.angleDown)) / viewportH;
                                 float textWorldSize = desiredPxHeight * worldUnitsPerPixel;
                                 float finalWorldHeight = textWorldSize * worldScale;
 
-                                float target = (hoveredToolIndex == (int)tool_idx) ? 1.0f : 0.5f;
-                                toolMenuAlphas[tool_idx] += (target - toolMenuAlphas[tool_idx]) * HIGHLIGHT_FADE_SPEED;
-
                                 textRenderer.AddText(
                                     toolNames[tool_idx],
-                                    itemPos,
+                                    itemTextPos,
                                     glm::vec4(1.0f, 1.0f, 1.0f, vrManager->leftMenuAlpha * toolMenuAlphas[tool_idx]),
                                     finalWorldHeight,
                                     view

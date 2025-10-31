@@ -681,6 +681,13 @@ void VRManager::PollActions() {
     leftHandVisual_.pressValue += smoothingFactor * (targetLeftPress - leftHandVisual_.pressValue);
     rightHandVisual_.pressValue += smoothingFactor * (targetRightPress - rightHandVisual_.pressValue);
     
+    // --- Update Right Hand Trigger Click State ---
+    rightHandVisual_.triggerClicked = false; // Reset every frame
+    if (rightTrigger > 0.8f && !rightHandVisual_.triggerWasPressed) {
+        rightHandVisual_.triggerClicked = true;
+    }
+    rightHandVisual_.triggerWasPressed = (rightTrigger > 0.8f);
+    
     // --- Update Left Hand Tool Menu Alpha ---
     {
         const float MENU_FADE_SPEED = 0.1f;

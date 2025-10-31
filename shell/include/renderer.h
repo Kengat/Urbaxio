@@ -74,6 +74,12 @@ namespace Urbaxio {
         void UpdateAxesVBO(const glm::vec4& colorX, const glm::vec4& colorY, const glm::vec4& colorZ, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor);
         void RenderSelectionBox(const glm::vec2& start, const glm::vec2& end, int screenWidth, int screenHeight); // <-- NEW
         
+        void RenderVRMenuWidget(
+            const glm::mat4& view, const glm::mat4& projection,
+            const glm::mat4& model,
+            const glm::vec3& baseColor, float aberration, float globalAlpha
+        );
+
         // --- NEW: Ghost Mesh methods ---
         void UpdateGhostMesh(const CadKernel::MeshBuffers& mesh, const std::vector<unsigned int>& wireframeIndices);
         void ClearGhostMesh();
@@ -86,6 +92,8 @@ namespace Urbaxio {
             const glm::vec3& color,
             bool unlit = false
         );
+
+        GLuint vrMenuWidgetShaderProgram = 0; // For menu spheres
 
     private:
         GLuint objectShaderProgram = 0;
@@ -182,5 +190,6 @@ namespace Urbaxio {
         const char* markerVertexShaderSource; const char* markerFragmentShaderSource;
         const char* dashedLineVertexShaderSource; const char* dashedLineFragmentShaderSource;
         const char* selectionBoxVertexShaderSource; const char* selectionBoxFragmentShaderSource;
+        const char* vrMenuWidgetVertexShaderSource; const char* vrMenuWidgetFragmentShaderSource;
     };
 }

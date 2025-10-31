@@ -358,9 +358,58 @@ namespace Urbaxio {
             "void main() {\n"
             "    FragColor = u_Color;\n"
             "}\n";
+            
+        vrMenuWidgetVertexShaderSource =
+            "#version 330 core\n"
+            "layout (location = 0) in vec3 aPos; // Quad from -0.5 to 0.5 on XY plane\n"
+            "uniform mat4 projection;\n"
+            "uniform mat4 view;\n"
+            "uniform mat4 model;\n"
+            "out vec2 vUv;\n"
+            "void main() {\n"
+            "    vUv = aPos.xy;\n"
+            "    gl_Position = projection * view * model * vec4(aPos, 1.0);\n"
+            "}\n";
+        vrMenuWidgetFragmentShaderSource =
+            "#version 330 core\n"
+            "out vec4 FragColor;\n"
+            "in vec2 vUv;\n"
+            "\n"
+            "uniform vec3 u_baseColor;\n"
+            "uniform float u_aberrationAmount;\n"
+            "uniform float u_globalAlpha;\n"
+            "uniform vec3 u_aberrationColor1;\n"
+            "uniform vec3 u_aberrationColor2;\n"
+            "\n"
+            "const float edgeSoftness = 0.4;\n"
+            "\n"
+            "void main() {\n"
+            "    // Red layer (custom color 1)\n"
+            "    vec2 offsetR = vec2(1.0, 1.0) * u_aberrationAmount;\n"
+            "    float distR = length(vUv - offsetR);\n"
+            "    float alphaR = (1.0 - smoothstep(0.5 - edgeSoftness, 0.5, distR)) * 0.6;\n"
+            "    vec4 colorR = vec4(u_aberrationColor1, alphaR);\n"
+            "\n"
+            "    // Blue layer (custom color 2)\n"
+            "    vec2 offsetB = vec2(-1.0, -1.0) * u_aberrationAmount;\n"
+            "    float distB = length(vUv - offsetB);\n"
+            "    float alphaB = (1.0 - smoothstep(0.5 - edgeSoftness, 0.5, distB)) * 0.7;\n"
+            "    vec4 colorB = vec4(u_aberrationColor2, alphaB);\n"
+            "\n"
+            "    // Base layer\n"
+            "    float distBase = length(vUv);\n"
+            "    float alphaBase = 1.0 - smoothstep(0.5 - edgeSoftness, 0.5, distBase);\n"
+            "    vec4 colorBase = vec4(u_baseColor, alphaBase);\n"
+            "\n"
+            "    // Additive blending for a glow effect\n"
+            "    vec3 finalRGB = colorBase.rgb * colorBase.a + colorR.rgb * colorR.a + colorB.rgb * colorB.a;\n"
+            "    float finalAlpha = max(colorBase.a, max(colorR.a, colorB.a));\n"
+            "\n"
+            "    FragColor = vec4(finalRGB, finalAlpha * u_globalAlpha);\n"
+            "}\n";
     }
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateGhostMeshResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateSplatResources()) return false; if (!CreateGhostMeshResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
     
     void Renderer::RenderFrame(
@@ -715,6 +764,7 @@ namespace Urbaxio {
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, dashedLineVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, dashedLineFragmentShaderSource); if (vs != 0 && fs != 0) dashedLineShaderProgram = LinkShaderProgram(vs, fs); if (dashedLineShaderProgram == 0) return false; std::cout << "Renderer: Dashed Line shader program created." << std::endl; }
         // Selection Box Shader
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, selectionBoxVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, selectionBoxFragmentShaderSource); if (vs != 0 && fs != 0) selectionBoxShaderProgram = LinkShaderProgram(vs, fs); if (selectionBoxShaderProgram == 0) return false; std::cout << "Renderer: Selection Box shader program created." << std::endl; }
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, vrMenuWidgetVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, vrMenuWidgetFragmentShaderSource); if (vs != 0 && fs != 0) vrMenuWidgetShaderProgram = LinkShaderProgram(vs, fs); if (vrMenuWidgetShaderProgram == 0) return false; std::cout << "Renderer: VR Menu Widget shader program created." << std::endl; }
         return true;
     }
     bool Renderer::CreateGridResources() {
@@ -875,6 +925,7 @@ namespace Urbaxio {
         if (markerShaderProgram != 0) glDeleteProgram(markerShaderProgram); markerShaderProgram = 0;
         if (dashedLineShaderProgram != 0) glDeleteProgram(dashedLineShaderProgram); dashedLineShaderProgram = 0;
         if (selectionBoxShaderProgram != 0) glDeleteProgram(selectionBoxShaderProgram); selectionBoxShaderProgram = 0;
+        if (vrMenuWidgetShaderProgram != 0) glDeleteProgram(vrMenuWidgetShaderProgram); vrMenuWidgetShaderProgram = 0;
         if (selectionBoxVAO != 0) glDeleteVertexArrays(1, &selectionBoxVAO); selectionBoxVAO = 0; if (selectionBoxVBO != 0) glDeleteBuffers(1, &selectionBoxVBO); selectionBoxVBO = 0;
         std::cout << "Renderer: Resource cleanup finished." << std::endl;
     }
@@ -1161,6 +1212,28 @@ namespace Urbaxio {
         glBindVertexArray(0);
         std::cout << "Renderer: Selection Box VAO/VBO created." << std::endl;
         return selectionBoxVAO != 0 && selectionBoxVBO != 0;
+    }
+
+    void Renderer::RenderVRMenuWidget(
+        const glm::mat4& view, const glm::mat4& projection,
+        const glm::mat4& model,
+        const glm::vec3& baseColor, float aberration, float globalAlpha
+    ) {
+        if (vrMenuWidgetShaderProgram == 0 || splatVAO == 0) return;
+
+        glDepthMask(GL_FALSE);
+        glUseProgram(vrMenuWidgetShaderProgram);
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+        
+        glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(baseColor));
+        glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), globalAlpha);
+        glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationAmount"), aberration);
+        
+        glBindVertexArray(splatVAO);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        glDepthMask(GL_TRUE);
     }
 
     bool Renderer::CreateGhostMeshResources() {

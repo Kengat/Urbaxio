@@ -48,6 +48,8 @@ struct HandVisual {
     bool isValid = false;
     XrPosef pose{};
     float pressValue = 0.0f; // Smoothed value from 0.0 to 1.0
+    bool triggerWasPressed = false; // Internal state for click detection
+    bool triggerClicked = false;    // Public flag, true for one frame on click
 };
 
 // Struct to manage grab locomotion state
