@@ -10,6 +10,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <cmath> // For std::sin, std::cos
 
 // Helper macro for checking OpenXR function results during initialization
 #define XR_CHECK_INIT(result, message) \
@@ -357,7 +358,20 @@ bool VRManager::CreateSwapchains() {
 bool VRManager::CreateAppSpace() {
     XrReferenceSpaceCreateInfo spaceCreateInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     spaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
-    spaceCreateInfo.poseInReferenceSpace = {{0,0,0,1},{0,1.6f,0}}; // Start at average eye height
+
+    // Rotate -90 degrees around the X-axis to convert the application's Z-up world
+    // into OpenXR's Y-up reference space.
+    const float angle = glm::radians(-90.0f);
+    const float half_angle = angle * 0.5f;
+    
+    spaceCreateInfo.poseInReferenceSpace.orientation.x = std::sin(half_angle);
+    spaceCreateInfo.poseInReferenceSpace.orientation.y = 0.0f;
+    spaceCreateInfo.poseInReferenceSpace.orientation.z = 0.0f;
+    spaceCreateInfo.poseInReferenceSpace.orientation.w = std::cos(half_angle);
+    
+    // Let the runtime manage the user's height by setting position to identity.
+    spaceCreateInfo.poseInReferenceSpace.position = { 0.0f, 0.0f, 0.0f };
+
     XR_CHECK(xrCreateReferenceSpace(session, &spaceCreateInfo, &appSpace), "Failed to create app space");
     return true;
 }

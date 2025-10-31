@@ -353,13 +353,12 @@ int main(int argc, char* argv[]) {
                     // Get view-specific data
                     const auto& current_view = vr_views[i];
                     
-                    // Coordinate system adaptation: OpenXR uses Y-up, app uses Z-up
-                    // Apply a 90° rotation around X to the world (inverse of rotating the camera)
-                    glm::mat4 worldRotation = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-                    glm::mat4 view = current_view.viewMatrix * worldRotation;
-                    
+                    // The view matrix from VRManager is now correctly oriented for a Z-up world.
+                    const glm::mat4& view = current_view.viewMatrix;
                     const glm::mat4& projection = current_view.projectionMatrix;
-                    const glm::vec3 viewPos = glm::vec3(glm::inverse(current_view.viewMatrix)[3]);
+                    
+                    // Correctly calculate view position from the final view matrix for lighting.
+                    const glm::vec3 viewPos = glm::vec3(glm::inverse(view)[3]);
                     
                     // Call the modified render function
                     // Note: No selection, hover, snapping, or previews in VR yet. ImGui is only rendered to the desktop window.
