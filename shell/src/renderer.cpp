@@ -360,7 +360,7 @@ namespace Urbaxio {
             "}\n";
     }
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreateGhostMeshResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateGhostMeshResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
     
     void Renderer::RenderFrame(
@@ -604,6 +604,21 @@ namespace Urbaxio {
             glBindVertexArray(0);
             glLineWidth(1.0f);
         }
+
+        glLineWidth(1.0f);
+
+        // --- NEW: Draw VR Pointer Ray ---
+        if (vrPointerEnabled && vrPointerVAO != 0 && simpleLineShaderProgram != 0) {
+            glLineWidth(2.0f);
+            glUseProgram(simpleLineShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            glBindVertexArray(vrPointerVAO);
+            glDrawArrays(GL_LINES, 0, 2);
+            glBindVertexArray(0);
+            glLineWidth(1.0f);
+        }
         
         if (unlitShaderProgram != 0 && scene) {
             glUseProgram(unlitShaderProgram);
@@ -843,6 +858,7 @@ namespace Urbaxio {
         if (previewLineVAO != 0) glDeleteVertexArrays(1, &previewLineVAO); previewLineVAO = 0; if (previewLineVBO != 0) glDeleteBuffers(1, &previewLineVBO); previewLineVBO = 0;
         if (previewOutlineVAO != 0) glDeleteVertexArrays(1, &previewOutlineVAO); previewOutlineVAO = 0; if (previewOutlineVBO != 0) glDeleteBuffers(1, &previewOutlineVBO); previewOutlineVBO = 0;
         if (ghostMeshVAO != 0) { glDeleteVertexArrays(1, &ghostMeshVAO); ghostMeshVAO = 0; }
+        if (vrPointerVAO != 0) glDeleteVertexArrays(1, &vrPointerVAO); vrPointerVAO = 0; if (vrPointerVBO != 0) glDeleteBuffers(1, &vrPointerVBO); vrPointerVBO = 0;
         if (ghostMeshVBO_vertices != 0) { glDeleteBuffers(1, &ghostMeshVBO_vertices); ghostMeshVBO_vertices = 0; }
         if (ghostMeshVBO_normals != 0) { glDeleteBuffers(1, &ghostMeshVBO_normals); ghostMeshVBO_normals = 0; }
         if (ghostMeshEBO_triangles != 0) { glDeleteBuffers(1, &ghostMeshEBO_triangles); ghostMeshEBO_triangles = 0; }
@@ -916,6 +932,25 @@ namespace Urbaxio {
         glBindVertexArray(0);
         std::cout << "Renderer: Preview Outline VAO/VBO created." << std::endl;
         return previewOutlineVAO != 0 && previewOutlineVBO != 0;
+    }
+
+    bool Renderer::CreateVRPointerResources() {
+        glGenVertexArrays(1, &vrPointerVAO);
+        glGenBuffers(1, &vrPointerVBO);
+        glBindVertexArray(vrPointerVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, vrPointerVBO);
+        // Buffer for a single line (2 vertices, 7 floats each: position + color)
+        glBufferData(GL_ARRAY_BUFFER, 2 * 7 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+        // Position attribute
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        // Color attribute
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glBindVertexArray(0);
+        vrPointerEnabled = false;
+        std::cout << "Renderer: VR Pointer VAO/VBO created." << std::endl;
+        return vrPointerVAO != 0 && vrPointerVBO != 0;
     }
 
     void Renderer::UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance) {
@@ -1037,6 +1072,21 @@ namespace Urbaxio {
         };
 
         glBindBuffer(GL_ARRAY_BUFFER, previewLineVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(lineData), lineData, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    void Renderer::UpdateVRPointer(const glm::vec3& start, const glm::vec3& end, bool enabled) {
+        vrPointerEnabled = enabled;
+        if (!enabled || vrPointerVBO == 0) {
+            return;
+        }
+        glm::vec4 pointerColor = glm::vec4(1.0f, 1.0f, 0.0f, 1.0f);
+        float lineData[] = {
+            start.x, start.y, start.z, pointerColor.r, pointerColor.g, pointerColor.b, pointerColor.a,
+            end.x,   end.y,   end.z,   pointerColor.r, pointerColor.g, pointerColor.b, pointerColor.a
+        };
+        glBindBuffer(GL_ARRAY_BUFFER, vrPointerVBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(lineData), lineData, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }

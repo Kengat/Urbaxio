@@ -425,6 +425,29 @@ int main(int argc, char* argv[]) {
             if (vrManager->BeginFrame()) {
                 // Poll controller state after syncing actions in BeginFrame
                 vrManager->PollActions();
+                // Prepare VR snap for this frame (used per-eye)
+                Urbaxio::SnapResult vrSnap; vrSnap.snapped = false;
+
+                // --- Update VR Pointer Ray with ergonomic tilt and snapping ---
+                const auto& rightHand = vrManager->GetRightHandVisual();
+                if (rightHand.isValid) {
+                    glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(rightHand.pose);
+                    glm::mat4 finalPoseMatrix = vrManager->GetWorldTransform() * rawPoseMatrix;
+                    glm::vec3 rayOrigin = glm::vec3(finalPoseMatrix[3]);
+                    // Tilt -65 degrees forward around local X, then use local -Z
+                    glm::quat tilt = glm::angleAxis(glm::radians(-65.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+                    glm::vec3 localDir = tilt * glm::vec3(0.0f, 0.0f, -1.0f);
+                    glm::vec3 rayDirection = glm::normalize(glm::vec3(finalPoseMatrix * glm::vec4(localDir, 0.0f)));
+                    vrSnap = snappingSystem.FindSnapPointFromRay(rayOrigin, rayDirection, *scene_ptr);
+                    float rayLength = 100.0f;
+                    // Shorten only for real geometry (not GRID plane)
+                    glm::vec3 rayEnd = (vrSnap.snapped && vrSnap.type != Urbaxio::SnapType::GRID)
+                        ? vrSnap.worldPoint
+                        : (rayOrigin + rayDirection * rayLength);
+                    renderer.UpdateVRPointer(rayOrigin, rayEnd, true);
+                } else {
+                    renderer.UpdateVRPointer({}, {}, false);
+                }
 
                 glDisable(GL_FRAMEBUFFER_SRGB); // Use linear color space for rendering
                 
@@ -446,13 +469,13 @@ int main(int argc, char* argv[]) {
                     unlitOverrides[leftControllerVisual->get_id()] = true;
                 }
 
-                const auto& rightHand = vrManager->GetRightHandVisual();
-                if (rightHand.isValid && rightControllerVisual) {
+                const auto& rightHandVisual = vrManager->GetRightHandVisual();
+                if (rightHandVisual.isValid && rightControllerVisual) {
                     // Apply the world transform to the raw controller pose
-                    glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(rightHand.pose);
+                    glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(rightHandVisual.pose);
                     // REMOVED scale compensation. The controller now scales with the world.
                     transformOverrides[rightControllerVisual->get_id()] = worldTransform * rawPoseMatrix * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
-                    colorOverrides[rightControllerVisual->get_id()] = MixColorFromPress(rightHand.pressValue);
+                    colorOverrides[rightControllerVisual->get_id()] = MixColorFromPress(rightHandVisual.pressValue);
                     unlitOverrides[rightControllerVisual->get_id()] = true;
                 }
 
@@ -482,10 +505,10 @@ int main(int argc, char* argv[]) {
                         objectColor, lightColor, ambientStrength, 
                         showGrid, showAxes, axisLineWidth, negAxisLineWidth,
                         gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
-                        glm::vec3(0.0f), cursorRadius, effectIntensity, 
+                        vrSnap.worldPoint, cursorRadius, effectIntensity, 
                         0, {}, {}, selectionHighlightColor, 
                         0, {}, hoverHighlightColor,
-                        {}, // No snap result
+                        vrSnap, // VR snap result for markers
                         nullptr, // No ImGui data for VR eyes
                         0, glm::mat4(1.0f), // No preview object
                         transformOverrides, // Pass the controller transforms
@@ -553,6 +576,7 @@ int main(int argc, char* argv[]) {
 
         } else {
             // --- 2D RENDER PATH ---
+            renderer.UpdateVRPointer({}, {}, false); // Ensure VR pointer is off
             int mouseX, mouseY;
             SDL_GetMouseState(&mouseX, &mouseY);
             glm::vec3 cursorWorldPos = currentSnap.snapped

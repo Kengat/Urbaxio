@@ -43,6 +43,13 @@ namespace Urbaxio {
             float snapThresholdPixels = 10.0f
         );
 
+        // Find snap point using a world-space ray (for VR)
+        SnapResult FindSnapPointFromRay(
+            const glm::vec3& rayOrigin, const glm::vec3& rayDirection,
+            const Engine::Scene& scene,
+            float pickThresholdRadius = 0.05f // Radius in world units (meters)
+        );
+
         // --- Static Helper Functions ---
         static bool WorldToScreen(
             const glm::vec3& worldPos,

@@ -69,6 +69,7 @@ namespace Urbaxio {
             Engine::Scene* scene
         );
         void UpdatePreviewLine(const glm::vec3& start, const glm::vec3& end, bool enabled = true);
+        void UpdateVRPointer(const glm::vec3& start, const glm::vec3& end, bool enabled); // <-- NEW
         void UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance);
         void UpdateAxesVBO(const glm::vec4& colorX, const glm::vec4& colorY, const glm::vec4& colorZ, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor);
         void RenderSelectionBox(const glm::vec2& start, const glm::vec2& end, int screenWidth, int screenHeight); // <-- NEW
@@ -118,6 +119,10 @@ namespace Urbaxio {
         GLuint previewOutlineVAO = 0, previewOutlineVBO = 0; GLsizei previewOutlineVertexCount = 0; // <-- NEW for dashed outline
         GLuint selectionBoxVAO = 0, selectionBoxVBO = 0; // <-- NEW
 
+        // --- NEW: VR Pointer Resources ---
+        GLuint vrPointerVAO = 0, vrPointerVBO = 0;
+        bool vrPointerEnabled = false;
+
         // --- NEW: Ghost Mesh Resources ---
         GLuint ghostMeshVAO = 0;
         GLuint ghostMeshVBO_vertices = 0;
@@ -163,6 +168,7 @@ namespace Urbaxio {
         bool CreatePreviewLineResources();
         bool CreatePreviewOutlineResources();
         bool CreateSelectionBoxResources();
+        bool CreateVRPointerResources(); // <-- NEW
         bool CreateGhostMeshResources(); // <-- NEW
         void Cleanup();
         void DrawSnapMarker(const SnapResult& snap, const glm::mat4& view, const glm::mat4& proj, int screenWidth, int screenHeight);
