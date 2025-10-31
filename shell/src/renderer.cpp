@@ -415,7 +415,7 @@ namespace Urbaxio {
                         continue;
                     }
                     const auto& name = obj->get_name();
-                    if (name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
+                    if (name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m" && name != "LeftControllerVisual" && name != "RightControllerVisual") {
                         glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
                         glBindVertexArray(obj->vao);
                         glDrawElements(GL_TRIANGLES, obj->index_count, GL_UNSIGNED_INT, 0);
@@ -1140,6 +1140,39 @@ namespace Urbaxio {
             ghostMeshTriangleIndexCount = 0;
             ghostMeshLineIndexCount = 0; // <-- ДОБАВИТЬ
         }
+    }
+
+    void Renderer::RenderSingleObject(
+        const glm::mat4& view, const glm::mat4& projection,
+        Urbaxio::Engine::SceneObject* obj,
+        const glm::mat4& modelMatrix,
+        const glm::vec3& color,
+        bool unlit
+    ) {
+        if (!obj || obj->vao == 0 || obj->index_count == 0 || objectShaderProgram == 0) {
+            return;
+        }
+
+        glUseProgram(objectShaderProgram);
+        glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
+        glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(color));
+        glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), unlit ? 1 : 0);
+        glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+        
+        if (!unlit) {
+            glm::vec3 viewPos = glm::vec3(glm::inverse(view)[3]);
+            glm::vec3 lightDir = -glm::normalize(glm::vec3(glm::inverse(view)[2]));
+            glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir));
+            glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(glm::vec3(1.0f)));
+            glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), 0.3f);
+            glUniform3fv(glGetUniformLocation(objectShaderProgram, "viewPos"), 1, glm::value_ptr(viewPos));
+        }
+
+        glBindVertexArray(obj->vao);
+        glDrawElements(GL_TRIANGLES, obj->index_count, GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
     }
 
 } // namespace Urbaxio

@@ -78,6 +78,7 @@ bool VRManager::Initialize(SDL_Window* window) {
     if (!CreateSession(window)) return false;
     if (!CreateAppSpace()) return false;
     if (!CreateActions()) return false;
+    if (!CreateControllerSpaces()) return false;
     if (!AttachActionSets()) return false;
     if (!CreateSwapchains()) return false;
 
@@ -118,7 +119,10 @@ void VRManager::Shutdown() {
     }
     swapchains.clear();
 
-    // Clean up actions
+    // Clean up actions and spaces
+    if (leftGripSpace != XR_NULL_HANDLE) xrDestroySpace(leftGripSpace);
+    if (rightGripSpace != XR_NULL_HANDLE) xrDestroySpace(rightGripSpace);
+    if (controllerPoseAction != XR_NULL_HANDLE) xrDestroyAction(controllerPoseAction);
     if (triggerValueAction != XR_NULL_HANDLE) xrDestroyAction(triggerValueAction);
     if (squeezeValueAction != XR_NULL_HANDLE) xrDestroyAction(squeezeValueAction);
     if (actionSet != XR_NULL_HANDLE) xrDestroyActionSet(actionSet);
@@ -408,6 +412,15 @@ bool VRManager::CreateActions() {
         actionCI.subactionPaths = subactionPaths;
         XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &squeezeValueAction), "Failed to create squeeze value action");
     }
+    { // Scope for controller pose action
+        XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
+        actionCI.actionType = XR_ACTION_TYPE_POSE_INPUT;
+        strcpy_s(actionCI.actionName, "controller_pose");
+        strcpy_s(actionCI.localizedActionName, "Controller Pose");
+        actionCI.countSubactionPaths = 2;
+        actionCI.subactionPaths = subactionPaths;
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &controllerPoseAction), "Failed to create pose action");
+    }
     
     // 4) Suggest bindings for Oculus Touch profile
     XrPath oculusTouchProfilePath;
@@ -425,6 +438,12 @@ bool VRManager::CreateActions() {
         bindings.push_back({ squeezeValueAction, path });
         XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/squeeze/value", &path), "Failed to get path");
         bindings.push_back({ squeezeValueAction, path });
+
+        // Grip Pose
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/input/grip/pose", &path), "Failed to get path");
+        bindings.push_back({ controllerPoseAction, path });
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/grip/pose", &path), "Failed to get path");
+        bindings.push_back({ controllerPoseAction, path });
     }
 
     XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
@@ -434,6 +453,21 @@ bool VRManager::CreateActions() {
     
     XR_CHECK_INIT(xrSuggestInteractionProfileBindings(instance, &suggestedBindings), "Failed to suggest bindings");
     
+    return true;
+}
+
+bool VRManager::CreateControllerSpaces() {
+    // Left hand
+    XrActionSpaceCreateInfo spaceCI{XR_TYPE_ACTION_SPACE_CREATE_INFO};
+    spaceCI.action = controllerPoseAction;
+    spaceCI.poseInActionSpace = {{0,0,0,1},{0,0,0}};
+    spaceCI.subactionPath = leftHandPath;
+    XR_CHECK_INIT(xrCreateActionSpace(session, &spaceCI, &leftGripSpace), "Failed to create left grip space");
+    
+    // Right hand
+    spaceCI.subactionPath = rightHandPath;
+    XR_CHECK_INIT(xrCreateActionSpace(session, &spaceCI, &rightGripSpace), "Failed to create right grip space");
+
     return true;
 }
 
@@ -595,33 +629,51 @@ void VRManager::ReleaseSwapchainImage(uint32_t viewIndex) {
 }
 
 void VRManager::PollActions() {
-    if (!sessionRunning) return;
+    if (!sessionRunning) {
+        leftHandVisual_.isValid = false;
+        rightHandVisual_.isValid = false;
+        return;
+    }
 
-    // Helper lambda to read a float action state and log it.
-    auto readFloat = [&](XrAction action, XrPath hand, const char* label) {
-        XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
-        getInfo.action = action;
-        getInfo.subactionPath = hand;
-
-        XrActionStateFloat state{XR_TYPE_ACTION_STATE_FLOAT};
-        xrGetActionStateFloat(session, &getInfo, &state);
-
-        // state.isActive indicates if the binding is active and the controller is tracking
-        if (state.isActive) {
-            float value = state.currentState; // This will be in the range [0.0, 1.0]
-            // Only log if the value is significant to avoid console spam
-            if (value > 0.01f) {
-                std::cout << "VR Input: " << label << " value is " << value 
-                          << " (" << (value * 100.0f) << "%)" << std::endl;
-            }
+    // --- Locate Controller Spaces ---
+    auto locateHand = [&](XrSpace space, HandVisual& hand) {
+        XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
+        XrResult res = xrLocateSpace(space, appSpace, frameState.predictedDisplayTime, &location);
+        if (XR_SUCCEEDED(res) &&
+            (location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+            (location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+        {
+            hand.isValid = true;
+            hand.pose = location.pose;
+        } else {
+            hand.isValid = false;
         }
     };
+    locateHand(leftGripSpace, leftHandVisual_);
+    locateHand(rightGripSpace, rightHandVisual_);
 
-    // Read and log the states for both hands and actions
-    readFloat(triggerValueAction, leftHandPath, "Left Trigger");
-    readFloat(triggerValueAction, rightHandPath, "Right Trigger");
-    readFloat(squeezeValueAction, leftHandPath, "Left Grip");
-    readFloat(squeezeValueAction, rightHandPath, "Right Grip");
+    // --- Get Action States ---
+    auto readFloat = [&](XrAction action, XrPath handPath) -> float {
+        XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
+        getInfo.action = action;
+        getInfo.subactionPath = handPath;
+        XrActionStateFloat state{XR_TYPE_ACTION_STATE_FLOAT};
+        xrGetActionStateFloat(session, &getInfo, &state);
+        return (state.isActive) ? state.currentState : 0.0f;
+    };
+    
+    float leftTrigger = readFloat(triggerValueAction, leftHandPath);
+    float leftSqueeze = readFloat(squeezeValueAction, leftHandPath);
+    float rightTrigger = readFloat(triggerValueAction, rightHandPath);
+    float rightSqueeze = readFloat(squeezeValueAction, rightHandPath);
+
+    // --- Combine and Smooth Values ---
+    float targetLeftPress = std::max(leftTrigger, leftSqueeze);
+    float targetRightPress = std::max(rightTrigger, rightSqueeze);
+
+    const float smoothingFactor = 0.25f;
+    leftHandVisual_.pressValue += smoothingFactor * (targetLeftPress - leftHandVisual_.pressValue);
+    rightHandVisual_.pressValue += smoothingFactor * (targetRightPress - rightHandVisual_.pressValue);
 }
 
 } // namespace Urbaxio

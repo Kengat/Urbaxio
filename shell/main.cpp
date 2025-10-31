@@ -29,6 +29,7 @@ extern "C" {
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/norm.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 #include <fmt/core.h>
 
@@ -53,6 +54,20 @@ extern "C" {
 #include <BRepBuilderAPI_Transform.hxx>
 
 namespace { // Anonymous namespace for helpers
+
+    // Helper to create a model matrix from an OpenXR pose
+    glm::mat4 XrPoseToModelMatrix(const XrPosef& pose) {
+        glm::quat orientation(pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z);
+        glm::vec3 position(pose.position.x, pose.position.y, pose.position.z);
+        glm::mat4 rotationMatrix = glm::toMat4(orientation);
+        glm::mat4 translationMatrix = glm::translate(glm::mat4(1.0f), position);
+        return translationMatrix * rotationMatrix;
+    }
+
+    // Helper to interpolate color from green to cyan
+    glm::vec3 MixColorFromPress(float t) {
+        return glm::mix(glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 1.0f, 1.0f), std::clamp(t, 0.0f, 1.0f));
+    }
 
     // --- Capsule generation logic is now in the shell ---
     Urbaxio::CadKernel::MeshBuffers CreateCapsuleMesh(float radius, float height) {
@@ -191,6 +206,14 @@ int main(int argc, char* argv[]) {
     if (capsule_marker_5m) {
         Urbaxio::CadKernel::MeshBuffers mesh = CreateCapsuleMesh(capsuleRadius, capsuleHeight5m);
         capsule_marker_5m->set_mesh_buffers(std::move(mesh));
+    }
+
+    // --- NEW: Create VR Controller Visuals ---
+    Urbaxio::Engine::SceneObject* leftControllerVisual = nullptr;
+    Urbaxio::Engine::SceneObject* rightControllerVisual = nullptr;
+    if (vr_mode) {
+        leftControllerVisual = scene_ptr->create_box_object("LeftControllerVisual", 0.06, 0.06, 0.06);
+        rightControllerVisual = scene_ptr->create_box_object("RightControllerVisual", 0.06, 0.06, 0.06);
     }
 
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
@@ -374,6 +397,21 @@ int main(int argc, char* argv[]) {
                         nullptr, // No ImGui data for VR eyes
                         0, glm::mat4(1.0f) // No preview object
                     );
+
+                    // --- Render Controller Visuals ---
+                    const auto& leftHand = vrManager->GetLeftHandVisual();
+                    const auto& rightHand = vrManager->GetRightHandVisual();
+
+                    auto renderHand = [&](const Urbaxio::HandVisual& hand, Urbaxio::Engine::SceneObject* visual) {
+                        if (hand.isValid && visual && visual->vao != 0) {
+                            glm::mat4 modelMatrix = XrPoseToModelMatrix(hand.pose);
+                            glm::vec3 color = MixColorFromPress(hand.pressValue);
+                            renderer.RenderSingleObject(view, projection, visual, modelMatrix, color, true);
+                        }
+                    };
+
+                    renderHand(leftHand, leftControllerVisual);
+                    renderHand(rightHand, rightControllerVisual);
                     
                     glFinish();
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);

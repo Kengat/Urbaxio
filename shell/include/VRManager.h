@@ -39,6 +39,13 @@ struct VRSwapchain {
     std::vector<GLuint> depthBuffers;  // One depth buffer per FBO
 };
 
+// --- NEW: Struct to hold controller visualization state ---
+struct HandVisual {
+    bool isValid = false;
+    XrPosef pose{};
+    float pressValue = 0.0f; // Smoothed value from 0.0 to 1.0
+};
+
 // Manages all OpenXR state and the VR frame loop
 class VRManager {
 public:
@@ -65,6 +72,8 @@ public:
 
     // --- NEW: Action Polling ---
     void PollActions();
+    const HandVisual& GetLeftHandVisual() const { return leftHandVisual_; }
+    const HandVisual& GetRightHandVisual() const { return rightHandVisual_; }
 
 private:
     bool initialized = false;
@@ -99,8 +108,15 @@ private:
     XrActionSet actionSet = XR_NULL_HANDLE;
     XrAction triggerValueAction = XR_NULL_HANDLE;
     XrAction squeezeValueAction = XR_NULL_HANDLE;
+    XrAction controllerPoseAction = XR_NULL_HANDLE;
     XrPath leftHandPath = XR_NULL_PATH;
     XrPath rightHandPath = XR_NULL_PATH;
+
+    // --- NEW: Controller representation ---
+    XrSpace leftGripSpace = XR_NULL_HANDLE;
+    XrSpace rightGripSpace = XR_NULL_HANDLE;
+    HandVisual leftHandVisual_;
+    HandVisual rightHandVisual_;
 
     // Private initialization methods
     bool CreateInstance();
@@ -110,6 +126,7 @@ private:
     bool CreateSwapchains();
     bool CreateAppSpace();
     bool CreateActions();
+    bool CreateControllerSpaces();
     bool AttachActionSets();
 
     // Private per-frame methods

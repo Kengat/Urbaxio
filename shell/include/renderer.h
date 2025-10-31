@@ -73,6 +73,15 @@ namespace Urbaxio {
         void UpdateGhostMesh(const CadKernel::MeshBuffers& mesh, const std::vector<unsigned int>& wireframeIndices);
         void ClearGhostMesh();
 
+        // Render a single object with custom transform and color (for VR controllers)
+        void RenderSingleObject(
+            const glm::mat4& view, const glm::mat4& projection,
+            Urbaxio::Engine::SceneObject* obj,
+            const glm::mat4& modelMatrix,
+            const glm::vec3& color,
+            bool unlit = false
+        );
+
     private:
         GLuint objectShaderProgram = 0;
         // --- NEW SHADERS ---
