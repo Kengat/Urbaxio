@@ -42,6 +42,9 @@ extern "C" {
 #include <map>
 #include <cstdint>
 
+#include "TextRenderer.h"
+#include <filesystem>
+
 // --- OCCT includes for capsule generation (moved from engine) ---
 #include <gp_Ax2.hxx>
 #include <gp_Pnt.hxx>
@@ -142,6 +145,16 @@ int main(int argc, char* argv[]) {
     }
 
     Urbaxio::Renderer renderer; if (!renderer.Initialize()) { return 1; }
+    Urbaxio::TextRenderer textRenderer;
+    {
+        std::string fontJsonPath = "../../resources/font.json";
+        std::string fontPngPath = "../../resources/font.png";
+        if (!std::filesystem::exists(fontJsonPath)) {
+            fontJsonPath = "../../../resources/font.json";
+            fontPngPath = "../../../resources/font.png";
+        }
+        if (!textRenderer.Initialize(fontJsonPath, fontPngPath)) { /* silent fail */ }
+    }
     Urbaxio::Camera camera; Urbaxio::InputHandler inputHandler;
     Urbaxio::SnappingSystem snappingSystem;
     int object_counter = 0;
@@ -276,13 +289,17 @@ int main(int argc, char* argv[]) {
                         display_w, display_h,
                         screenPos))
                 {
+                    // Apply world scale to get virtual distance
+                    float worldScale = glm::length(glm::vec3(vrManager->GetWorldTransform()[0]));
+                    float distance_virtual = distance_world * worldScale;
+
                     std::string distStr;
-                    if (distance_world > 1000.0f) {
-                        distStr = fmt::format("{:.2f} km", distance_world / 1000.0f);
-                    } else if (distance_world >= 1.0f) {
-                        distStr = fmt::format("{:.2f} m", distance_world);
+                    if (distance_virtual > 1000.0f) {
+                        distStr = fmt::format("{:.2f} km", distance_virtual / 1000.0f);
+                    } else if (distance_virtual >= 1.0f) {
+                        distStr = fmt::format("{:.2f} m", distance_virtual);
                     } else {
-                        distStr = fmt::format("{:.0f} mm", distance_world * 1000.0f);
+                        distStr = fmt::format("{:.0f} mm", distance_virtual * 1000.0f);
                     }
 
                     ImDrawList* drawList = ImGui::GetForegroundDrawList();
@@ -476,6 +493,33 @@ int main(int argc, char* argv[]) {
                         unlitOverrides      // Pass the controller lighting flags
                     );
                     
+                    // 3D distance text in VR
+                    if (vrManager->zoomTextAlpha > 0.01f) {
+                        float worldScale = glm::length(glm::vec3(worldTransform[0]));
+                        float distance_virtual = vrManager->zoomDistance * worldScale;
+                        std::string distStr;
+                        if (distance_virtual > 1000.0f) distStr = fmt::format("{:.2f} km", distance_virtual / 1000.0f);
+                        else if (distance_virtual >= 1.0f) distStr = fmt::format("{:.2f} m", distance_virtual);
+                        else distStr = fmt::format("{:.0f} mm", distance_virtual * 1000.0f);
+                        glm::vec3 midpoint_transformed = TransformPoint(worldTransform, vrManager->zoomMidPoint);
+
+                        // Keep visual size constant by deriving world height from FOV and depth,
+                        // then invert by world scale (stronger effect)
+                        const float desiredPx = 50.0f; // much stronger visual size
+                        float viewportH = static_cast<float>(swapchain.height);
+                        const auto& fov = current_view.fov;
+
+                        float viewZ = -(view * glm::vec4(midpoint_transformed, 1.0f)).z;
+                        viewZ = std::max(0.1f, viewZ);
+
+                        float worldUnitsPerPixel = viewZ * (tanf(fov.angleUp) - tanf(fov.angleDown)) / viewportH;
+                        float textWorldSize = desiredPx * worldUnitsPerPixel;
+                        float finalWorldHeight = textWorldSize * worldScale;
+
+                        textRenderer.AddText(distStr, midpoint_transformed, glm::vec4(1,1,1, vrManager->zoomTextAlpha), finalWorldHeight, view);
+                    }
+                    textRenderer.Render(view, projection);
+
                     glFinish();
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
                     

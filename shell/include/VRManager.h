@@ -57,6 +57,7 @@ struct TwoHandZoomState {
     bool  active = false;
     float startDistance = 1.0f;       // Initial distance between hands
     glm::mat4 startWorldTransform = glm::mat4(1.0f); // worldTransform_ at gesture start
+    glm::vec3 pivotStartTrackingSpace = glm::vec3(0.0f); // Midpoint in tracking space at gesture start
     float previousScale = 1.0f;       // For smoothing
 };
 

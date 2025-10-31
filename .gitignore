@@ -21,3 +21,7 @@ CMakeUserPresets.json
 
 project_snapshot.txt
 pixdetz.txt
+
+# Vendor headers in shell/libs (do not track third-party single headers)
+shell/libs/*.h
+shell/libs/*.hpp

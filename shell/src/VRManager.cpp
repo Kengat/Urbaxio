@@ -707,6 +707,7 @@ void VRManager::PollActions() {
         twoHandZoomState_.startWorldTransform = worldTransform_;
         glm::vec3 pL(leftHandVisual_.pose.position.x, leftHandVisual_.pose.position.y, leftHandVisual_.pose.position.z);
         glm::vec3 pR(rightHandVisual_.pose.position.x, rightHandVisual_.pose.position.y, rightHandVisual_.pose.position.z);
+        twoHandZoomState_.pivotStartTrackingSpace = 0.5f * (pL + pR);
         twoHandZoomState_.startDistance = glm::max(glm::length(pR - pL), 1e-4f);
         twoHandZoomState_.previousScale = 1.0f;
 
@@ -728,11 +729,11 @@ void VRManager::PollActions() {
 
         float currentDist = glm::max(glm::length(pR - pL), 1e-4f);
         zoomDistance = currentDist;
-        float rawScale = glm::clamp(currentDist / twoHandZoomState_.startDistance, ZOOM_MIN, ZOOM_MAX);
+        float rawScale = glm::clamp(twoHandZoomState_.startDistance / currentDist, ZOOM_MIN, ZOOM_MAX);
         float s = glm::mix(twoHandZoomState_.previousScale, rawScale, ZOOM_SMOOTH);
         twoHandZoomState_.previousScale = s;
 
-        glm::vec4 pivotScene4 = twoHandZoomState_.startWorldTransform * glm::vec4(pMid, 1.0f);
+        glm::vec4 pivotScene4 = twoHandZoomState_.startWorldTransform * glm::vec4(twoHandZoomState_.pivotStartTrackingSpace, 1.0f);
         glm::vec3 pivotScene = glm::vec3(pivotScene4);
 
         worldTransform_ = glm::translate(glm::mat4(1.0f), pivotScene) *

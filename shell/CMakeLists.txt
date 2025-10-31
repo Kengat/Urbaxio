@@ -15,6 +15,7 @@ add_executable(Urbaxio
     src/camera.cpp
     src/input_handler.cpp
     src/renderer.cpp
+    src/TextRenderer.cpp
     src/snapping.cpp
     src/VRManager.cpp
     # Add tool source files
@@ -33,6 +34,7 @@ add_executable(Urbaxio
 # NOW specify include directories for the defined target "Urbaxio"
 target_include_directories(Urbaxio PRIVATE
     include # Add the shell/include directory
+    libs    # headers: stb_image.h, json.hpp
     # Also include the backends path for its internal includes
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends"
 )
