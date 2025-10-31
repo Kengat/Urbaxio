@@ -681,6 +681,16 @@ void VRManager::PollActions() {
     leftHandVisual_.pressValue += smoothingFactor * (targetLeftPress - leftHandVisual_.pressValue);
     rightHandVisual_.pressValue += smoothingFactor * (targetRightPress - rightHandVisual_.pressValue);
     
+    // --- Update Left Hand Tool Menu Alpha ---
+    {
+        const float MENU_FADE_SPEED = 0.1f;
+        if (leftTrigger > 0.5f) {
+            leftMenuAlpha = std::min(1.0f, leftMenuAlpha + MENU_FADE_SPEED);
+        } else {
+            leftMenuAlpha = std::max(0.0f, leftMenuAlpha - MENU_FADE_SPEED);
+        }
+    }
+
     // --- REVISED: Anchor-based Grab Locomotion with Hysteresis ---
     const float GRAB_ON_THRESHOLD = 0.75f;
     const float GRAB_OFF_THRESHOLD = 0.60f;

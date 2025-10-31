@@ -102,6 +102,7 @@ public:
     float zoomDistance = 0.0f;
     glm::vec3 zoomMidPoint = glm::vec3(0.0f);
     float zoomTextAlpha = 0.0f;
+    float leftMenuAlpha = 0.0f;
 
 private:
     bool initialized = false;
