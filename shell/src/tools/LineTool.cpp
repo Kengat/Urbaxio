@@ -173,6 +173,8 @@ void LineTool::OnUpdate(const SnapResult& snap) {
     const Uint8* keyboardState = SDL_GetKeyboardState(NULL);
     bool shiftDown = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
 
+    glm::vec3 currentTarget = snap.worldPoint;
+
     switch (currentState) {
         case ToolState::IDLE:
             currentRubberBandEnd = snap.worldPoint;
@@ -192,13 +194,13 @@ void LineTool::OnUpdate(const SnapResult& snap) {
                 }
                 
                 // Priority 2: Fallback to screen-space axis lock if no good snap
-                if (tryToLockAxis(snap.worldPoint)) {
+                if (tryToLockAxis(currentTarget)) {
                     currentState = ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED;
                     return;
                 }
             }
             // If no lock is activated, stay in free mode
-            currentRubberBandEnd = snap.worldPoint;
+            currentRubberBandEnd = currentTarget;
             break;
 
         case ToolState::AWAITING_SECOND_POINT_AXIS_LOCKED:

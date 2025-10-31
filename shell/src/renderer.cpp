@@ -385,13 +385,13 @@ namespace Urbaxio {
             "\n"
             "void main() {\n"
             "    // Red layer (custom color 1)\n"
-            "    vec2 offsetR = vec2(1.0, 1.0) * u_aberrationAmount;\n"
+            "    vec2 offsetR = vec2(1.5, 1.5) * u_aberrationAmount;\n"
             "    float distR = length(vUv - offsetR);\n"
             "    float alphaR = (1.0 - smoothstep(0.5 - edgeSoftness, 0.5, distR)) * 0.6;\n"
             "    vec4 colorR = vec4(u_aberrationColor1, alphaR);\n"
             "\n"
             "    // Blue layer (custom color 2)\n"
-            "    vec2 offsetB = vec2(-1.0, -1.0) * u_aberrationAmount;\n"
+            "    vec2 offsetB = vec2(-1.5, -1.5) * u_aberrationAmount;\n"
             "    float distB = length(vUv - offsetB);\n"
             "    float alphaB = (1.0 - smoothstep(0.5 - edgeSoftness, 0.5, distB)) * 0.7;\n"
             "    vec4 colorB = vec4(u_aberrationColor2, alphaB);\n"
@@ -468,10 +468,17 @@ namespace Urbaxio {
                         continue;
                     }
 
+                    auto transformIt = transformOverrides.find(obj->get_id());
+                    bool hasOverride = (transformIt != transformOverrides.end());
+                    const auto& name = obj->get_name();
+                    if ((name == "LeftControllerVisual" || name == "RightControllerVisual") && !hasOverride) {
+                        // This is a controller visual at origin (0,0,0) in a non-VR or pre-transform pass. Hide it.
+                        continue;
+                    }
+
                     // 1. Set Transform (Model Matrix)
                     glm::mat4 modelMatrix = identityModel;
-                    auto transformIt = transformOverrides.find(obj->get_id());
-                    if (transformIt != transformOverrides.end()) {
+                    if (hasOverride) {
                         modelMatrix = transformIt->second;
                     }
                     glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
@@ -494,7 +501,6 @@ namespace Urbaxio {
                     glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
                     
                     // Skip rendering special markers in this main pass
-                    const auto& name = obj->get_name();
                     if (name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
                          glBindVertexArray(obj->vao);
                          glDrawElements(GL_TRIANGLES, obj->index_count, GL_UNSIGNED_INT, 0);
@@ -864,20 +870,33 @@ namespace Urbaxio {
     void Renderer::UpdateUserLinesBuffer(const std::map<uint64_t, Engine::Line>& lines, const std::set<uint64_t>& selectedLineIDs, uint64_t movingObjectId, Engine::Scene* scene) {
         if (userLinesVBO == 0) return;
         
-        // --- NEW: Completely ignore lines from moving object ---
-        std::set<uint64_t> movingLineIds;
+        // --- Build a set of all lines to ignore ---
+        std::set<uint64_t> ignoredLineIDs;
+        // Ignore lines from the object currently being moved
         if (movingObjectId != 0 && scene) {
             Engine::SceneObject* obj = scene->get_object_by_id(movingObjectId);
             if (obj) {
-                movingLineIds = obj->boundaryLineIDs;
+                ignoredLineIDs.insert(obj->boundaryLineIDs.begin(), obj->boundaryLineIDs.end());
+            }
+        }
+        
+        // Ignore lines from controller visuals
+        if (scene) {
+            for (auto* obj : scene->get_all_objects()) {
+                if (obj) {
+                    const auto& obj_name = obj->get_name();
+                    if (obj_name == "LeftControllerVisual" || obj_name == "RightControllerVisual") {
+                        ignoredLineIDs.insert(obj->boundaryLineIDs.begin(), obj->boundaryLineIDs.end());
+                    }
+                }
             }
         }
 
         std::vector<float> staticLineData;
         
         for (const auto& [lineID, line] : lines) {
-            // Skip lines that belong to the moving object
-            if (movingLineIds.count(lineID)) {
+            // Skip lines that are in the ignore set
+            if (ignoredLineIDs.count(lineID)) {
                 continue;
             }
             

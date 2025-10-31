@@ -479,18 +479,17 @@ int main(int argc, char* argv[]) {
                     unlitOverrides[leftControllerVisual->get_id()] = true;
                 }
 
-                const auto& rightHandVisual = vrManager->GetRightHandVisual();
-                if (rightHandVisual.isValid && rightControllerVisual) {
+                if (rightHand.isValid && rightControllerVisual) {
                     // Apply the world transform to the raw controller pose
-                    glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(rightHandVisual.pose);
+                    glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(rightHand.pose);
                     // REMOVED scale compensation. The controller now scales with the world.
                     transformOverrides[rightControllerVisual->get_id()] = worldTransform * rawPoseMatrix * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
-                    colorOverrides[rightControllerVisual->get_id()] = MixColorFromPress(rightHandVisual.pressValue);
+                    colorOverrides[rightControllerVisual->get_id()] = MixColorFromPress(rightHand.pressValue);
                     unlitOverrides[rightControllerVisual->get_id()] = true;
                 }
 
                 // Update VR pointer with menu clipping
-                if (rightHandVisual.isValid) {
+                if (rightHand.isValid) {
                     float rayLength = 100.0f;
                     glm::vec3 rayEnd = (vrSnap.snapped && vrSnap.type != Urbaxio::SnapType::GRID) 
                                        ? vrSnap.worldPoint 
@@ -522,6 +521,17 @@ int main(int argc, char* argv[]) {
                     renderer.UpdateVRPointer(vrRayOrigin, rayEnd, true);
                 }
 
+                if (toolManager.GetActiveTool()) {
+                    toolManager.GetActiveTool()->OnUpdate(vrSnap);
+                }
+                
+                if (rightHand.triggerClicked) {
+                    toolManager.OnLeftMouseDown(0, 0, false, false);
+                }
+                if (rightHand.triggerReleased) {
+                    toolManager.OnLeftMouseUp(0, 0, false, false);
+                }
+
                 const auto& vr_views = vrManager->GetViews();
                 for (uint32_t i = 0; i < vr_views.size(); ++i) {
                     const auto& swapchain = vrManager->GetSwapchain(i);
@@ -541,6 +551,14 @@ int main(int argc, char* argv[]) {
                     const glm::mat4& view = current_view.viewMatrix;
                     const glm::mat4& projection = current_view.projectionMatrix;
                     const glm::vec3 viewPos = glm::vec3(glm::inverse(view)[3]);
+                    
+                    uint64_t previewObjId = 0;
+                    if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
+                        auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
+                        previewObjId = moveTool->GetMovingObjectId();
+                    }
+                    renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), *toolContext.selectedLineIDs, previewObjId, scene_ptr);
+                    toolManager.RenderPreview(renderer, vrSnap);
                     
                     // --- Render VR Tool Menu ---
                     if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual) {
@@ -571,7 +589,7 @@ int main(int argc, char* argv[]) {
                             float hitboxHeight = 0.04f * worldScale;
                             float hitboxWidth = 0.2f * worldScale;
                             
-                            if (rightHandVisual.isValid) {
+                            if (rightHand.isValid) {
                                 for (size_t tool_idx = 0; tool_idx < toolNames.size(); ++tool_idx) {
                                     glm::vec3 itemTextPos = menuStartPos - menuUp * (float)tool_idx * lineSpacing;
                                     
@@ -591,7 +609,7 @@ int main(int argc, char* argv[]) {
                             }
 
                             // --- Tool Selection Logic ---
-                            if (rightHandVisual.triggerClicked && hoveredToolIndex != -1) {
+                            if (rightHand.triggerClicked && hoveredToolIndex != -1) {
                                 Urbaxio::Tools::ToolType selectedToolType;
                                 switch (hoveredToolIndex) {
                                     case 0: selectedToolType = Urbaxio::Tools::ToolType::Select; break;
@@ -696,14 +714,14 @@ int main(int argc, char* argv[]) {
                         showGrid, showAxes, axisLineWidth, negAxisLineWidth,
                         gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
                         vrSnap.worldPoint, cursorRadius, effectIntensity, 
-                        0, {}, {}, selectionHighlightColor, 
-                        0, {}, hoverHighlightColor,
-                        vrSnap, // VR snap result for markers
+                        *toolContext.selectedObjId, *toolContext.selectedTriangleIndices, *toolContext.selectedLineIDs, selectionHighlightColor, 
+                        *toolContext.hoveredObjId, *toolContext.hoveredFaceTriangleIndices, hoverHighlightColor,
+                        vrSnap,
                         nullptr, // No ImGui data for VR eyes
-                        0, glm::mat4(1.0f), // No preview object
-                        transformOverrides, // Pass the controller transforms
-                        colorOverrides,     // Pass the controller colors
-                        unlitOverrides      // Pass the controller lighting flags
+                        previewObjId, glm::mat4(1.0f),
+                        transformOverrides,
+                        colorOverrides,
+                        unlitOverrides
                     );
                     
                     // 3D distance text in VR

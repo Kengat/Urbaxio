@@ -683,10 +683,15 @@ void VRManager::PollActions() {
     
     // --- Update Right Hand Trigger Click State ---
     rightHandVisual_.triggerClicked = false; // Reset every frame
-    if (rightTrigger > 0.8f && !rightHandVisual_.triggerWasPressed) {
+    rightHandVisual_.triggerReleased = false;
+    bool isTriggerPressed = (rightTrigger > 0.8f);
+    if (isTriggerPressed && !rightHandVisual_.triggerWasPressed) {
         rightHandVisual_.triggerClicked = true;
     }
-    rightHandVisual_.triggerWasPressed = (rightTrigger > 0.8f);
+    if (!isTriggerPressed && rightHandVisual_.triggerWasPressed) {
+        rightHandVisual_.triggerReleased = true;
+    }
+    rightHandVisual_.triggerWasPressed = isTriggerPressed;
     
     // --- Update Left Hand Tool Menu Alpha ---
     {
