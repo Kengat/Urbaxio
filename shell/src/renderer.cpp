@@ -1217,7 +1217,8 @@ namespace Urbaxio {
     void Renderer::RenderVRMenuWidget(
         const glm::mat4& view, const glm::mat4& projection,
         const glm::mat4& model,
-        const glm::vec3& baseColor, float aberration, float globalAlpha
+        const glm::vec3& baseColor, float aberration, float globalAlpha,
+        const glm::vec3& aberrationColor1, const glm::vec3& aberrationColor2
     ) {
         if (vrMenuWidgetShaderProgram == 0 || splatVAO == 0) return;
 
@@ -1230,6 +1231,8 @@ namespace Urbaxio {
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(baseColor));
         glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), globalAlpha);
         glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationAmount"), aberration);
+        glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationColor1"), 1, glm::value_ptr(aberrationColor1));
+        glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationColor2"), 1, glm::value_ptr(aberrationColor2));
         
         glBindVertexArray(splatVAO);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);

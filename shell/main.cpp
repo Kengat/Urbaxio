@@ -642,22 +642,29 @@ int main(int argc, char* argv[]) {
                                 // --- End Build Model Matrix ---
                                 
                                 // Define colors
-                                glm::vec3 selectedColor = glm::vec3(1.0f, 0.65f, 0.0f);
+                                glm::vec3 selectedColor = glm::vec3(1.0f, 0.79f, 0.4f);
                                 glm::vec3 inactiveColor = glm::vec3(0.3f, 0.75f, 1.0f);
                                 
-                                // Smoothly interpolate between inactive and selected colors based on selection state and hover
-                                float selectionFactor = toolMenuAlphas[tool_idx];
-                                glm::vec3 baseColor = isSelected ? glm::mix(inactiveColor, selectedColor, selectionFactor) : inactiveColor;
-                                if (isHovered && !isSelected) {
-                                    baseColor = glm::mix(inactiveColor, glm::vec3(1.0f), 0.5f);
-                                }
+                                // Define aberration colors
+                                glm::vec3 orange_aberration1 = glm::vec3(1.00f, 0.84f, 0.26f);
+                                glm::vec3 orange_aberration2 = glm::vec3(1.0f, 0.1f, 0.1f);
+                                glm::vec3 blue_aberration1 = glm::vec3(0.67f, 0.5f, 1.0f);
+                                glm::vec3 blue_aberration2 = glm::vec3(0.3f, 1.0f, 0.76f);
                                 
-                                float aberration = toolMenuAlphas[tool_idx] * 0.1f;
+                                // Smoothly interpolate all colors based on selection state
+                                float selectionFactor = isSelected ? 1.0f : 0.0f;
+                                glm::vec3 baseColor = glm::mix(inactiveColor, selectedColor, selectionFactor);
+                                glm::vec3 abColor1 = glm::mix(blue_aberration1, orange_aberration1, selectionFactor);
+                                glm::vec3 abColor2 = glm::mix(blue_aberration2, orange_aberration2, selectionFactor);
+                                
+                                // Aberration amount still animates on hover
+                                float aberration = toolMenuAlphas[tool_idx] * 0.11f;
                                 
                                 renderer.RenderVRMenuWidget(
                                     view, projection,
                                     finalModel,
-                                    baseColor, aberration, vrManager->leftMenuAlpha
+                                    baseColor, aberration, vrManager->leftMenuAlpha,
+                                    abColor1, abColor2
                                 );
                                 
                                 // Render Text
