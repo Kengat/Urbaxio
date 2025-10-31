@@ -147,11 +147,11 @@ int main(int argc, char* argv[]) {
     Urbaxio::Renderer renderer; if (!renderer.Initialize()) { return 1; }
     Urbaxio::TextRenderer textRenderer;
     {
-        std::string fontJsonPath = "../../resources/font.json";
-        std::string fontPngPath = "../../resources/font.png";
+        std::string fontJsonPath = "../../resources/futura_demi.json";
+        std::string fontPngPath = "../../resources/futura_demi.png";
         if (!std::filesystem::exists(fontJsonPath)) {
-            fontJsonPath = "../../../resources/font.json";
-            fontPngPath = "../../../resources/font.png";
+            fontJsonPath = "../../../resources/futura_demi.json";
+            fontPngPath = "../../../resources/futura_demi.png";
         }
         if (!textRenderer.Initialize(fontJsonPath, fontPngPath)) { /* silent fail */ }
     }
@@ -505,7 +505,7 @@ int main(int argc, char* argv[]) {
 
                         // Keep visual size constant by deriving world height from FOV and depth,
                         // then invert by world scale (stronger effect)
-                        const float desiredPx = 50.0f; // much stronger visual size
+                        const float desiredPx = 20.0f; // much stronger visual size
                         float viewportH = static_cast<float>(swapchain.height);
                         const auto& fov = current_view.fov;
 
@@ -516,7 +516,8 @@ int main(int argc, char* argv[]) {
                         float textWorldSize = desiredPx * worldUnitsPerPixel;
                         float finalWorldHeight = textWorldSize * worldScale;
 
-                        textRenderer.AddText(distStr, midpoint_transformed, glm::vec4(1,1,1, vrManager->zoomTextAlpha), finalWorldHeight, view);
+                        const float textOpacity = 0.7f;
+                        textRenderer.AddText(distStr, midpoint_transformed, glm::vec4(1,1,1, vrManager->zoomTextAlpha * textOpacity), finalWorldHeight, view);
                     }
                     textRenderer.Render(view, projection);
 
