@@ -50,8 +50,8 @@ private:
     void reset();
     void finalizeLine(const glm::vec3& endPoint);
     bool tryToLockAxis(const glm::vec3& currentTarget);
-    glm::vec3 calculateAxisLockedPoint(const SnapResult& snapResult);
-    glm::vec3 calculateInferenceLockedPoint(const SnapResult& snap);
+    glm::vec3 calculateAxisLockedPoint(const SnapResult& snapResult, const glm::vec3& rayOrigin, const glm::vec3& rayDirection);
+    glm::vec3 calculateInferenceLockedPoint(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection);
     bool isValidGeometricSnap(SnapType type); // <-- MOVED HERE
 };
 

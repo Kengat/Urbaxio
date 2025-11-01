@@ -125,6 +125,7 @@ void VRManager::Shutdown() {
     if (leftGripSpace != XR_NULL_HANDLE) xrDestroySpace(leftGripSpace);
     if (rightGripSpace != XR_NULL_HANDLE) xrDestroySpace(rightGripSpace);
     if (controllerPoseAction != XR_NULL_HANDLE) xrDestroyAction(controllerPoseAction);
+    if (aButtonAction != XR_NULL_HANDLE) xrDestroyAction(aButtonAction);
     if (triggerValueAction != XR_NULL_HANDLE) xrDestroyAction(triggerValueAction);
     if (squeezeValueAction != XR_NULL_HANDLE) xrDestroyAction(squeezeValueAction);
     if (actionSet != XR_NULL_HANDLE) xrDestroyActionSet(actionSet);
@@ -423,6 +424,15 @@ bool VRManager::CreateActions() {
         actionCI.subactionPaths = subactionPaths;
         XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &controllerPoseAction), "Failed to create pose action");
     }
+    { // Scope for 'A' button click action
+        XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
+        actionCI.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        strcpy_s(actionCI.actionName, "a_button_click");
+        strcpy_s(actionCI.localizedActionName, "A Button Click");
+        actionCI.countSubactionPaths = 1;
+        actionCI.subactionPaths = &rightHandPath;
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &aButtonAction), "Failed to create 'A' button action");
+    }
     
     // 4) Suggest bindings for Oculus Touch profile
     XrPath oculusTouchProfilePath;
@@ -446,6 +456,10 @@ bool VRManager::CreateActions() {
         bindings.push_back({ controllerPoseAction, path });
         XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/grip/pose", &path), "Failed to get path");
         bindings.push_back({ controllerPoseAction, path });
+
+        // A Button
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/a/click", &path), "Failed to get path");
+        bindings.push_back({ aButtonAction, path });
     }
 
     XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
@@ -672,6 +686,16 @@ void VRManager::PollActions() {
     float leftSqueeze = readFloat(squeezeValueAction, leftHandPath);
     float rightTrigger = readFloat(triggerValueAction, rightHandPath);
     float rightSqueeze = readFloat(squeezeValueAction, rightHandPath);
+
+    auto readBool = [&](XrAction action, XrPath handPath) -> bool {
+        XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
+        getInfo.action = action;
+        getInfo.subactionPath = handPath;
+        XrActionStateBoolean state{XR_TYPE_ACTION_STATE_BOOLEAN};
+        xrGetActionStateBoolean(session, &getInfo, &state);
+        return (state.isActive && state.currentState);
+    };
+    aButtonIsPressed = readBool(aButtonAction, rightHandPath);
 
     // --- Combine and Smooth Values for Visuals ---
     float targetLeftPress = std::max(leftTrigger, leftSqueeze);

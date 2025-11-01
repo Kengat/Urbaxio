@@ -201,12 +201,17 @@ int main(int argc, char* argv[]) {
     int display_w, display_h;
     SDL_GetWindowSize(window, &display_w, &display_h);
 
+    bool shiftDown = false;
+    bool ctrlDown = false;
+
     Urbaxio::Tools::ToolContext toolContext;
     toolContext.scene = scene_ptr;
     toolContext.camera = &camera;
     toolContext.window = window;
     toolContext.display_w = &display_w;
     toolContext.display_h = &display_h;
+    toolContext.shiftDown = &shiftDown;
+    toolContext.ctrlDown = &ctrlDown;
     toolContext.selectedObjId = &selectedObjId;
     toolContext.selectedTriangleIndices = &selectedTriangleIndices;
     toolContext.selectedLineIDs = &selectedLineIDs;
@@ -248,6 +253,13 @@ int main(int argc, char* argv[]) {
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
     while (!should_quit) {
         SDL_GetWindowSize(window, &display_w, &display_h);
+        
+        const Uint8* keyboardState = SDL_GetKeyboardState(NULL);
+        // For 2D mode, read keyboard state; for VR mode, state will be updated in VR section after PollActions
+        if (!vr_mode || !vrManager || !vrManager->IsInitialized()) {
+            shiftDown = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
+            ctrlDown = keyboardState[SDL_SCANCODE_LCTRL] || keyboardState[SDL_SCANCODE_RCTRL];
+        }
         
         // --- Find Snap Point for current frame ---
         int mouseX, mouseY;
@@ -435,6 +447,9 @@ int main(int argc, char* argv[]) {
             if (vrManager->BeginFrame()) {
                 // Poll controller state after syncing actions in BeginFrame
                 vrManager->PollActions();
+                // Update modifier state for VR after polling actions
+                shiftDown = vrManager->aButtonIsPressed;
+                ctrlDown = false;
                 // Prepare VR snap for this frame (used per-eye)
                 Urbaxio::SnapResult vrSnap; vrSnap.snapped = false;
                 // Ray used for both pointer and VR menu hit tests
@@ -524,18 +539,17 @@ int main(int argc, char* argv[]) {
 
                 // --- VR Tool Interaction Logic ---
                 if (toolManager.GetActiveTool()) {
-                    // OnUpdate is now the primary method for all per-frame logic
+                    if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::PushPull) {
+                        static_cast<Urbaxio::Tools::PushPullTool*>(toolManager.GetActiveTool())->updateHover(vrRayOrigin, vrRayDirection);
+                    }
                     toolManager.GetActiveTool()->OnUpdate(vrSnap, vrRayOrigin, vrRayDirection);
                 }
                 
                 if (rightHand.triggerClicked) {
-                    // This is our "OnLeftMouseDown"
-                    // -- START OF MODIFICATION --
-                    toolManager.OnLeftMouseDown(0, 0, false, false, vrRayOrigin, vrRayDirection);
-                    // -- END OF MODIFICATION --
+                    toolManager.OnLeftMouseDown(0, 0, *toolContext.shiftDown, *toolContext.ctrlDown, vrRayOrigin, vrRayDirection);
                 }
                 if (rightHand.triggerReleased) {
-                    toolManager.OnLeftMouseUp(0, 0, false, false);
+                    toolManager.OnLeftMouseUp(0, 0, *toolContext.shiftDown, *toolContext.ctrlDown);
                 }
 
                 const auto& vr_views = vrManager->GetViews();

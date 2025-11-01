@@ -45,6 +45,10 @@ struct ToolContext {
     // Hover state references (tools can modify these)
     uint64_t* hoveredObjId = nullptr;
     std::vector<size_t>* hoveredFaceTriangleIndices = nullptr;
+
+    // Modifier key state references
+    bool* shiftDown = nullptr;
+    bool* ctrlDown = nullptr;
 };
 
 // Interface for all interactive tools

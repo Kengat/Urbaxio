@@ -445,8 +445,7 @@ void MoveTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, cons
     lastSnapResult = snap;
     if (currentState != MoveToolState::MOVING_PREVIEW) return;
 
-    const Uint8* keyboardState = SDL_GetKeyboardState(NULL);
-    bool shiftDown = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
+    bool shiftDown = context.shiftDown ? *context.shiftDown : false;
 
     glm::dvec3 endPoint;
     glm::dvec3 snappedPoint(snap.worldPoint);

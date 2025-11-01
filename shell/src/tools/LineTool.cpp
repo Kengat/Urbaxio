@@ -51,6 +51,22 @@ glm::vec3 ClosestPointOnLine(const glm::vec3& lineOrigin, const glm::vec3& lineD
     return lineOrigin + lineDir * t;
 }
 
+void ClosestPointLineLine(const glm::vec3& p1, const glm::vec3& d1, const glm::vec3& p2, const glm::vec3& d2, glm::vec3& out) {
+    glm::vec3 w0 = p1 - p2;
+    float b = glm::dot(d1, d2);
+    float d = glm::dot(d1, w0);
+    float e = glm::dot(d2, w0);
+    float denom = 1.0f - b * b;
+    
+    if (std::abs(denom) > 1e-6f) {
+        float s = (b * e - d) / denom;
+        out = p1 + s * d1;
+    } else {
+        // Lines are parallel, use projection
+        out = ClosestPointOnLine(p1, d1, p2);
+    }
+}
+
 const glm::vec3 AXIS_X_DIR(1.0f, 0.0f, 0.0f);
 const glm::vec3 AXIS_Y_DIR(0.0f, 1.0f, 0.0f);
 const glm::vec3 AXIS_Z_DIR(0.0f, 0.0f, 1.0f);
@@ -169,9 +185,8 @@ void LineTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
 }
 
 void LineTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
-    lastSnapResult = snap; 
-    const Uint8* keyboardState = SDL_GetKeyboardState(NULL);
-    bool shiftDown = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
+    lastSnapResult = snap;
+    bool shiftDown = context.shiftDown ? *context.shiftDown : false;
 
     glm::vec3 currentTarget = snap.worldPoint;
 
@@ -209,7 +224,7 @@ void LineTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, cons
                 currentRubberBandEnd = snap.worldPoint; // Update immediately
                 return;
             }
-            currentRubberBandEnd = calculateAxisLockedPoint(snap);
+            currentRubberBandEnd = calculateAxisLockedPoint(snap, rayOrigin, rayDirection);
             break;
             
         case ToolState::AWAITING_SECOND_POINT_INFERENCE_LOCKED:
@@ -218,7 +233,7 @@ void LineTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, cons
                 currentRubberBandEnd = snap.worldPoint; // Update immediately
                 return;
             }
-            currentRubberBandEnd = calculateInferenceLockedPoint(snap);
+            currentRubberBandEnd = calculateInferenceLockedPoint(snap, rayOrigin, rayDirection);
             break;
     }
 }
@@ -318,46 +333,28 @@ bool LineTool::tryToLockAxis(const glm::vec3& currentTarget) {
     return false;
 }
 
-glm::vec3 LineTool::calculateAxisLockedPoint(const SnapResult& snapResult) {
+glm::vec3 LineTool::calculateAxisLockedPoint(const SnapResult& snapResult, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
     // Priority 1: Check for a valid geometric snap from the snapping system.
     if (snapResult.snapped && isValidGeometricSnap(snapResult.type)) {
         return ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, snapResult.worldPoint);
     }
     
-    // Priority 2: Fallback to free-floating movement if no suitable snap is active.
-    int mouseX, mouseY;
-    SDL_GetMouseState(&mouseX, &mouseY);
-    glm::vec3 rayOrigin, rayDir;
-    Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / (float)*context.display_h), rayOrigin, rayDir);
-
-    if (lockedAxisType == SnapType::AXIS_X || lockedAxisType == SnapType::AXIS_Y) {
-        // "Horizontal" Strategy: Project onto the Z=0 construction plane
-        glm::vec3 pointOnGround;
-        if (SnappingSystem::RaycastToZPlane(mouseX, mouseY, *context.display_w, *context.display_h, *context.camera, pointOnGround)) {
-            return ClosestPointOnLine(currentLineStartPoint, lockedAxisDir, pointOnGround);
-        }
-    } else if (lockedAxisType == SnapType::AXIS_Z) {
-        // "Vertical" Strategy: Project onto the virtual vertical plane
-        glm::vec3 planeOrigin = currentLineStartPoint;
-        
-        glm::vec3 planeNormal = glm::cross(AXIS_Z_DIR, context.camera->Right);
-
-        float denominator = glm::dot(rayDir, planeNormal);
-        if (std::abs(denominator) > 1e-6) { // Avoid cases where the ray is parallel to the plane
-            float t = glm::dot(planeOrigin - rayOrigin, planeNormal) / denominator;
-            if (t > 0) {
-                glm::vec3 intersectionPoint = rayOrigin + t * rayDir;
-                // The final point must lie on the Z-axis, so we only take the Z coordinate from the intersection.
-                return glm::vec3(currentLineStartPoint.x, currentLineStartPoint.y, intersectionPoint.z);
-            }
-        }
+    // Priority 2: Fallback to ray intersection with the locked axis line.
+    glm::vec3 currentRayOrigin = rayOrigin;
+    glm::vec3 currentRayDir = rayDirection;
+    // If no ray was passed (2D mode), get it from the mouse.
+    if (glm::length2(currentRayDir) < 1e-9) {
+        int mouseX, mouseY; 
+        SDL_GetMouseState(&mouseX, &mouseY);
+        Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / (float)*context.display_h), currentRayOrigin, currentRayDir);
     }
     
-    // Fallback if any calculation fails (e.g., parallel ray)
-    return currentRubberBandEnd; 
+    glm::vec3 p_on_axis;
+    ClosestPointLineLine(currentLineStartPoint, lockedAxisDir, currentRayOrigin, currentRayDir, p_on_axis);
+    return p_on_axis;
 }
 
-glm::vec3 LineTool::calculateInferenceLockedPoint(const SnapResult& snap) {
+glm::vec3 LineTool::calculateInferenceLockedPoint(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
     // Define the inference axis
     const glm::vec3& axisOrigin = currentLineStartPoint;
     const glm::vec3& axisDir = inferenceAxisDir; 
@@ -368,25 +365,19 @@ glm::vec3 LineTool::calculateInferenceLockedPoint(const SnapResult& snap) {
         return ClosestPointOnLine(axisOrigin, axisDir, snap.worldPoint);
     }
 
-    // Priority 2: Fallback to free-floating movement if no suitable snap is active.
-    int mouseX, mouseY;
-    SDL_GetMouseState(&mouseX, &mouseY);
-    glm::vec3 rayOrigin, rayDir;
-    Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / (float)*context.display_h), rayOrigin, rayDir);
-
-    glm::vec3 w0 = axisOrigin - rayOrigin;
-    float b = glm::dot(axisDir, rayDir);
-    float d = glm::dot(axisDir, w0);
-    float e = glm::dot(rayDir, w0);
-    float denom = 1.0f - b * b;
-
-    if (std::abs(denom) > 1e-6f) {
-        float s = (b * e - d) / denom;
-        return axisOrigin + s * axisDir;
+    // Priority 2: Fallback to ray intersection with the inference axis line.
+    glm::vec3 currentRayOrigin = rayOrigin;
+    glm::vec3 currentRayDir = rayDirection;
+    // If no ray was passed (2D mode), get it from the mouse.
+    if (glm::length2(currentRayDir) < 1e-9) {
+        int mouseX, mouseY;
+        SDL_GetMouseState(&mouseX, &mouseY);
+        Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / (float)*context.display_h), currentRayOrigin, currentRayDir);
     }
 
-    // Fallback if lines are parallel
-    return currentRubberBandEnd;
+    glm::vec3 p_on_axis;
+    ClosestPointLineLine(axisOrigin, axisDir, currentRayOrigin, currentRayDir, p_on_axis);
+    return p_on_axis;
 }
 
 } // namespace Urbaxio::Tools 
