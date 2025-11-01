@@ -381,7 +381,7 @@ void MoveTool::startMove(const SnapResult& snap) {
     std::cout << "MoveTool: Started moving." << std::endl;
 }
 
-void MoveTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {
+void MoveTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
     if (currentState == MoveToolState::IDLE) {
         determineTargetFromSelection();
         if (currentTarget.type == MoveTarget::TargetType::NONE) {
@@ -441,7 +441,7 @@ void MoveTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
     }
 }
 
-void MoveTool::OnUpdate(const SnapResult& snap) {
+void MoveTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
     lastSnapResult = snap;
     if (currentState != MoveToolState::MOVING_PREVIEW) return;
 

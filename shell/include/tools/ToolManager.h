@@ -19,14 +19,16 @@ public:
     bool ShouldEnableSnapping() const;
 
     // --- Event Forwarding (called by InputHandler) ---
-    void OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl);
+    // -- START OF MODIFICATION --
+    void OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin = {}, const glm::vec3& rayDirection = {});
+    // -- END OF MODIFICATION --
     void OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl);
     void OnRightMouseDown();
     void OnMouseMove(int mouseX, int mouseY);
     void OnKeyDown(SDL_Keycode key, bool shift, bool ctrl);
 
     // --- Update and Render (called by main loop) ---
-    void OnUpdate(const SnapResult& snap);
+    void OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin = {}, const glm::vec3& rayDirection = {});
     void RenderUI();
     void RenderPreview(Renderer& renderer, const SnapResult& snap);
 

@@ -127,7 +127,8 @@ void PushPullTool::reset() {
     if(context.hoveredFaceTriangleIndices) context.hoveredFaceTriangleIndices->clear();
 }
 
-void PushPullTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {
+// -- START OF MODIFICATION --
+void PushPullTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
     if (isPushPullActive) {
         finalizePushPull(ctrl);
     } else { // Start a new Push/Pull operation
@@ -160,23 +161,31 @@ void PushPullTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl
                 pushPull_faceNormal = glm::normalize(glm::vec3(mesh.normals[firstIdx*3], mesh.normals[firstIdx*3+1], mesh.normals[firstIdx*3+2]));
             }
             
-            // Find the starting point on the extrusion plane
-            glm::vec3 rayOrigin, rayDir;
-            Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w/(float)*context.display_h), rayOrigin, rayDir);
+            // Determine the ray to use
+            glm::vec3 currentRayOrigin, currentRayDir;
+            if (glm::length2(rayDirection) > 1e-9) { // Ray was provided (VR)
+                currentRayOrigin = rayOrigin;
+                currentRayDir = rayDirection;
+            } else { // Ray not provided (2D), get from mouse
+                 Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w/(float)*context.display_h), currentRayOrigin, currentRayDir);
+            }
+            
+            // Find the starting point on the extrusion plane using the correct ray
             float hitDist;
-            glm::intersectRayPlane(rayOrigin, rayDir, glm::vec3(mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+1], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+2]), pushPull_faceNormal, hitDist);
-            pushPull_startPoint = rayOrigin + rayDir * hitDist;
+            glm::vec3 facePoint = glm::vec3(mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+1], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+2]);
+            glm::intersectRayPlane(currentRayOrigin, currentRayDir, facePoint, pushPull_faceNormal, hitDist);
+            pushPull_startPoint = currentRayOrigin + currentRayDir * hitDist;
             
             pushPullCurrentLength = 0.0f;
-            SDL_GetMouseState(&pushPull_startMouseX, &pushPull_startMouseY);
+            lengthInputBuf[0] = '\0';
 
             // Clear any previous selection
             *context.selectedObjId = 0;
             context.selectedTriangleIndices->clear();
-            lengthInputBuf[0] = '\0';
         }
     }
 }
+// -- END OF MODIFICATION --
 
 void PushPullTool::OnRightMouseDown() {
     if (isPushPullActive) {
@@ -213,53 +222,70 @@ void PushPullTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
     }
 }
 
-void PushPullTool::OnUpdate(const SnapResult& snap) {
-    int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
-    if (isPushPullActive) {
-        // Update hovered face to be the one we are pulling
-        *context.hoveredObjId = pushPull_objId;
-        *context.hoveredFaceTriangleIndices = pushPull_faceIndices;
+// -- START OF MODIFICATION --
 
-        if (snap.snapped && IsValidPushPullSnap(snap.type)) {
-            // Project the snapped point onto the extrusion axis to get the length
-            glm::vec3 projectedPoint = ClosestPointOnLine_ForPushPull(pushPull_startPoint, pushPull_faceNormal, snap.worldPoint);
-            glm::vec3 offsetVector = projectedPoint - pushPull_startPoint;
-            pushPullCurrentLength = glm::dot(offsetVector, pushPull_faceNormal);
-        } else {
-            // NEW LOGIC: Fallback to closest point between mouse ray and extrusion axis.
-            
-            // 1. Get the mouse ray
-            glm::vec3 rayOrigin, rayDir;
-            Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w/(float)*context.display_h), rayOrigin, rayDir);
+void PushPullTool::OnMouseMove(int mouseX, int mouseY) {
 
-            // 2. Define the extrusion axis as an infinite line
-            const glm::vec3& axisOrigin = pushPull_startPoint;
-            const glm::vec3& axisDir = pushPull_faceNormal; // Already normalized
+    if (isPushPullActive) return; // Don't update hover while pulling
 
-            // 3. Calculate the parameters for the closest point calculation
-            glm::vec3 w0 = axisOrigin - rayOrigin;
-            float b = glm::dot(axisDir, rayDir); // dot(D1, D2)
-            float d = glm::dot(axisDir, w0);     // dot(D1, w0)
-            float e = glm::dot(rayDir, w0);      // dot(D2, w0)
-            
-            float denom = 1.0f - b * b;
+    glm::vec3 rayOrigin, rayDir;
 
-            // 4. Calculate the distance along the extrusion axis (s)
-            if (std::abs(denom) > 1e-6f) {
-                // s is the parameter for the extrusion axis line.
-                // It represents the distance from axisOrigin along axisDir.
-                float s = (b * e - d) / denom;
-                pushPullCurrentLength = s;
-            }
-            // If the lines are parallel (denom is ~0), the user is looking straight
-            // down the extrusion axis. In this case, the distance is undefined,
-            // so we just keep the previous value.
+    Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin, rayDir);
+
+    updateHover(rayOrigin, rayDir);
+
+}
+
+// -- END OF MODIFICATION --
+
+// -- START OF MODIFICATION --
+void PushPullTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
+    // 1. Hover logic (only when not pulling)
+    if (!isPushPullActive) {
+        if (glm::length2(rayDirection) > 1e-9) { // Check if we got a valid ray (from VR)
+            updateHover(rayOrigin, rayDirection);
         }
-    } else {
-        // Not active, so just update the hover state
-        updateHover(mouseX, mouseY);
+        return;
+    }
+
+    // 2. Active pull logic
+    // Priority 1: Use a valid geometric snap if available.
+    if (snap.snapped && IsValidPushPullSnap(snap.type)) {
+        glm::vec3 projectedPoint = ClosestPointOnLine_ForPushPull(pushPull_startPoint, pushPull_faceNormal, snap.worldPoint);
+
+        glm::vec3 offsetVector = projectedPoint - pushPull_startPoint;
+
+        pushPullCurrentLength = glm::dot(offsetVector, pushPull_faceNormal);
+
+        return;
+    }
+
+    // Priority 2: Fallback to intersecting the current ray with the extrusion AXIS.
+    glm::vec3 currentRayOrigin, currentRayDir;
+    if (glm::length2(rayDirection) > 1e-9) { // VR ray was provided
+        currentRayOrigin = rayOrigin;
+        currentRayDir = rayDirection;
+    } else { // 2D mode, get ray from mouse
+        int mouseX, mouseY; 
+        SDL_GetMouseState(&mouseX, &mouseY);
+        Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w/(float)*context.display_h), currentRayOrigin, currentRayDir);
+    }
+
+    
+    // This is the classic, working logic: find closest point between two lines (ray and axis)
+    const glm::vec3& axisOrigin = pushPull_startPoint;
+    const glm::vec3& axisDir = pushPull_faceNormal;
+    glm::vec3 w0 = axisOrigin - currentRayOrigin;
+    float b = glm::dot(axisDir, currentRayDir);
+    float d = glm::dot(axisDir, w0);
+    float e = glm::dot(w0, currentRayDir);
+    float denom = 1.0f - b * b;
+    if (std::abs(denom) > 1e-6f) {
+        float s = (b * e - d) / denom;
+        pushPullCurrentLength = s;
     }
 }
+// -- END OF MODIFICATION --
 
 void PushPullTool::finalizePushPull(bool ctrl) {
     if (context.scene && pushPull_objId != 0) {
@@ -298,43 +324,73 @@ void PushPullTool::finalizePushPull(bool ctrl) {
     reset();
 }
 
-void PushPullTool::updateHover(int mouseX, int mouseY) {
+// -- START OF MODIFICATION --
+
+void PushPullTool::updateHover(const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
+
     *context.hoveredObjId = 0;
+
     context.hoveredFaceTriangleIndices->clear();
+
     
-    glm::vec3 rayOrigin, rayDir;
-    Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w/(float)*context.display_h), rayOrigin, rayDir);
-    
+
     uint64_t currentHoveredObjId = 0;
+
     size_t currentHoveredTriangleIdx = 0;
+
     float closestHitDist = std::numeric_limits<float>::max();
 
     for (Urbaxio::Engine::SceneObject* obj_ptr : context.scene->get_all_objects()) {
+
         const auto& name = obj_ptr->get_name();
+
         if (obj_ptr && obj_ptr->has_mesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
+
             const auto& mesh = obj_ptr->get_mesh_buffers();
+
             for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+
                 glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]);
+
                 glm::vec3 v1(mesh.vertices[mesh.indices[i+1]*3], mesh.vertices[mesh.indices[i+1]*3+1], mesh.vertices[mesh.indices[i+1]*3+2]);
+
                 glm::vec3 v2(mesh.vertices[mesh.indices[i+2]*3], mesh.vertices[mesh.indices[i+2]*3+1], mesh.vertices[mesh.indices[i+2]*3+2]);
+
                 float t;
-                if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDist) {
+
+                if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDirection, v0, v1, v2, t) && t > 0 && t < closestHitDist) {
+
                     closestHitDist = t;
+
                     currentHoveredObjId = obj_ptr->get_id();
+
                     currentHoveredTriangleIdx = i;
+
                 }
+
             }
+
         }
+
     }
 
     if (currentHoveredObjId != 0) {
+
         Urbaxio::Engine::SceneObject* hitObject = context.scene->get_object_by_id(currentHoveredObjId);
+
         if (hitObject) {
+
             *context.hoveredFaceTriangleIndices = FindCoplanarAdjacentTriangles_ForPushPull(*hitObject, currentHoveredTriangleIdx);
+
             *context.hoveredObjId = currentHoveredObjId;
+
         }
+
     }
+
 }
+
+// -- END OF MODIFICATION --
 
 void PushPullTool::RenderUI() {
     if (isPushPullActive) {

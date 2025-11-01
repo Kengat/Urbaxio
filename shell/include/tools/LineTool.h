@@ -13,10 +13,10 @@ public:
     void Activate(const ToolContext& context) override;
     void Deactivate() override;
 
-    void OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) override;
+    void OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin = {}, const glm::vec3& rayDirection = {}) override;
     void OnRightMouseDown() override;
     void OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) override;
-    void OnUpdate(const SnapResult& snap) override;
+    void OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin = {}, const glm::vec3& rayDirection = {}) override;
 
     void RenderUI() override;
     void RenderPreview(Renderer& renderer, const SnapResult& snap) override;

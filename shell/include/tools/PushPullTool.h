@@ -12,16 +12,33 @@ public:
     void Activate(const ToolContext& context) override;
     void Deactivate() override;
 
-    void OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) override;
+    // -- START OF MODIFICATION --
+    void OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) override;
+    // -- END OF MODIFICATION --
     void OnRightMouseDown() override;
     void OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) override;
-    void OnUpdate(const SnapResult& snap) override;
+    // -- START OF MODIFICATION --
+
+    void OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) override;
+
+    void OnMouseMove(int mouseX, int mouseY) override;
+
+    // -- END OF MODIFICATION --
 
     void RenderUI() override;
     void RenderPreview(Renderer& renderer, const SnapResult& snap) override;
 
     // State query method for snapping control
     bool IsPushPullActive() const { return isPushPullActive; }
+
+    // -- START OF MODIFICATION --
+
+    // This is now the primary hover update function, used by both VR and 2D.
+
+    void updateHover(const glm::vec3& rayOrigin, const glm::vec3& rayDirection);
+
+    // -- END OF MODIFICATION --
+
 private:
     bool isPushPullActive = false;
     
@@ -39,7 +56,7 @@ private:
     
     void reset();
     void finalizePushPull(bool ctrl);
-    void updateHover(int mouseX, int mouseY);
+
 };
 
 } // namespace Urbaxio::Tools 

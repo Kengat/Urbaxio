@@ -114,7 +114,13 @@ namespace Urbaxio {
                              firstMouse = true; 
                              SDL_ShowCursor(SDL_DISABLE);
                         } else if (event.button.button == SDL_BUTTON_LEFT) {
-                            toolManager.OnLeftMouseDown(event.button.x, event.button.y, shiftDown, ctrlDown);
+                            // -- START OF MODIFICATION --
+                            int w, h;
+                            SDL_GetWindowSize(window, &w, &h);
+                            glm::vec3 rayOrigin, rayDir;
+                            Camera::ScreenToWorldRay(event.button.x, event.button.y, w, h, camera.GetViewMatrix(), camera.GetProjectionMatrix((float)w/(float)h), rayOrigin, rayDir);
+                            toolManager.OnLeftMouseDown(event.button.x, event.button.y, shiftDown, ctrlDown, rayOrigin, rayDir);
+                            // -- END OF MODIFICATION --
                         } else if (event.button.button == SDL_BUTTON_RIGHT) {
                             toolManager.OnRightMouseDown();
                         }

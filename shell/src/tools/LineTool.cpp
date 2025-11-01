@@ -91,7 +91,7 @@ void LineTool::reset() {
     lengthInputBuf[0] = '\0';
 }
 
-void LineTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {
+void LineTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
     if (!context.scene) return;
 
     // Use the latest snap result from OnUpdate
@@ -168,7 +168,7 @@ void LineTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
     }
 }
 
-void LineTool::OnUpdate(const SnapResult& snap) {
+void LineTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
     lastSnapResult = snap; 
     const Uint8* keyboardState = SDL_GetKeyboardState(NULL);
     bool shiftDown = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];

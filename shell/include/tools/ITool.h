@@ -65,14 +65,16 @@ public:
     }
 
     // Event handling (called from InputHandler)
-    virtual void OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {}
+    // -- START OF MODIFICATION --
+    virtual void OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin = {}, const glm::vec3& rayDirection = {}) {}
     virtual void OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {}
+    // -- END OF MODIFICATION --
     virtual void OnRightMouseDown() {}
     virtual void OnMouseMove(int mouseX, int mouseY) {}
     virtual void OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {}
     
-    // Per-frame update, gives the tool the latest snap info
-    virtual void OnUpdate(const SnapResult& snap) {
+    // Per-frame update, gives the tool the latest snap info and the current pointer ray
+    virtual void OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin = {}, const glm::vec3& rayDirection = {}) {
         lastSnapResult = snap;
     } 
 

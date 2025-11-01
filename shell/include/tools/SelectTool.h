@@ -15,7 +15,7 @@ public:
     void Activate(const ToolContext& context) override;
     void Deactivate() override;
 
-    void OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) override;
+    void OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin = {}, const glm::vec3& rayDirection = {}) override;
     void OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) override;
     void OnMouseMove(int mouseX, int mouseY) override;
 

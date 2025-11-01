@@ -64,9 +64,11 @@ bool ToolManager::ShouldEnableSnapping() const {
     return true;
 }
 
-void ToolManager::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {
-    if (activeTool) activeTool->OnLeftMouseDown(mouseX, mouseY, shift, ctrl);
+// -- START OF MODIFICATION --
+void ToolManager::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
+    if (activeTool) activeTool->OnLeftMouseDown(mouseX, mouseY, shift, ctrl, rayOrigin, rayDirection);
 }
+// -- END OF MODIFICATION --
 
 void ToolManager::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
     if (activeTool) activeTool->OnLeftMouseUp(mouseX, mouseY, shift, ctrl);
@@ -84,8 +86,8 @@ void ToolManager::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
     if (activeTool) activeTool->OnKeyDown(key, shift, ctrl);
 }
 
-void ToolManager::OnUpdate(const SnapResult& snap) {
-    if (activeTool) activeTool->OnUpdate(snap);
+void ToolManager::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
+    if (activeTool) activeTool->OnUpdate(snap, rayOrigin, rayDirection);
 }
 
 void ToolManager::RenderUI() {

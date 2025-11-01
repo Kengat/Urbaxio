@@ -176,7 +176,7 @@ void SelectTool::Deactivate() {
     ITool::Deactivate();
 }
 
-void SelectTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl) {
+void SelectTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
     isMouseDown = true;
     dragStartCoords = glm::vec2(mouseX, mouseY);
     currentDragCoords = dragStartCoords;

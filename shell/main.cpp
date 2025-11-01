@@ -15,6 +15,7 @@ extern "C" {
 #include <tools/ToolManager.h>
 #include <tools/SelectTool.h>
 #include <tools/MoveTool.h>
+#include <tools/PushPullTool.h>
 
 #include "camera.h"
 #include "input_handler.h"
@@ -521,12 +522,17 @@ int main(int argc, char* argv[]) {
                     renderer.UpdateVRPointer(vrRayOrigin, rayEnd, true);
                 }
 
+                // --- VR Tool Interaction Logic ---
                 if (toolManager.GetActiveTool()) {
-                    toolManager.GetActiveTool()->OnUpdate(vrSnap);
+                    // OnUpdate is now the primary method for all per-frame logic
+                    toolManager.GetActiveTool()->OnUpdate(vrSnap, vrRayOrigin, vrRayDirection);
                 }
                 
                 if (rightHand.triggerClicked) {
-                    toolManager.OnLeftMouseDown(0, 0, false, false);
+                    // This is our "OnLeftMouseDown"
+                    // -- START OF MODIFICATION --
+                    toolManager.OnLeftMouseDown(0, 0, false, false, vrRayOrigin, vrRayDirection);
+                    // -- END OF MODIFICATION --
                 }
                 if (rightHand.triggerReleased) {
                     toolManager.OnLeftMouseUp(0, 0, false, false);
