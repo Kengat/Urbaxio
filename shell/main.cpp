@@ -417,23 +417,36 @@ int main(int argc, char* argv[]) {
             ImGui::Separator();
             if (ImGui::CollapsingHeader("VR Panel Debug")) {
                 if (numpadInitialized) {
-                    glm::vec3 scale;
+                    // Decompose the current transform to display its components in the UI
+                    glm::vec3 scale, translation, skew;
                     glm::quat rotation;
-                    glm::vec3 translation;
-                    glm::vec3 skew;
                     glm::vec4 perspective;
                     glm::decompose(numpadOffsetTransform, scale, rotation, translation, skew, perspective);
 
-                    glm::vec3 eulerAngles = glm::eulerAngles(rotation);
-                    eulerAngles = glm::degrees(eulerAngles);
-                    ImGui::InputFloat3("Translation", &translation.x, "%.3f");
-                    ImGui::InputFloat3("Rotation (Euler)", &eulerAngles.x, "%.3f");
-                    ImGui::InputFloat("Scale", &scale.x, 0.01f, 0.1f, "%.3f");
-                    if (ImGui::Button("Apply Debug Values")) {
-                        glm::mat4 newScale = glm::scale(glm::mat4(1.0f), glm::vec3(scale.x));
+                    glm::vec3 eulerAngles = glm::degrees(glm::eulerAngles(rotation));
+                    
+                    bool changed = false;
+                    // Use DragFloat for easier tuning; changes are applied immediately
+                    changed |= ImGui::DragFloat3("Translation", &translation.x, 0.001f);
+                    changed |= ImGui::DragFloat3("Rotation (Euler)", &eulerAngles.x, 0.1f);
+                    changed |= ImGui::DragFloat("Scale", &scale.x, 0.01f, 0.1f, 20.0f, "%.3f");
+
+                    if (changed) {
+                        scale = glm::vec3(std::max(0.1f, scale.x)); // Ensure scale is positive
+                        glm::mat4 newScale = glm::scale(glm::mat4(1.0f), scale);
                         glm::mat4 newRotation = glm::mat4_cast(glm::quat(glm::radians(eulerAngles)));
                         glm::mat4 newTranslation = glm::translate(glm::mat4(1.0f), translation);
                         numpadOffsetTransform = newTranslation * newRotation * newScale;
+                    }
+
+                    if (ImGui::Button("Reset to Default")) {
+                         // The new default values from your tuning session
+                         float panelScale = 8.0f;
+                         glm::vec3 default_translation = glm::vec3(-0.470f, -0.402f, -2.765f);
+                         glm::vec3 default_eulerAnglesRad = glm::radians(glm::vec3(-99.082f, -1.151f, -29.510f));
+                         numpadOffsetTransform = glm::translate(glm::mat4(1.0f), default_translation) *
+                                           glm::mat4_cast(glm::quat(default_eulerAnglesRad)) *
+                                           glm::scale(glm::mat4(1.0f), glm::vec3(panelScale));
                     }
                 } else {
                     ImGui::TextDisabled("Numpad not yet initialized in VR.");
@@ -496,6 +509,17 @@ int main(int argc, char* argv[]) {
                 // Poll controller state after syncing actions in BeginFrame
                 vrManager->PollActions();
                 // Update modifier state for VR after polling actions
+
+                // --- NEW: Handle Undo/Redo gesture actions ---
+                if (vrManager->triggeredUndoRedoAction == Urbaxio::UndoRedoAction::TriggerUndo) {
+                    scene_ptr->getCommandManager()->Undo();
+                    vrManager->triggeredUndoRedoAction = Urbaxio::UndoRedoAction::None; // Reset the flag
+                } else if (vrManager->triggeredUndoRedoAction == Urbaxio::UndoRedoAction::TriggerRedo) {
+                    scene_ptr->getCommandManager()->Redo();
+                    vrManager->triggeredUndoRedoAction = Urbaxio::UndoRedoAction::None; // Reset the flag
+                }
+
+
                 shiftDown = vrManager->aButtonIsPressed;
                 ctrlDown = false;
                 // Prepare VR snap for this frame (used per-eye)
@@ -958,13 +982,13 @@ int main(int argc, char* argv[]) {
                             } else {
                                 // If not grabbed, the panel's transform is based on the controller's transform plus a relative offset.
                                 if (!numpadInitialized) {
-                                    // On first appearance, calculate the default offset from the new tuned values
+                                    // On first appearance, set the default offset from tuned values
                                     float panelScale = 8.0f;
-                                    glm::vec3 translation = glm::vec3(-0.007f, -0.584f, -2.276f);
-                                    glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-104.560f, 1.023f, -11.718f));
+                                    glm::vec3 translation = glm::vec3(-0.470f, -0.402f, -2.765f);
+                                    glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-99.082f, -1.151f, -29.510f));
 
                                     numpadOffsetTransform = glm::translate(glm::mat4(1.0f), translation) *
-                                                          glm::mat4_cast(glm::quat(eulerAnglesRad)) *
+                                                          glm::mat4_cast(glm::quat(eulerAnglesRad)) * // Use radians here
                                                           glm::scale(glm::mat4(1.0f), glm::vec3(panelScale));
                                     numpadInitialized = true;
                                 }

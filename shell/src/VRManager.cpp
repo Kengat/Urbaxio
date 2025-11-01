@@ -12,6 +12,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/transform.hpp> // For glm::scale, glm::translate
+#include <glm/gtx/vector_angle.hpp> // <-- FIX: Add missing header for orientedAngle
 #include <cmath> // For std::sin, std::cos
 
 // Helper macro for checking OpenXR function results during initialization
@@ -126,13 +127,14 @@ void VRManager::Shutdown() {
     if (rightGripSpace != XR_NULL_HANDLE) xrDestroySpace(rightGripSpace);
     if (controllerPoseAction != XR_NULL_HANDLE) xrDestroyAction(controllerPoseAction);
     if (aButtonAction != XR_NULL_HANDLE) xrDestroyAction(aButtonAction);
-    if (leftAButtonAction != XR_NULL_HANDLE) xrDestroyAction(leftAButtonAction);
+    if (undoRedoActivationAction_ != XR_NULL_HANDLE) xrDestroyAction(undoRedoActivationAction_);
+    if (hapticAction_ != XR_NULL_HANDLE) xrDestroyAction(hapticAction_);
     if (triggerValueAction != XR_NULL_HANDLE) xrDestroyAction(triggerValueAction);
     if (squeezeValueAction != XR_NULL_HANDLE) xrDestroyAction(squeezeValueAction);
     if (actionSet != XR_NULL_HANDLE) xrDestroyActionSet(actionSet);
 
     if (appSpace != XR_NULL_HANDLE) xrDestroySpace(appSpace);
-    if (session != XR_NULL_HANDLE) xrDestroySession(session);
+    if (session != XR_NULL_HANDLE) xrDestroySession(session); // Note: xrEndSession is implicitly called by xrDestroySession if needed
     if (instance != XR_NULL_HANDLE) xrDestroyInstance(instance);
     
     // Reset all members to default state
@@ -434,16 +436,25 @@ bool VRManager::CreateActions() {
         actionCI.subactionPaths = &rightHandPath;
         XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &aButtonAction), "Failed to create 'A' button action");
     }
-    { // Scope for Left 'A' button (usually 'X')
+    { // Scope for Left 'X' button (for undo/redo gesture)
         XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
         actionCI.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
-        strcpy_s(actionCI.actionName, "left_a_button_click");
-        strcpy_s(actionCI.localizedActionName, "Left A/X Button Click");
+        strcpy_s(actionCI.actionName, "undo_redo_activation");
+        strcpy_s(actionCI.localizedActionName, "Undo/Redo Activation");
         actionCI.countSubactionPaths = 1;
         actionCI.subactionPaths = &leftHandPath;
-        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &leftAButtonAction), "Failed to create left 'A' button action");
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &undoRedoActivationAction_), "Failed to create undo/redo activation action");
     }
-    
+    { // --- NEW: Scope for haptic feedback action ---
+        XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
+        actionCI.actionType = XR_ACTION_TYPE_VIBRATION_OUTPUT;
+        strcpy_s(actionCI.actionName, "haptic_feedback");
+        strcpy_s(actionCI.localizedActionName, "Haptic Feedback");
+        actionCI.countSubactionPaths = 2;
+        actionCI.subactionPaths = subactionPaths;
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &hapticAction_), "Failed to create haptic action");
+    }
+
     // 4) Suggest bindings for Oculus Touch profile
     XrPath oculusTouchProfilePath;
     XR_CHECK_INIT(xrStringToPath(instance, "/interaction_profiles/oculus/touch_controller", &oculusTouchProfilePath), "Failed to get oculus touch profile path");
@@ -470,9 +481,13 @@ bool VRManager::CreateActions() {
         // A Button
         XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/a/click", &path), "Failed to get path");
         bindings.push_back({ aButtonAction, path });
-        // Left A/X Button
+        // Left X Button
         XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/input/x/click", &path), "Failed to get path");
-        bindings.push_back({ leftAButtonAction, path });
+        bindings.push_back({ undoRedoActivationAction_, path });
+
+        // --- NEW: Haptic binding ---
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/output/haptic", &path), "Failed to get path");
+        bindings.push_back({ hapticAction_, path });
     }
 
     XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
@@ -483,6 +498,15 @@ bool VRManager::CreateActions() {
     XR_CHECK_INIT(xrSuggestInteractionProfileBindings(instance, &suggestedBindings), "Failed to suggest bindings");
     
     return true;
+}
+
+void VRManager::TriggerHaptic(XrPath handPath) {
+    XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
+    vibration.amplitude = 0.5f;
+    vibration.duration = 50 * 1000000; // 50ms in nanoseconds
+    vibration.frequency = XR_FREQUENCY_UNSPECIFIED;
+    XrHapticActionInfo hapticActionInfo{XR_TYPE_HAPTIC_ACTION_INFO, nullptr, hapticAction_, handPath};
+    xrApplyHapticFeedback(session, &hapticActionInfo, (XrHapticBaseHeader*)&vibration);
 }
 
 bool VRManager::CreateControllerSpaces() {
@@ -709,12 +733,12 @@ void VRManager::PollActions() {
         return (state.isActive && state.currentState);
     };
     aButtonIsPressed = readBool(aButtonAction, rightHandPath);
-    bool leftAIsPressed = readBool(leftAButtonAction, leftHandPath);
+    bool isUndoRedoHeld = readBool(undoRedoActivationAction_, leftHandPath);
 
     // --- Double Click Logic for Left A/X Button ---
     leftAButtonDoubleClicked = false;
     const uint32_t DOUBLE_CLICK_TIME_MS = 300;
-    if (leftAIsPressed && !leftAWasPressed) {
+    if (isUndoRedoHeld && !leftAWasPressed) {
         uint32_t currentTime = SDL_GetTicks();
         if (currentTime - leftALastPressTime < DOUBLE_CLICK_TIME_MS) {
             leftAButtonDoubleClicked = true;
@@ -723,7 +747,7 @@ void VRManager::PollActions() {
             leftALastPressTime = currentTime;
         }
     }
-    leftAWasPressed = leftAIsPressed;
+    leftAWasPressed = isUndoRedoHeld;
 
     // --- Combine and Smooth Values for Visuals ---
     float targetLeftPress = std::max(leftTrigger, leftSqueeze);
@@ -752,6 +776,69 @@ void VRManager::PollActions() {
             leftMenuAlpha = std::min(1.0f, leftMenuAlpha + MENU_FADE_SPEED);
         } else {
             leftMenuAlpha = std::max(0.0f, leftMenuAlpha - MENU_FADE_SPEED);
+        }
+    }
+
+    // --- NEW: Undo/Redo Gesture Logic ---
+    // Reset the public action flag at the start of polling
+    triggeredUndoRedoAction = UndoRedoAction::None;
+
+    if (isUndoRedoHeld && !isUndoRedoGestureActive_) {
+        // Gesture started
+        isUndoRedoGestureActive_ = true;
+        if (leftHandVisual_.isValid) {
+            gestureStartOrientation_ = leftHandVisual_.pose.orientation;
+        }
+        currentUndoRedoZone_ = UndoRedoZone::None;
+    } else if (!isUndoRedoHeld && isUndoRedoGestureActive_) {
+        // Gesture ended
+        isUndoRedoGestureActive_ = false;
+        if (currentUndoRedoZone_ == UndoRedoZone::InUndoZone) {
+            triggeredUndoRedoAction = UndoRedoAction::TriggerUndo;
+            TriggerHaptic(leftHandPath);
+        } else if (currentUndoRedoZone_ == UndoRedoZone::InRedoZone) {
+            triggeredUndoRedoAction = UndoRedoAction::TriggerRedo;
+            TriggerHaptic(leftHandPath);
+        }
+        currentUndoRedoZone_ = UndoRedoZone::None;
+    }
+
+    if (isUndoRedoGestureActive_ && leftHandVisual_.isValid) {
+        glm::quat startQ(gestureStartOrientation_.w, gestureStartOrientation_.x, gestureStartOrientation_.y, gestureStartOrientation_.z);
+        glm::quat currentQ(leftHandVisual_.pose.orientation.w, leftHandVisual_.pose.orientation.x, leftHandVisual_.pose.orientation.y, leftHandVisual_.pose.orientation.z);
+        
+        // Get forward vectors and project them onto the world XY plane (for yaw calculation)
+        glm::vec3 startForward = startQ * glm::vec3(0, 0, -1);
+        glm::vec3 currentForward = currentQ * glm::vec3(0, 0, -1);
+        startForward.z = 0;
+        currentForward.z = 0;
+
+        // Only calculate angle if vectors are valid
+        if (glm::length2(startForward) > 1e-6 && glm::length2(currentForward) > 1e-6) {
+            startForward = glm::normalize(startForward);
+            currentForward = glm::normalize(currentForward);
+            
+            // Calculate signed angle around world Z-up axis
+            float angle = glm::orientedAngle(startForward, currentForward, glm::vec3(0, 0, 1));
+            
+            UndoRedoZone newZone = UndoRedoZone::None;
+            const float UNDO_REDO_ANGLE_THRESHOLD = glm::radians(35.0f); // Increased angle threshold
+
+            // Positive angle is left turn -> Redo (INVERTED)
+            if (angle > UNDO_REDO_ANGLE_THRESHOLD) {
+                newZone = UndoRedoZone::InRedoZone;
+            // Negative angle is right turn -> Undo (INVERTED)
+            } else if (angle < -UNDO_REDO_ANGLE_THRESHOLD) {
+                newZone = UndoRedoZone::InUndoZone;
+            }
+
+            // If we entered a new zone, trigger haptic feedback
+            if (newZone != currentUndoRedoZone_) {
+                if (newZone != UndoRedoZone::None) {
+                    TriggerHaptic(leftHandPath);
+                }
+                currentUndoRedoZone_ = newZone;
+            }
         }
     }
 

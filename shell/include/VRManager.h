@@ -68,6 +68,13 @@ struct TwoHandZoomState {
     float previousScale = 1.0f;       // For smoothing
 };
 
+// --- NEW: Enum for Undo/Redo actions triggered by gestures ---
+enum class UndoRedoAction {
+    None,
+    TriggerUndo,
+    TriggerRedo
+};
+
 // Manages all OpenXR state and the VR frame loop
 class VRManager {
 public:
@@ -99,6 +106,9 @@ public:
     
     // --- NEW: Getter for the world transform ---
     const glm::mat4& GetWorldTransform() const { return worldTransform_; }
+
+    // --- NEW: Public member for undo/redo gesture state ---
+    UndoRedoAction triggeredUndoRedoAction = UndoRedoAction::None;
 
     // --- NEW: Public members for distance text display ---
     bool isTwoHandZooming = false;
@@ -143,8 +153,9 @@ private:
     XrAction triggerValueAction = XR_NULL_HANDLE;
     XrAction squeezeValueAction = XR_NULL_HANDLE;
     XrAction controllerPoseAction = XR_NULL_HANDLE;
+    XrAction hapticAction_ = XR_NULL_HANDLE; // <-- NEW for haptics
     XrAction aButtonAction = XR_NULL_HANDLE;
-    XrAction leftAButtonAction = XR_NULL_HANDLE;
+    XrAction undoRedoActivationAction_ = XR_NULL_HANDLE; // <-- RENAMED from leftAButtonAction
     // Internal state for double click detection
     bool leftAWasPressed = false;
     uint32_t leftALastPressTime = 0;
@@ -159,6 +170,17 @@ private:
     GrabState leftGrabState_;
     GrabState rightGrabState_;
     TwoHandZoomState twoHandZoomState_;
+
+    // --- NEW: Private members for Undo/Redo gesture tracking ---
+    enum class UndoRedoZone { None, InUndoZone, InRedoZone };
+    bool isUndoRedoGestureActive_ = false;
+    UndoRedoZone currentUndoRedoZone_ = UndoRedoZone::None;
+    XrQuaternionf gestureStartOrientation_{};
+
+    // --- NEW: Private helper for haptics ---
+    void TriggerHaptic(XrPath handPath);
+    
+
     // The transform for grab locomotion, initialized to the desired starting view.
     // Place the rig at (2,2,2) and orient its local +Y (forward) to face the origin,
     // with local +Z (up) as close as possible to global Z-up.
