@@ -34,6 +34,7 @@ extern "C" {
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/norm.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
 
 #include <fmt/core.h>
 
@@ -405,6 +406,32 @@ int main(int argc, char* argv[]) {
             
             // --- Tool-specific UI ---
             toolManager.RenderUI();
+
+            ImGui::Separator();
+            if (ImGui::CollapsingHeader("VR Panel Debug")) {
+                if (numpadInitialized) {
+                    glm::vec3 scale;
+                    glm::quat rotation;
+                    glm::vec3 translation;
+                    glm::vec3 skew;
+                    glm::vec4 perspective;
+                    glm::decompose(numpadOffsetTransform, scale, rotation, translation, skew, perspective);
+
+                    glm::vec3 eulerAngles = glm::eulerAngles(rotation);
+                    eulerAngles = glm::degrees(eulerAngles);
+                    ImGui::InputFloat3("Translation", &translation.x, "%.3f");
+                    ImGui::InputFloat3("Rotation (Euler)", &eulerAngles.x, "%.3f");
+                    ImGui::InputFloat("Scale", &scale.x, 0.01f, 0.1f, "%.3f");
+                    if (ImGui::Button("Apply Debug Values")) {
+                        glm::mat4 newScale = glm::scale(glm::mat4(1.0f), glm::vec3(scale.x));
+                        glm::mat4 newRotation = glm::mat4_cast(glm::quat(glm::radians(eulerAngles)));
+                        glm::mat4 newTranslation = glm::translate(glm::mat4(1.0f), translation);
+                        numpadOffsetTransform = newTranslation * newRotation * newScale;
+                    }
+                } else {
+                    ImGui::TextDisabled("Numpad not yet initialized in VR.");
+                }
+            }
 
             ImGui::Text("Scene Info:");
             ImGui::Text("Lines in Scene: %zu", scene_ptr ? scene_ptr->GetAllLines().size() : 0);
@@ -791,12 +818,13 @@ int main(int argc, char* argv[]) {
                             } else {
                                 // If not grabbed, the panel's transform is based on the controller's transform plus a relative offset.
                                 if (!numpadInitialized) {
-                                    // On first appearance, calculate the default offset
-                                    float panelScale = 0.7f;
-                                    glm::vec3 localOffset = glm::vec3(0.0f, 0.15f, 0.0f) * worldScale;
-                                    glm::quat localTilt = glm::angleAxis(glm::radians(70.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-                                    numpadOffsetTransform = glm::translate(glm::mat4(1.0f), localOffset) *
-                                                          glm::mat4_cast(localTilt) *
+                                    // On first appearance, calculate the default offset from the new tuned values
+                                    float panelScale = 0.3f;
+                                    glm::vec3 translation = glm::vec3(-0.837f, -0.895f, -3.975f);
+                                    glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-103.054f, -0.613f, -7.456f));
+
+                                    numpadOffsetTransform = glm::translate(glm::mat4(1.0f), translation) *
+                                                          glm::mat4_cast(glm::quat(eulerAnglesRad)) *
                                                           glm::scale(glm::mat4(1.0f), glm::vec3(panelScale));
                                     numpadInitialized = true;
                                 }
