@@ -380,4 +380,17 @@ glm::vec3 LineTool::calculateInferenceLockedPoint(const SnapResult& snap, const 
     return p_on_axis;
 }
 
+// --- Public Getters ---
+
+bool LineTool::IsDrawing() const {
+    return currentState != ToolState::IDLE;
+}
+
+float LineTool::GetCurrentLineLength() const {
+    if (currentState != ToolState::IDLE) {
+        return glm::distance(currentLineStartPoint, currentRubberBandEnd);
+    }
+    return 0.0f;
+}
+
 } // namespace Urbaxio::Tools 

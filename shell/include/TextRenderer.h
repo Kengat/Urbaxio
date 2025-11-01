@@ -30,11 +30,23 @@ public:
                  const glm::mat4& viewMatrix,
                  bool billboard = true);
 
+    void AddTextOnPanel(const std::string& text,
+                      const glm::mat4& panelTransform,
+                      const glm::vec4& color,
+                      float height);
+    void SetPanelModelMatrix(const glm::mat4& modelMatrix);
+
     void Render(const glm::mat4& view, const glm::mat4& projection);
 
 private:
     struct Vertex {
         glm::vec3 pos;
+        glm::vec2 uv;
+        glm::vec4 color;
+    };
+
+    struct PanelVertex {
+        glm::vec3 pos; // Position relative to panel origin
         glm::vec2 uv;
         glm::vec4 color;
     };
@@ -47,6 +59,10 @@ private:
     GLuint vbo_ = 0;
     GLuint fontAtlasTexture_ = 0;
 
+    GLuint panel_shaderProgram_ = 0;
+    GLuint panel_vao_ = 0;
+    GLuint panel_vbo_ = 0;
+
     float atlasWidth_ = 1.0f;
     float atlasHeight_ = 1.0f;
     float pxRange_ = 4.0f;
@@ -55,6 +71,8 @@ private:
 
     std::map<int, Glyph> glyphs_;
     std::vector<Vertex> vertices_;
+    std::vector<PanelVertex> panelVertices_;
+    glm::mat4 currentPanelModelMatrix_ = glm::mat4(1.0f);
 };
 
 } // namespace Urbaxio

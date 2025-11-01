@@ -20,6 +20,10 @@ public:
 
     void RenderUI() override;
     void RenderPreview(Renderer& renderer, const SnapResult& snap) override;
+    
+    // --- Public Getters for external UI ---
+    bool IsDrawing() const;
+    float GetCurrentLineLength() const;
 
 private:
     // --- NEW: State Machine ---

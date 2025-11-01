@@ -380,28 +380,50 @@ namespace Urbaxio {
             "uniform float u_globalAlpha;\n"
             "uniform vec3 u_aberrationColor1;\n"
             "uniform vec3 u_aberrationColor2;\n"
+            "uniform int u_shapeType; // 0 for circle, 1 for rounded rect\n"
+            "uniform float u_rectCornerRadius;\n"
+            "uniform vec2 u_rectSize;\n"
+            "\n"
+            "// SDF for a rounded box\n"
+            "float sdRoundedBox( in vec2 p, in vec2 b, in float r )\n"
+            "{\n"
+            "    vec2 q = abs(p)-b+r;\n"
+            "    return min(max(q.x,q.y),0.0) + length(max(q,0.0)) - r;\n"
+            "}\n"
             "\n"
             "const float edgeSoftness = 0.4;\n"
             "\n"
             "void main() {\n"
-            "    // Red layer (custom color 1)\n"
-            "    vec2 offsetR = vec2(1.5, 1.5) * u_aberrationAmount;\n"
-            "    float distR = length(vUv - offsetR);\n"
-            "    float alphaR = (1.0 - smoothstep(0.5 - edgeSoftness, 0.5, distR)) * 0.6;\n"
+            "    float dist;\n"
+            "    if (u_shapeType == 1) { // Rounded Rect\n"
+            "        dist = sdRoundedBox(vUv, u_rectSize, u_rectCornerRadius);\n"
+            "    } else { // Circle\n"
+            "        dist = length(vUv) - 0.5;\n"
+            "    }\n"
+            "\n"
+            "    // The rest of the logic can be simplified as it's not needed for the display panel\n"
+            "    float edgeSoftnessDisplay = 0.02;\n"
+            "    float alpha = 1.0 - smoothstep(-edgeSoftnessDisplay, edgeSoftnessDisplay, dist);\n"
+            "\n"
+            "    if (u_shapeType == 1) {\n"
+            "        FragColor = vec4(u_baseColor, alpha * u_globalAlpha);\n"
+            "        return;\n"
+            "    }\n"
+            "\n"
+            "    // Aberration logic for circles\n"
+            "    vec2 offsetR = vec2(1.0, 1.0) * u_aberrationAmount;\n"
+            "    float distR = length(vUv - offsetR) - 0.5;\n"
+            "    float alphaR = (1.0 - smoothstep(-0.1, 0.1, distR)) * 0.6;\n"
             "    vec4 colorR = vec4(u_aberrationColor1, alphaR);\n"
             "\n"
-            "    // Blue layer (custom color 2)\n"
-            "    vec2 offsetB = vec2(-1.5, -1.5) * u_aberrationAmount;\n"
-            "    float distB = length(vUv - offsetB);\n"
-            "    float alphaB = (1.0 - smoothstep(0.5 - edgeSoftness, 0.5, distB)) * 0.7;\n"
+            "    vec2 offsetB = vec2(-1.0, -1.0) * u_aberrationAmount;\n"
+            "    float distB = length(vUv - offsetB) - 0.5;\n"
+            "    float alphaB = (1.0 - smoothstep(-0.1, 0.1, distB)) * 0.7;\n"
             "    vec4 colorB = vec4(u_aberrationColor2, alphaB);\n"
             "\n"
-            "    // Base layer\n"
-            "    float distBase = length(vUv);\n"
-            "    float alphaBase = 1.0 - smoothstep(0.5 - edgeSoftness, 0.5, distBase);\n"
+            "    float alphaBase = 1.0 - smoothstep(-0.1, 0.1, dist);\n"
             "    vec4 colorBase = vec4(u_baseColor, alphaBase);\n"
             "\n"
-            "    // Additive blending for a glow effect\n"
             "    vec3 finalRGB = colorBase.rgb * colorBase.a + colorR.rgb * colorR.a + colorB.rgb * colorB.a;\n"
             "    float finalAlpha = max(colorBase.a, max(colorR.a, colorB.a));\n"
             "\n"
@@ -1252,12 +1274,37 @@ namespace Urbaxio {
         glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
         
+        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 0); // 0 for circle
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(baseColor));
         glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), globalAlpha);
         glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationAmount"), aberration);
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationColor1"), 1, glm::value_ptr(aberrationColor1));
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationColor2"), 1, glm::value_ptr(aberrationColor2));
         
+        glBindVertexArray(splatVAO);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        glDepthMask(GL_TRUE);
+    }
+
+    void Renderer::RenderVRPanel(
+        const glm::mat4& view, const glm::mat4& projection,
+        const glm::mat4& model,
+        const glm::vec3& color, float cornerRadius, float alpha
+    ) {
+        if (vrMenuWidgetShaderProgram == 0 || splatVAO == 0) return;
+        glDepthMask(GL_FALSE);
+        glUseProgram(vrMenuWidgetShaderProgram);
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+        
+        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 1); // 1 for rounded rect
+        glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(color));
+        glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), alpha);
+        
+        // Size is from -0.5 to 0.5, so total size is 1.0.
+        glUniform2f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_rectSize"), 0.5f, 0.5f);
+        glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_rectCornerRadius"), cornerRadius);
         glBindVertexArray(splatVAO);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
         glDepthMask(GL_TRUE);

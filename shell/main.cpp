@@ -14,6 +14,7 @@ extern "C" {
 #include <cad_kernel/cad_kernel.h>
 #include <tools/ToolManager.h>
 #include <tools/SelectTool.h>
+#include <tools/LineTool.h>
 #include <tools/MoveTool.h>
 #include <tools/PushPullTool.h>
 
@@ -819,9 +820,9 @@ int main(int argc, char* argv[]) {
                                 // If not grabbed, the panel's transform is based on the controller's transform plus a relative offset.
                                 if (!numpadInitialized) {
                                     // On first appearance, calculate the default offset from the new tuned values
-                                    float panelScale = 0.3f;
-                                    glm::vec3 translation = glm::vec3(-0.837f, -0.895f, -3.975f);
-                                    glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-103.054f, -0.613f, -7.456f));
+                                    float panelScale = 8.0f;
+                                    glm::vec3 translation = glm::vec3(-0.007f, -0.584f, -2.276f);
+                                    glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-104.560f, 1.023f, -11.718f));
 
                                     numpadOffsetTransform = glm::translate(glm::mat4(1.0f), translation) *
                                                           glm::mat4_cast(glm::quat(eulerAnglesRad)) *
@@ -835,14 +836,40 @@ int main(int argc, char* argv[]) {
                             glm::vec3 numpadRight = glm::normalize(glm::vec3(numpadTransform[0]));
                             glm::vec3 numpadUp = glm::normalize(glm::vec3(numpadTransform[1]));
 
+                            float panelLocalScale = glm::length(glm::vec3(numpadTransform[0])); // Extract scale from the matrix
+
                             // --- Display & Grab Handle ---
-                            float displayHeight = 0.05f * worldScale;
-                            glm::vec3 displayCenter = numpadOrigin + numpadUp * (0.05f * worldScale);
-
-                            float grabHandleRadius = (0.03f * worldScale * 2.0f) * 0.4f / 2.0f; // 40% of confirm button
-                            glm::vec3 grabHandleCenter = displayCenter + numpadUp * (displayHeight * 0.5f + grabHandleRadius + 0.01f * worldScale);
-
-                            textRenderer.AddText(numpadInput, displayCenter, glm::vec4(1.0f), 0.03f * worldScale, view, false);
+                            float displayWidth = 0.2f * panelLocalScale;
+                            float displayHeight = 0.05f * panelLocalScale;
+                            glm::vec3 displayCenter = numpadOrigin + numpadUp * (0.06f * panelLocalScale);
+                            
+                            // --- Update Numpad Display String ---
+                            if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Line) {
+                                auto* lineTool = static_cast<Urbaxio::Tools::LineTool*>(toolManager.GetActiveTool());
+                                if (lineTool->IsDrawing()) {
+                                    float length_m = lineTool->GetCurrentLineLength();
+                                    numpadInput = fmt::format("{:.0f}", length_m * 1000.0f);
+                                }
+                            } else {
+                                // Clear display if another tool is active
+                                numpadInput = "0";
+                            }
+                            
+                            // Render the display panel
+                            glm::mat4 displayModel = glm::translate(glm::mat4(1.0f), displayCenter) *
+                                                     glm::mat4(glm::mat3(numpadRight, numpadUp, glm::cross(numpadRight, numpadUp))) *
+                                                     glm::scale(glm::mat4(1.0f), glm::vec3(displayWidth, displayHeight, 1.0f));
+                            renderer.RenderVRPanel(view, projection, displayModel, glm::vec3(0.1f, 0.15f, 0.25f), 0.2f, 0.7f * vrManager->leftMenuAlpha);
+                            
+                            // Render text on top of the display using the new method
+                            // We create a transform for the text itself, positioned at the display center
+                            glm::mat4 textTransform = glm::translate(glm::mat4(1.0f), displayCenter) *
+                                                      glm::mat4(glm::mat3(numpadRight, numpadUp, glm::cross(numpadRight, numpadUp)));
+                            
+                            textRenderer.SetPanelModelMatrix(textTransform);
+                            textRenderer.AddTextOnPanel(numpadInput, glm::mat4(1.0f), glm::vec4(1.0f), 0.03f * panelLocalScale);
+                            float grabHandleRadius = 0.012f * panelLocalScale;
+                            glm::vec3 grabHandleCenter = displayCenter + numpadUp * (displayHeight * 0.5f + grabHandleRadius + 0.01f * panelLocalScale);
 
                             isHoveringGrabHandle = false;
                             if (rightHand.isValid) {
@@ -865,8 +892,8 @@ int main(int argc, char* argv[]) {
 
                             // --- Buttons ---
                             const char* keys[12] = {"1","2","3", "4","5","6", "7","8","9", ".","0",""}; // last is confirm
-                            float keySpacing = 0.06f * worldScale;
-                            float keyRadius = 0.025f * worldScale;
+                            float keySpacing = 0.06f * panelLocalScale;
+                            float keyRadius = 0.025f * panelLocalScale;
                             hoveredNumpadKey = -1;
                             float closestHit = std::numeric_limits<float>::max();
 
@@ -907,11 +934,11 @@ int main(int argc, char* argv[]) {
                                         keys[i],
                                         keyCenter,
                                         glm::vec4(1.0f, 1.0f, 1.0f, vrManager->leftMenuAlpha * (isHovered ? 1.0f : 0.7f)),
-                                        0.03f * worldScale,
+                                        0.03f * panelLocalScale,
                                         view
                                     );
                                 } else { // Confirm key (widget)
-                                    float widget_diameter_scaled = 0.03f * worldScale;
+                                    float widget_diameter = 0.03f * panelLocalScale;
 
                                     // Build model matrix for billboard
                                     glm::mat4 cameraWorld = glm::inverse(view);
@@ -921,7 +948,7 @@ int main(int argc, char* argv[]) {
 
                                     glm::mat4 finalModel = glm::translate(glm::mat4(1.0f), keyCenter) *
                                                            glm::mat4(glm::mat3(camRight, camUp, camFwd)) *
-                                                           glm::scale(glm::mat4(1.0f), glm::vec3(widget_diameter_scaled));
+                                                           glm::scale(glm::mat4(1.0f), glm::vec3(widget_diameter));
 
                                     glm::vec3 baseColor = glm::vec3(0.1f, 0.8f, 0.2f); // Green
                                     float aberration = isHovered ? 0.15f : 0.05f;
