@@ -249,6 +249,20 @@ int main(int argc, char* argv[]) {
     // --- VR menu interaction state ---
     int hoveredToolIndex = -1;
     std::vector<float> toolMenuAlphas;
+    Urbaxio::Engine::SceneObject* menuSphere = nullptr; // For rendering widgets
+
+    int hoveredNumpadKey = -1; // -1 for none, 0-9 for digits, 10 for '.', 11 for 'Confirm'
+    std::string numpadInput = "0";
+
+    glm::mat4 numpadTransform = glm::mat4(1.0f); // Transform for the entire numpad panel
+
+    glm::mat4 numpadOffsetTransform = glm::mat4(1.0f); // Relative offset from the controller
+    bool numpadInitialized = false;
+
+    bool isGrabbingNumpad = false;
+    glm::mat4 grabbedNumpadInitialTransform;
+    glm::mat4 grabbedControllerInitialTransform;
+    bool isHoveringGrabHandle = false;
 
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
     while (!should_quit) {
@@ -546,9 +560,24 @@ int main(int argc, char* argv[]) {
                 }
                 
                 if (rightHand.triggerClicked) {
+                    if (isHoveringGrabHandle) {
+                        isGrabbingNumpad = true;
+                        grabbedNumpadInitialTransform = numpadTransform;
+                        grabbedControllerInitialTransform = vrManager->GetWorldTransform() * XrPoseToModelMatrix(rightHand.pose);
+                    } else {
                     toolManager.OnLeftMouseDown(0, 0, *toolContext.shiftDown, *toolContext.ctrlDown, vrRayOrigin, vrRayDirection);
+                    }
                 }
                 if (rightHand.triggerReleased) {
+                    if (isGrabbingNumpad) {
+                        isGrabbingNumpad = false;
+                        // When released, calculate the new relative offset from the controller
+                        auto it = transformOverrides.find(leftControllerVisual->get_id());
+                        if (it != transformOverrides.end()) {
+                            const glm::mat4& controllerTransform = it->second;
+                            numpadOffsetTransform = glm::inverse(controllerTransform) * numpadTransform;
+                        }
+                    }
                     toolManager.OnLeftMouseUp(0, 0, *toolContext.shiftDown, *toolContext.ctrlDown);
                 }
 
@@ -579,6 +608,24 @@ int main(int argc, char* argv[]) {
                     }
                     renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), *toolContext.selectedLineIDs, previewObjId, scene_ptr);
                     toolManager.RenderPreview(renderer, vrSnap);
+                    
+                    // Call the main render function BEFORE drawing UI elements like menus
+                    renderer.RenderFrame(
+                        swapchain.width, swapchain.height,
+                        view, projection, viewPos, scene_ptr,
+                        objectColor, lightColor, ambientStrength, 
+                        showGrid, showAxes, axisLineWidth, negAxisLineWidth,
+                        gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
+                        vrSnap.worldPoint, cursorRadius, effectIntensity, 
+                        *toolContext.selectedObjId, *toolContext.selectedTriangleIndices, *toolContext.selectedLineIDs, selectionHighlightColor, 
+                        *toolContext.hoveredObjId, *toolContext.hoveredFaceTriangleIndices, hoverHighlightColor,
+                        vrSnap,
+                        nullptr, // No ImGui data for VR eyes
+                        previewObjId, glm::mat4(1.0f),
+                        transformOverrides,
+                        colorOverrides,
+                        unlitOverrides
+                    );
                     
                     // --- Render VR Tool Menu ---
                     if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual) {
@@ -726,23 +773,135 @@ int main(int argc, char* argv[]) {
                         }
                     }
 
-                    // Call the main render function ONCE with all scene data and overrides
-                    renderer.RenderFrame(
-                        swapchain.width, swapchain.height,
-                        view, projection, viewPos, scene_ptr,
-                        objectColor, lightColor, ambientStrength, 
-                        showGrid, showAxes, axisLineWidth, negAxisLineWidth,
-                        gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
-                        vrSnap.worldPoint, cursorRadius, effectIntensity, 
-                        *toolContext.selectedObjId, *toolContext.selectedTriangleIndices, *toolContext.selectedLineIDs, selectionHighlightColor, 
-                        *toolContext.hoveredObjId, *toolContext.hoveredFaceTriangleIndices, hoverHighlightColor,
-                        vrSnap,
-                        nullptr, // No ImGui data for VR eyes
-                        previewObjId, glm::mat4(1.0f),
-                        transformOverrides,
-                        colorOverrides,
-                        unlitOverrides
-                    );
+                    // --- Render VR Numpad ---
+                    if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual) {
+                        auto it = transformOverrides.find(leftControllerVisual->get_id());
+                        if (it != transformOverrides.end()) {
+                            const glm::mat4& controllerTransform = it->second;
+
+                            float worldScale = glm::length(glm::vec3(vrManager->GetWorldTransform()[0]));
+
+                            // --- Numpad Transform Logic ---
+                            if (isGrabbingNumpad) {
+                                if (rightHand.isValid) {
+                                    glm::mat4 currentControllerTransform = vrManager->GetWorldTransform() * XrPoseToModelMatrix(rightHand.pose);
+                                    glm::mat4 deltaTransform = currentControllerTransform * glm::inverse(grabbedControllerInitialTransform);
+                                    numpadTransform = deltaTransform * grabbedNumpadInitialTransform;
+                                }
+                            } else {
+                                // If not grabbed, the panel's transform is based on the controller's transform plus a relative offset.
+                                if (!numpadInitialized) {
+                                    // On first appearance, calculate the default offset
+                                    float panelScale = 0.7f;
+                                    glm::vec3 localOffset = glm::vec3(0.0f, 0.15f, 0.0f) * worldScale;
+                                    glm::quat localTilt = glm::angleAxis(glm::radians(70.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+                                    numpadOffsetTransform = glm::translate(glm::mat4(1.0f), localOffset) *
+                                                          glm::mat4_cast(localTilt) *
+                                                          glm::scale(glm::mat4(1.0f), glm::vec3(panelScale));
+                                    numpadInitialized = true;
+                                }
+                                numpadTransform = controllerTransform * numpadOffsetTransform;
+                            }
+
+                            glm::vec3 numpadOrigin = glm::vec3(numpadTransform[3]);
+                            glm::vec3 numpadRight = glm::normalize(glm::vec3(numpadTransform[0]));
+                            glm::vec3 numpadUp = glm::normalize(glm::vec3(numpadTransform[1]));
+
+                            // --- Display & Grab Handle ---
+                            float displayHeight = 0.05f * worldScale;
+                            glm::vec3 displayCenter = numpadOrigin + numpadUp * (0.05f * worldScale);
+
+                            float grabHandleRadius = (0.03f * worldScale * 2.0f) * 0.4f / 2.0f; // 40% of confirm button
+                            glm::vec3 grabHandleCenter = displayCenter + numpadUp * (displayHeight * 0.5f + grabHandleRadius + 0.01f * worldScale);
+
+                            textRenderer.AddText(numpadInput, displayCenter, glm::vec4(1.0f), 0.03f * worldScale, view, false);
+
+                            isHoveringGrabHandle = false;
+                            if (rightHand.isValid) {
+                                float dist;
+                                if (glm::intersectRaySphere(vrRayOrigin, vrRayDirection, grabHandleCenter, grabHandleRadius * grabHandleRadius, dist)) {
+                                    isHoveringGrabHandle = true;
+                                }
+                            }
+
+                            // Build model matrix for billboard grab handle
+                            glm::mat4 cameraWorld = glm::inverse(view);
+                            glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
+                            glm::vec3 camUp    = glm::normalize(glm::vec3(cameraWorld[1]));
+                            glm::vec3 camFwd   = glm::normalize(glm::vec3(cameraWorld[2]));
+
+                            glm::mat4 grabHandleModel = glm::translate(glm::mat4(1.0f), grabHandleCenter) *
+                                                   glm::mat4(glm::mat3(camRight, camUp, camFwd)) *
+                                                   glm::scale(glm::mat4(1.0f), glm::vec3(grabHandleRadius * 2.0f));
+                            renderer.RenderVRMenuWidget(view, projection, grabHandleModel, glm::vec3(1.0f), isHoveringGrabHandle ? 0.15f : 0.05f, vrManager->leftMenuAlpha, glm::vec3(1.0f), glm::vec3(1.0f));
+
+                            // --- Buttons ---
+                            const char* keys[12] = {"1","2","3", "4","5","6", "7","8","9", ".","0",""}; // last is confirm
+                            float keySpacing = 0.06f * worldScale;
+                            float keyRadius = 0.025f * worldScale;
+                            hoveredNumpadKey = -1;
+                            float closestHit = std::numeric_limits<float>::max();
+
+                            // Exclude grab handle from key intersection test
+                            if (isHoveringGrabHandle) {
+                                closestHit = 0; // Prioritize grab handle
+                            }
+
+                            for (int i = 0; i < 12; ++i) {
+                                int row = i / 3;
+                                int col = i % 3;
+                                glm::vec3 keyCenter = numpadOrigin -
+                                                    numpadUp * (float)row * keySpacing +
+                                                    numpadRight * ((float)col - 1.0f) * keySpacing;
+
+                                if (i == 9) { // '.' key
+                                    keyCenter = numpadOrigin - numpadUp * 3.f * keySpacing - numpadRight * 1.f * keySpacing;
+                                } else if (i == 10) { // '0' key
+                                    keyCenter = numpadOrigin - numpadUp * 3.f * keySpacing;
+                                } else if (i == 11) { // Confirm key
+                                    keyCenter = numpadOrigin - numpadUp * 3.f * keySpacing + numpadRight * 1.f * keySpacing;
+                                }
+
+                                // Intersection check
+                                if (rightHand.isValid && !isHoveringGrabHandle) { // Don't check keys if hovering handle
+                                    float dist;
+                                    if (glm::intersectRaySphere(vrRayOrigin, vrRayDirection, keyCenter, keyRadius * keyRadius, dist) && dist < closestHit) {
+                                        closestHit = dist;
+                                        hoveredNumpadKey = i;
+                                    }
+                                }
+
+                                bool isHovered = (hoveredNumpadKey == i);
+
+                                // Render key (text or widget)
+                                if (i < 11) { // Text keys
+                                    textRenderer.AddText(
+                                        keys[i],
+                                        keyCenter,
+                                        glm::vec4(1.0f, 1.0f, 1.0f, vrManager->leftMenuAlpha * (isHovered ? 1.0f : 0.7f)),
+                                        0.03f * worldScale,
+                                        view
+                                    );
+                                } else { // Confirm key (widget)
+                                    float widget_diameter_scaled = 0.03f * worldScale;
+
+                                    // Build model matrix for billboard
+                                    glm::mat4 cameraWorld = glm::inverse(view);
+                                    glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
+                                    glm::vec3 camUp    = glm::normalize(glm::vec3(cameraWorld[1]));
+                                    glm::vec3 camFwd   = glm::normalize(glm::vec3(cameraWorld[2]));
+
+                                    glm::mat4 finalModel = glm::translate(glm::mat4(1.0f), keyCenter) *
+                                                           glm::mat4(glm::mat3(camRight, camUp, camFwd)) *
+                                                           glm::scale(glm::mat4(1.0f), glm::vec3(widget_diameter_scaled));
+
+                                    glm::vec3 baseColor = glm::vec3(0.1f, 0.8f, 0.2f); // Green
+                                    float aberration = isHovered ? 0.15f : 0.05f;
+                                    renderer.RenderVRMenuWidget(view, projection, finalModel, baseColor, aberration, vrManager->leftMenuAlpha, baseColor, baseColor);
+                                }
+                            }
+                        }
+                    }
                     
                     // 3D distance text in VR
                     if (vrManager->zoomTextAlpha > 0.01f) {
@@ -770,7 +929,7 @@ int main(int argc, char* argv[]) {
                         const float textOpacity = 0.7f;
                         textRenderer.AddText(distStr, midpoint_transformed, glm::vec4(1,1,1, vrManager->zoomTextAlpha * textOpacity), finalWorldHeight, view);
                     }
-                    textRenderer.Render(view, projection);
+                    textRenderer.Render(view, projection); // Now this renders ALL text (menu, numpad, distance)
 
                     glFinish();
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
