@@ -126,6 +126,7 @@ void VRManager::Shutdown() {
     if (rightGripSpace != XR_NULL_HANDLE) xrDestroySpace(rightGripSpace);
     if (controllerPoseAction != XR_NULL_HANDLE) xrDestroyAction(controllerPoseAction);
     if (aButtonAction != XR_NULL_HANDLE) xrDestroyAction(aButtonAction);
+    if (leftAButtonAction != XR_NULL_HANDLE) xrDestroyAction(leftAButtonAction);
     if (triggerValueAction != XR_NULL_HANDLE) xrDestroyAction(triggerValueAction);
     if (squeezeValueAction != XR_NULL_HANDLE) xrDestroyAction(squeezeValueAction);
     if (actionSet != XR_NULL_HANDLE) xrDestroyActionSet(actionSet);
@@ -433,6 +434,15 @@ bool VRManager::CreateActions() {
         actionCI.subactionPaths = &rightHandPath;
         XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &aButtonAction), "Failed to create 'A' button action");
     }
+    { // Scope for Left 'A' button (usually 'X')
+        XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
+        actionCI.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        strcpy_s(actionCI.actionName, "left_a_button_click");
+        strcpy_s(actionCI.localizedActionName, "Left A/X Button Click");
+        actionCI.countSubactionPaths = 1;
+        actionCI.subactionPaths = &leftHandPath;
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &leftAButtonAction), "Failed to create left 'A' button action");
+    }
     
     // 4) Suggest bindings for Oculus Touch profile
     XrPath oculusTouchProfilePath;
@@ -460,6 +470,9 @@ bool VRManager::CreateActions() {
         // A Button
         XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/a/click", &path), "Failed to get path");
         bindings.push_back({ aButtonAction, path });
+        // Left A/X Button
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/input/x/click", &path), "Failed to get path");
+        bindings.push_back({ leftAButtonAction, path });
     }
 
     XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
@@ -696,6 +709,21 @@ void VRManager::PollActions() {
         return (state.isActive && state.currentState);
     };
     aButtonIsPressed = readBool(aButtonAction, rightHandPath);
+    bool leftAIsPressed = readBool(leftAButtonAction, leftHandPath);
+
+    // --- Double Click Logic for Left A/X Button ---
+    leftAButtonDoubleClicked = false;
+    const uint32_t DOUBLE_CLICK_TIME_MS = 300;
+    if (leftAIsPressed && !leftAWasPressed) {
+        uint32_t currentTime = SDL_GetTicks();
+        if (currentTime - leftALastPressTime < DOUBLE_CLICK_TIME_MS) {
+            leftAButtonDoubleClicked = true;
+            leftALastPressTime = 0; // Reset timer to prevent triple clicks
+        } else {
+            leftALastPressTime = currentTime;
+        }
+    }
+    leftAWasPressed = leftAIsPressed;
 
     // --- Combine and Smooth Values for Visuals ---
     float targetLeftPress = std::max(leftTrigger, leftSqueeze);

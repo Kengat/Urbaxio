@@ -107,6 +107,7 @@ public:
     float zoomTextAlpha = 0.0f;
     float leftMenuAlpha = 0.0f;
     bool aButtonIsPressed = false;
+    bool leftAButtonDoubleClicked = false;
 
 private:
     bool initialized = false;
@@ -143,6 +144,10 @@ private:
     XrAction squeezeValueAction = XR_NULL_HANDLE;
     XrAction controllerPoseAction = XR_NULL_HANDLE;
     XrAction aButtonAction = XR_NULL_HANDLE;
+    XrAction leftAButtonAction = XR_NULL_HANDLE;
+    // Internal state for double click detection
+    bool leftAWasPressed = false;
+    uint32_t leftALastPressTime = 0;
     XrPath leftHandPath = XR_NULL_PATH;
     XrPath rightHandPath = XR_NULL_PATH;
 

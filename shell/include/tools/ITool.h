@@ -49,6 +49,7 @@ struct ToolContext {
     // Modifier key state references
     bool* shiftDown = nullptr;
     bool* ctrlDown = nullptr;
+    bool* isNumpadActive = nullptr;
 };
 
 // Interface for all interactive tools

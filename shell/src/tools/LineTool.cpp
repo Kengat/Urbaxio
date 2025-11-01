@@ -188,6 +188,11 @@ void LineTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, cons
     lastSnapResult = snap;
     bool shiftDown = context.shiftDown ? *context.shiftDown : false;
 
+    // If numpad is active, freeze the rubber band preview
+    if (context.isNumpadActive && *context.isNumpadActive) {
+        return;
+    }
+
     glm::vec3 currentTarget = snap.worldPoint;
 
     switch (currentState) {
@@ -391,6 +396,11 @@ float LineTool::GetCurrentLineLength() const {
         return glm::distance(currentLineStartPoint, currentRubberBandEnd);
     }
     return 0.0f;
+}
+
+void LineTool::SetLengthInput(const std::string& input) {
+    strncpy_s(lengthInputBuf, input.c_str(), sizeof(lengthInputBuf) - 1);
+    lengthInputBuf[sizeof(lengthInputBuf) - 1] = '\0'; // Ensure null termination
 }
 
 } // namespace Urbaxio::Tools 
