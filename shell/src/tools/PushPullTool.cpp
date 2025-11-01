@@ -344,7 +344,9 @@ void PushPullTool::updateHover(const glm::vec3& rayOrigin, const glm::vec3& rayD
 
         const auto& name = obj_ptr->get_name();
 
-        if (obj_ptr && obj_ptr->has_mesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
+        // -- START OF MODIFICATION --
+        if (obj_ptr && obj_ptr->has_mesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m" && name != "LeftControllerVisual" && name != "RightControllerVisual") {
+        // -- END OF MODIFICATION --
 
             const auto& mesh = obj_ptr->get_mesh_buffers();
 

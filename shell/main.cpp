@@ -452,7 +452,7 @@ int main(int argc, char* argv[]) {
                     glm::vec3 localDir = tilt * glm::vec3(0.0f, 0.0f, -1.0f);
                     vrRayDirection = glm::normalize(glm::vec3(finalPoseMatrix * glm::vec4(localDir, 0.0f)));
                     // Dynamic, scale-aware snap radius
-                    const float BASE_VR_SNAP_RADIUS = 0.05f;
+                    const float BASE_VR_SNAP_RADIUS = 0.01f;
                     float worldScale = glm::length(glm::vec3(vrManager->GetWorldTransform()[0]));
                     float dynamicSnapRadius = BASE_VR_SNAP_RADIUS * worldScale;
                     vrSnap = snappingSystem.FindSnapPointFromRay(vrRayOrigin, vrRayDirection, *scene_ptr, dynamicSnapRadius);
