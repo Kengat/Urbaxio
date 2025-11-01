@@ -160,5 +160,64 @@ bool ImportObjToScene(const std::string& filepath, Engine::Scene& scene, float s
     return true;
 }
 
+CadKernel::MeshBuffers LoadMeshFromObj(const std::string& filepath) {
+    Urbaxio::CadKernel::MeshBuffers resultMesh;
+
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string warn, err;
+
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filepath.c_str())) {
+        std::cerr << "FileIO Error (LoadMeshFromObj): Failed to load OBJ file: " << filepath << " - " << warn << err << std::endl;
+        return resultMesh; // Return empty mesh on failure
+    }
+
+    // Transformation from standard Y-Up to our Z-Up
+    glm::mat4 y_up_to_z_up = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+    glm::mat3 normal_transform = glm::mat3(y_up_to_z_up);
+
+    // Combine all shapes from the OBJ file into a single mesh
+    for (const auto& shape : shapes) {
+        const auto& obj_mesh = shape.mesh;
+
+        for (const auto& index : obj_mesh.indices) {
+            // Vertex data
+            glm::vec3 pos(
+                attrib.vertices[3 * index.vertex_index + 0],
+                attrib.vertices[3 * index.vertex_index + 1],
+                attrib.vertices[3 * index.vertex_index + 2]
+            );
+            glm::vec3 transformed_pos = y_up_to_z_up * glm::vec4(pos, 1.0f);
+            resultMesh.vertices.push_back(transformed_pos.x);
+            resultMesh.vertices.push_back(transformed_pos.y);
+            resultMesh.vertices.push_back(transformed_pos.z);
+
+            // Normal data
+            if (index.normal_index >= 0) {
+                glm::vec3 norm(
+                    attrib.normals[3 * index.normal_index + 0],
+                    attrib.normals[3 * index.normal_index + 1],
+                    attrib.normals[3 * index.normal_index + 2]
+                );
+                glm::vec3 transformed_norm = normal_transform * norm;
+                resultMesh.normals.push_back(transformed_norm.x);
+                resultMesh.normals.push_back(transformed_norm.y);
+                resultMesh.normals.push_back(transformed_norm.z);
+            } else {
+                resultMesh.normals.push_back(0); resultMesh.normals.push_back(0); resultMesh.normals.push_back(1);
+            }
+        }
+    }
+
+    // Create sequential indices for the combined mesh
+    resultMesh.indices.resize(resultMesh.vertices.size() / 3);
+    for (size_t i = 0; i < resultMesh.indices.size(); ++i) {
+        resultMesh.indices[i] = i;
+    }
+
+    return resultMesh;
+}
+
 } // namespace Urbaxio::FileIO
 

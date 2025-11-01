@@ -498,12 +498,33 @@ int main(int argc, char* argv[]) {
     Urbaxio::Engine::SceneObject* leftControllerVisual = nullptr;
     Urbaxio::Engine::SceneObject* rightControllerVisual = nullptr;
     if (vr_mode) {
-        // Create 1x1x1 unit cubes. The scaling will be done in the render loop.
+        // --- NEW: Load controller model from OBJ instead of creating cubes ---
+        std::string controllerObjPath = "../../resources/controller.obj";
+        if (!std::filesystem::exists(controllerObjPath)) {
+            controllerObjPath = "../../../resources/controller.obj";
+        }
+        Urbaxio::CadKernel::MeshBuffers controllerMesh = Urbaxio::FileIO::LoadMeshFromObj(controllerObjPath);
+
+        if (!controllerMesh.isEmpty()) {
+            leftControllerVisual = scene_ptr->create_object("LeftControllerVisual");
+            if (leftControllerVisual) {
+                leftControllerVisual->set_mesh_buffers(controllerMesh); // Makes a copy
+                leftControllerVisual->setExportable(false);
+            }
+            rightControllerVisual = scene_ptr->create_object("RightControllerVisual");
+            if (rightControllerVisual) {
+                rightControllerVisual->set_mesh_buffers(controllerMesh); // Makes another copy
+                rightControllerVisual->setExportable(false);
+            }
+            std::cout << "Shell: Successfully loaded controller model." << std::endl;
+        } else {
+            std::cerr << "Shell Warning: Could not load controller model from " << controllerObjPath 
+                      << ". Falling back to cubes." << std::endl;
         leftControllerVisual = scene_ptr->create_box_object("LeftControllerVisual", 1.0, 1.0, 1.0);
         if(leftControllerVisual) leftControllerVisual->setExportable(false);
-
         rightControllerVisual = scene_ptr->create_box_object("RightControllerVisual", 1.0, 1.0, 1.0);
         if(rightControllerVisual) rightControllerVisual->setExportable(false);
+        }
     }
     // --- VR menu interaction state ---
     int hoveredToolIndex = -1;
@@ -517,6 +538,11 @@ int main(int argc, char* argv[]) {
 
     bool isHoveringNumpad = false; // True if pointer is over any part of the numpad
     const char* numpadKeys[13] = {"1","2","3", "4","5","6", "7","8","9", ".","0","<-", ""}; // 11=backspace, 12=confirm
+
+    // --- NEW: Live tuning variables for controller model offset, initialized with tuned values ---
+    static glm::vec3 g_controllerOffsetTranslate(0.012f, 0.002f, 0.006f);
+    static glm::vec3 g_controllerOffsetEuler(273.000f, 166.500f, 81.000f);
+    static float g_controllerModelScale = 0.7814f;
 
     glm::mat4 numpadOffsetTransform = glm::mat4(1.0f); // Relative offset from the controller
     bool numpadInitialized = false;
@@ -725,6 +751,14 @@ int main(int argc, char* argv[]) {
             // --- Tool-specific UI ---
             toolManager.RenderUI();
 
+            // --- RE-ADDED: Controller model tuning UI ---
+            if (vr_mode && ImGui::CollapsingHeader("Controller Model Debug")) {
+                ImGui::Text("Tune the RIGHT controller. The left will mirror automatically.");
+                ImGui::DragFloat3("Offset Translate", &g_controllerOffsetTranslate.x, 0.001f);
+                ImGui::DragFloat3("Offset Rotate (Euler)", &g_controllerOffsetEuler.x, 0.5f);
+                ImGui::DragFloat("Model Scale", &g_controllerModelScale, 0.0001f, 0.0f, 2.0f, "%.4f");
+            }
+
             ImGui::Separator();
             if (ImGui::CollapsingHeader("VR Panel Debug")) {
                 if (numpadInitialized) {
@@ -752,9 +786,9 @@ int main(int argc, char* argv[]) {
 
                     if (ImGui::Button("Reset to Default")) {
                          // The new default values from your tuning session
-                         float panelScale = 8.0f;
-                         glm::vec3 default_translation = glm::vec3(-0.470f, -0.402f, -2.765f);
-                         glm::vec3 default_eulerAnglesRad = glm::radians(glm::vec3(-99.082f, -1.151f, -29.510f));
+                         float panelScale = 0.450f;
+                         glm::vec3 default_translation = glm::vec3(-0.024f, -0.047f, -0.197f);
+                         glm::vec3 default_eulerAnglesRad = glm::radians(glm::vec3(-103.003f, 4.477f, -14.612f));
                          numpadOffsetTransform = glm::translate(glm::mat4(1.0f), default_translation) *
                                            glm::mat4_cast(glm::quat(default_eulerAnglesRad)) *
                                            glm::scale(glm::mat4(1.0f), glm::vec3(panelScale));
@@ -876,21 +910,39 @@ int main(int argc, char* argv[]) {
                 // Get the cumulative world transform from the grab/zoom action
                 const glm::mat4& worldTransform = vrManager->GetWorldTransform();
 
+                // --- NEW: Calculate UNSCALED transforms for parenting UI elements ---
+                glm::mat4 leftControllerUnscaledTransform(1.0f);
+                glm::mat4 rightControllerUnscaledTransform(1.0f);
+
                 const auto& leftHand = vrManager->GetLeftHandVisual();
                 if (leftHand.isValid && leftControllerVisual) {
-                    // Apply the world transform to the raw controller pose
                     glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(leftHand.pose);
-                    // REMOVED scale compensation. The controller now scales with the world.
-                    transformOverrides[leftControllerVisual->get_id()] = worldTransform * rawPoseMatrix * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
+                    leftControllerUnscaledTransform = worldTransform * rawPoseMatrix;
+
+                    // Build the mirrored local transform for the left hand
+                    glm::mat4 localOffset =
+                        glm::translate(glm::mat4(1.0f), g_controllerOffsetTranslate * glm::vec3(-1, 1, 1)) *
+                        glm::mat4_cast(glm::quat(glm::radians(g_controllerOffsetEuler * glm::vec3(1, -1, -1))));
+
+                    glm::mat4 scaleMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(-g_controllerModelScale, g_controllerModelScale, g_controllerModelScale));
+                    transformOverrides[leftControllerVisual->get_id()] = leftControllerUnscaledTransform * localOffset * scaleMatrix;
+
                     colorOverrides[leftControllerVisual->get_id()] = MixColorFromPress(leftHand.pressValue);
                     unlitOverrides[leftControllerVisual->get_id()] = true;
                 }
 
                 if (rightHand.isValid && rightControllerVisual) {
-                    // Apply the world transform to the raw controller pose
                     glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(rightHand.pose);
-                    // REMOVED scale compensation. The controller now scales with the world.
-                    transformOverrides[rightControllerVisual->get_id()] = worldTransform * rawPoseMatrix * glm::scale(glm::mat4(1.0f), glm::vec3(0.06f));
+                    rightControllerUnscaledTransform = worldTransform * rawPoseMatrix;
+
+                    // Build the standard local transform for the right hand from the UI values
+                    glm::mat4 localOffset =
+                        glm::translate(glm::mat4(1.0f), g_controllerOffsetTranslate) *
+                        glm::mat4_cast(glm::quat(glm::radians(g_controllerOffsetEuler)));
+
+                    glm::mat4 scaleMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(g_controllerModelScale));
+                    transformOverrides[rightControllerVisual->get_id()] = rightControllerUnscaledTransform * localOffset * scaleMatrix;
+
                     colorOverrides[rightControllerVisual->get_id()] = MixColorFromPress(rightHand.pressValue);
                     unlitOverrides[rightControllerVisual->get_id()] = true;
                 }
@@ -903,9 +955,9 @@ int main(int argc, char* argv[]) {
                                        : vrRayOrigin + vrRayDirection * rayLength;
                     if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual) {
                         float closestHit = std::numeric_limits<float>::max();
-                        auto it = transformOverrides.find(leftControllerVisual->get_id());
-                         if (it != transformOverrides.end()) {
-                            const glm::mat4& controllerTransform = it->second;
+                        // Use the UNSCALED transform for menu logic
+                        if (leftHand.isValid) {
+                            const glm::mat4& controllerTransform = leftControllerUnscaledTransform;
                             float worldScale = glm::length(glm::vec3(vrManager->GetWorldTransform()[0]));
                             glm::vec3 controllerRight = glm::normalize(glm::vec3(controllerTransform[0]));
                             glm::quat menuTilt = glm::angleAxis(glm::radians(-70.0f), controllerRight);
@@ -928,9 +980,9 @@ int main(int argc, char* argv[]) {
                     
                     // Check if pointer intersects with numpad and shorten the ray
                     if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual && numpadInputActive) {
-                        auto it = transformOverrides.find(leftControllerVisual->get_id());
-                        if (it != transformOverrides.end()) {
-                            const glm::mat4& controllerTransform = it->second;
+                        // Use the UNSCALED transform for numpad logic
+                        if (leftHand.isValid) {
+                            const glm::mat4& controllerTransform = leftControllerUnscaledTransform;
                             glm::mat4 currentNumpadTransform;
                             if (isGrabbingNumpad) {
                                 if (rightHand.isValid) {
@@ -1093,10 +1145,9 @@ int main(int argc, char* argv[]) {
                     if (isGrabbingNumpad) {
                         isGrabbingNumpad = false;
                         // When released, calculate the new relative offset from the controller
-                        auto it = transformOverrides.find(leftControllerVisual->get_id());
-                        if (it != transformOverrides.end()) {
-                            const glm::mat4& controllerTransform = it->second;
-                            numpadOffsetTransform = glm::inverse(controllerTransform) * numpadTransform;
+                        // Use the UNSCALED transform for correct relative transform calculation
+                        if (leftHand.isValid) {
+                            numpadOffsetTransform = glm::inverse(leftControllerUnscaledTransform) * numpadTransform;
                         }
                     }
                     toolManager.OnLeftMouseUp(0, 0, *toolContext.shiftDown, *toolContext.ctrlDown);
@@ -1150,9 +1201,9 @@ int main(int argc, char* argv[]) {
                     
                     // --- Render VR Tool Menu ---
                     if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual) {
-                        auto it = transformOverrides.find(leftControllerVisual->get_id());
-                        if (it != transformOverrides.end()) {
-                            const glm::mat4& controllerTransform = it->second;
+                        // Use the UNSCALED transform for menu logic
+                        if (leftHand.isValid) {
+                            const glm::mat4& controllerTransform = leftControllerUnscaledTransform;
                             float worldScale = glm::length(glm::vec3(vrManager->GetWorldTransform()[0]));
 
                             glm::vec3 controllerPos = glm::vec3(controllerTransform[3]);
@@ -1296,10 +1347,9 @@ int main(int argc, char* argv[]) {
 
                     // --- Render VR Numpad ---
                     // Display is now tied to the main menu visibility (left trigger)
-                    if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual) {
-                        auto it = transformOverrides.find(leftControllerVisual->get_id());
-                        if (it != transformOverrides.end()) {
-                            const glm::mat4& controllerTransform = it->second;
+                    if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual) {                        
+                        if (leftHand.isValid) {
+                            const glm::mat4& controllerTransform = leftControllerUnscaledTransform;
 
                             float worldScale = glm::length(glm::vec3(vrManager->GetWorldTransform()[0]));
 
@@ -1314,9 +1364,9 @@ int main(int argc, char* argv[]) {
                                 // If not grabbed, the panel's transform is based on the controller's transform plus a relative offset.
                                 if (!numpadInitialized) {
                                     // On first appearance, set the default offset from tuned values
-                                    float panelScale = 8.0f;
-                                    glm::vec3 translation = glm::vec3(-0.470f, -0.402f, -2.765f);
-                                    glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-99.082f, -1.151f, -29.510f));
+                                    float panelScale = 0.450f;
+                                    glm::vec3 translation = glm::vec3(-0.024f, -0.047f, -0.197f);
+                                    glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-103.003f, 4.477f, -14.612f));
 
                                     numpadOffsetTransform = glm::translate(glm::mat4(1.0f), translation) *
                                                           glm::mat4_cast(glm::quat(eulerAnglesRad)) * // Use radians here
