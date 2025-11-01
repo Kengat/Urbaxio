@@ -455,7 +455,12 @@ namespace Urbaxio {
             glUseProgram(objectShaderProgram);
             glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-            glm::vec3 lightDir = -glm::normalize(glm::vec3(glm::inverse(view)[2]));
+            // -- START OF MODIFICATION --
+            // Robust way to calculate headlight direction, works for both 2D and VR
+            glm::mat3 worldFromViewRot = glm::mat3(glm::inverse(view));
+            glm::vec3 camForwardWS = glm::normalize(worldFromViewRot * glm::vec3(0, 0, -1));
+            glm::vec3 lightDir = -camForwardWS;
+            // -- END OF MODIFICATION --
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir));
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor));
             glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength);
@@ -1338,7 +1343,12 @@ namespace Urbaxio {
         
         if (!unlit) {
             glm::vec3 viewPos = glm::vec3(glm::inverse(view)[3]);
-            glm::vec3 lightDir = -glm::normalize(glm::vec3(glm::inverse(view)[2]));
+            // -- START OF MODIFICATION --
+            // Robust way to calculate headlight direction, works for both 2D and VR
+            glm::mat3 worldFromViewRot = glm::mat3(glm::inverse(view));
+            glm::vec3 camForwardWS = glm::normalize(worldFromViewRot * glm::vec3(0, 0, -1));
+            glm::vec3 lightDir = -camForwardWS;
+            // -- END OF MODIFICATION --
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir));
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(glm::vec3(1.0f)));
             glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), 0.3f);

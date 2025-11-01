@@ -129,16 +129,24 @@ namespace Urbaxio::CadKernel {
                 }
                 gp_Dir normal(normals(normIndex), normals(normIndex + 1), normals(normIndex + 2));
 
+                // -- START OF MODIFICATION --
                 // --- FIX: Correctly transform the normal direction ---
-                // This applies only the rotational part of the transformation, ignoring any translation.
-                // The old method incorrectly treated the normal as a point, corrupting its direction.
-                normal.Transform(transformation);
-
+                // The previous method `normal.Transform(transformation)` was incorrect
+                // because it applied translation to a direction vector, corrupting it.
+                // The correct way is to apply only the rotational part of the transform.
+                // We do this by converting the direction to a vector, transforming it
+                // (which ignores translation for gp_Vec), and converting back to a direction.
+                if (!location.IsIdentity()) {
+                    gp_Vec normalVec(normal.XYZ());
+                    normalVec.Transform(transformation);
+                    normal = gp_Dir(normalVec);
+                }
                 // Invert normal for reversed faces for correct lighting
                 if (face.Orientation() == TopAbs_REVERSED) {
                     normal.Reverse();
                 }
                 // --- END FIX ---
+                // -- END OF MODIFICATION --
 
                 out.vertices.push_back(static_cast<float>(vertex.X()));
                 out.vertices.push_back(static_cast<float>(vertex.Y()));
