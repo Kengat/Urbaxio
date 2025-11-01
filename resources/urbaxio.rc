@@ -1,7 +1,11 @@
 #include <windows.h>
+#include "resources.h"
 
 // Application icon
-IDI_ICON1 ICON "urbaxio_logo.ico"
+IDI_APPICON ICON "urbaxio_logo.ico"
+
+// File type icon
+IDI_FILEICON ICON "urbx.ico"
 
 // Version information
 VS_VERSION_INFO VERSIONINFO

@@ -69,6 +69,15 @@ namespace Urbaxio {
                     should_quit = true; 
                     break;
                 
+                // --- NEW: Handle Drag and Drop ---
+                case SDL_DROPFILE: {
+                    char* dropped_file_path_c = event.drop.file;
+                    droppedFilePath = dropped_file_path_c; // Copy the path
+                    SDL_free(dropped_file_path_c); // IMPORTANT: SDL requires us to free this memory
+                    std::cout << "InputHandler: Detected dropped file: " << droppedFilePath << std::endl;
+                    break;
+                }
+                
                 case SDL_WINDOWEVENT: {
                     int w, h;
                     SDL_GetWindowSize(window, &w, &h);

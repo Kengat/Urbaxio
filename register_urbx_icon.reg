@@ -1,0 +1,22 @@
+Windows Registry Editor Version 5.00
+
+; --- ШАГ 1: Полностью удаляем старые записи, чтобы избежать конфликтов ---
+[-HKEY_CLASSES_ROOT\.urbx]
+[-HKEY_CLASSES_ROOT\Urbaxio.ProjectFile]
+[-HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.urbx]
+
+; --- ШАГ 2: Регистрируем расширение и связываем его с типом файла (ProgID) ---
+[HKEY_CLASSES_ROOT\.urbx]
+@="Urbaxio.ProjectFile"
+
+; --- ШАГ 3: Описываем тип файла, его иконку и команду для открытия ---
+[HKEY_CLASSES_ROOT\Urbaxio.ProjectFile]
+@="Urbaxio Project File"
+
+[HKEY_CLASSES_ROOT\Urbaxio.ProjectFile\DefaultIcon]
+; Указываем путь к EXE и ID иконки для файлов (-102)
+@="C:\\Users\\illia\\OneDrive\\Документы\\programming\\Urbaxio\\build\\shell\\Debug\\Urbaxio.exe,-102"
+
+[HKEY_CLASSES_ROOT\Urbaxio.ProjectFile\shell\open\command]
+; Указываем команду для открытия по дабл-клику
+@="\"C:\\Users\\illia\\OneDrive\\Документы\\programming\\Urbaxio\\build\\shell\\Debug\\Urbaxio.exe\" \"%1\""

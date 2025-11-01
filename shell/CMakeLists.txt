@@ -16,6 +16,7 @@ add_executable(Urbaxio
     src/input_handler.cpp
     src/renderer.cpp
     src/TextRenderer.cpp
+    src/file_io.cpp
     src/snapping.cpp
     src/VRManager.cpp
     # Add tool source files

@@ -50,6 +50,7 @@ extern "C" {
 #include <cstdint>
 
 #include "TextRenderer.h"
+#include "file_io.h"
 #include <filesystem>
 // --- VR menu interaction helpers ---
 #include <glm/gtx/intersect.hpp>
@@ -199,7 +200,7 @@ namespace { // Anonymous namespace for helpers
         ofn.hwndOwner = wmInfo.info.win.window;
 
         ofn.lpstrFile = filename;
-        ofn.nMaxFile = MAX_PATH;
+        ofn.nMaxFile = sizeof(filename);
         ofn.lpstrFilter = "Urbaxio Project (*.urbx)\0*.urbx\0All Files (*.*)\0*.*\0";
         ofn.nFilterIndex = 1;
         ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
@@ -221,7 +222,7 @@ namespace { // Anonymous namespace for helpers
         ofn.hwndOwner = wmInfo.info.win.window;
         
         ofn.lpstrFile = filename;
-        ofn.nMaxFile = MAX_PATH;
+        ofn.nMaxFile = sizeof(filename);
         ofn.lpstrFilter = "Urbaxio Project (*.urbx)\0*.urbx\0All Files (*.*)\0*.*\0";
         ofn.lpstrDefExt = "urbx";
         ofn.nFilterIndex = 1;
@@ -233,11 +234,90 @@ namespace { // Anonymous namespace for helpers
         return "";
     }
 
+    std::string OpenObjDialog(SDL_Window* owner) {
+        char filename[MAX_PATH] = { 0 };
+        OPENFILENAMEA ofn = { 0 };
+        ofn.lStructSize = sizeof(ofn);
+        SDL_SysWMinfo wmInfo;
+        SDL_VERSION(&wmInfo.version);
+        SDL_GetWindowWMInfo(owner, &wmInfo);
+        ofn.hwndOwner = wmInfo.info.win.window;
+        ofn.lpstrFile = filename;
+        ofn.nMaxFile = sizeof(filename);
+        ofn.lpstrFilter = "Wavefront OBJ (*.obj)\0*.obj\0All Files (*.*)\0*.*\0";
+        ofn.nFilterIndex = 1;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+        if (GetOpenFileNameA(&ofn)) return std::string(filename);
+        return "";
+    }
+
+    std::string SaveObjDialog(SDL_Window* owner) {
+        char filename[MAX_PATH] = { 0 };
+        OPENFILENAMEA ofn = { 0 };
+        ofn.lStructSize = sizeof(ofn);
+        SDL_SysWMinfo wmInfo;
+        SDL_VERSION(&wmInfo.version);
+        SDL_GetWindowWMInfo(owner, &wmInfo);
+        ofn.hwndOwner = wmInfo.info.win.window;
+        ofn.lpstrFile = filename;
+        ofn.nMaxFile = sizeof(filename);
+        ofn.lpstrFilter = "Wavefront OBJ (*.obj)\0*.obj\0All Files (*.*)\0*.*\0";
+        ofn.lpstrDefExt = "obj";
+        ofn.nFilterIndex = 1;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+        if (GetSaveFileNameA(&ofn)) return std::string(filename);
+        return "";
+    }
+
     void FreeGPUResources(Urbaxio::Engine::SceneObject& obj) {
         if (obj.vao != 0) { glDeleteVertexArrays(1, &obj.vao); obj.vao = 0; }
         if (obj.vbo_vertices != 0) { glDeleteBuffers(1, &obj.vbo_vertices); obj.vbo_vertices = 0; }
         if (obj.vbo_normals != 0) { glDeleteBuffers(1, &obj.vbo_normals); obj.vbo_normals = 0; }
         if (obj.ebo != 0) { glDeleteBuffers(1, &obj.ebo); obj.ebo = 0; }
+    }
+
+    // --- NEW: Function to render the OBJ import options popup ---
+    void RenderImportOptionsPopup(
+        bool& show, 
+        const std::string& filepath, 
+        Urbaxio::Engine::Scene& scene) 
+    {
+        if (show) {
+            ImGui::OpenPopup("Import Options");
+            show = false; // Reset the trigger
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(350, 180), ImGuiCond_FirstUseEver);
+        if (ImGui::BeginPopupModal("Import Options", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Importing: %s", std::filesystem::path(filepath).filename().string().c_str());
+            ImGui::Separator();
+
+            static int selected_unit = 2; // Default to Millimeters
+            static float custom_scale = 0.001f;
+
+            ImGui::RadioButton("Meters (1.0)", &selected_unit, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("Centimeters (0.01)", &selected_unit, 1);
+            ImGui::SameLine();
+            ImGui::RadioButton("Millimeters (0.001)", &selected_unit, 2);
+            
+            if (selected_unit == 0) custom_scale = 1.0f;
+            else if (selected_unit == 1) custom_scale = 0.01f;
+            else if (selected_unit == 2) custom_scale = 0.001f;
+
+            ImGui::Separator();
+
+            if (ImGui::Button("Import", ImVec2(120, 0))) {
+                Urbaxio::FileIO::ImportObjToScene(filepath, scene, custom_scale);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SetItemDefaultFocus();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
     }
 
     // --- NEW: Project Save/Load wrappers that also handle camera ---
@@ -285,15 +365,22 @@ namespace { // Anonymous namespace for helpers
     void RecreateEssentialMarkers(Urbaxio::Engine::Scene* scene, float capsuleRadius, float capsuleHeight10m, float capsuleHeight5m) {
         if (!scene) return;
         // Center Marker
-        auto* center_sphere = scene->create_object("CenterMarker");
+        Urbaxio::Engine::SceneObject* center_sphere = scene->create_object("CenterMarker");
         if (center_sphere) {
             center_sphere->set_mesh_buffers(CreateIcoSphereMesh(0.25f, 2));
+            center_sphere->setExportable(false); // Do not export this
         }
         // Capsule Markers
-        auto* cap10 = scene->create_object("UnitCapsuleMarker10m");
-        if (cap10) cap10->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight10m));
-        auto* cap5 = scene->create_object("UnitCapsuleMarker5m");
-        if (cap5) cap5->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight5m));
+        Urbaxio::Engine::SceneObject* cap10 = scene->create_object("UnitCapsuleMarker10m");
+        if (cap10) {
+            cap10->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight10m));
+            cap10->setExportable(false); // Do not export this
+        }
+        Urbaxio::Engine::SceneObject* cap5 = scene->create_object("UnitCapsuleMarker5m");
+        if (cap5) {
+            cap5->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight5m));
+            cap5->setExportable(false); // Do not export this
+        }
     }
 
 } // end anonymous namespace
@@ -305,6 +392,9 @@ int main(int argc, char* argv[]) {
     std::cout << "Shell: Starting Urbaxio Application..." << std::endl;
     // --- Initialization ---
     initialize_engine(); Urbaxio::Engine::Scene* scene_ptr = reinterpret_cast<Urbaxio::Engine::Scene*>(get_engine_scene()); if (!scene_ptr) return 1; if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1; const char* glsl_version = "#version 430 core"; SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE); SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8); SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN); SDL_Window* window = SDL_CreateWindow("Urbaxio", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags); if (!window) { SDL_Quit(); return 1; } SDL_GLContext gl_context = SDL_GL_CreateContext(window); if (!gl_context) { SDL_DestroyWindow(window); SDL_Quit(); return 1; } SDL_GL_MakeCurrent(window, gl_context); SDL_GL_SetSwapInterval(1); if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) { return 1; } std::cout << "Shell: OpenGL Initialized: V:" << glGetString(GL_VERSION) << std::endl; std::cout << "Shell: OpenGL Renderer: " << glGetString(GL_RENDERER) << std::endl; std::cout << "Shell: OpenGL Vendor: " << glGetString(GL_VENDOR) << std::endl; IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; ImGui::StyleColorsDark(); if (!ImGui_ImplSDL2_InitForOpenGL(window, gl_context)) return 1; if (!ImGui_ImplOpenGL3_Init(glsl_version)) return 1;     std::cout << "Shell: All subsystems initialized." << std::endl;
+
+    // --- NEW: Enable Drag and Drop events for the window ---
+    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
 
     // --- VR Initialization ---
     bool vr_mode = true;
@@ -410,7 +500,10 @@ int main(int argc, char* argv[]) {
     if (vr_mode) {
         // Create 1x1x1 unit cubes. The scaling will be done in the render loop.
         leftControllerVisual = scene_ptr->create_box_object("LeftControllerVisual", 1.0, 1.0, 1.0);
+        if(leftControllerVisual) leftControllerVisual->setExportable(false);
+
         rightControllerVisual = scene_ptr->create_box_object("RightControllerVisual", 1.0, 1.0, 1.0);
+        if(rightControllerVisual) rightControllerVisual->setExportable(false);
     }
     // --- VR menu interaction state ---
     int hoveredToolIndex = -1;
@@ -432,6 +525,10 @@ int main(int argc, char* argv[]) {
     glm::mat4 grabbedNumpadInitialTransform;
     glm::mat4 grabbedControllerInitialTransform;
     bool isHoveringGrabHandle = false;
+
+    // --- NEW: State for the import options dialog ---
+    bool g_showImportOptionsPopup = false;
+    std::string g_fileToImportPath;
 
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
     while (!should_quit) {
@@ -457,6 +554,23 @@ int main(int argc, char* argv[]) {
         
         // --- Process Input (always, for ImGui and quitting) ---
         inputHandler.ProcessEvents(camera, should_quit, window, toolManager, scene_ptr);
+
+        // --- NEW: Handle file drop after processing events ---
+        if (!inputHandler.droppedFilePath.empty()) {
+            std::filesystem::path droppedPath(inputHandler.droppedFilePath);
+            if (droppedPath.extension() == ".urbx") {
+                // It's a project file, load it directly
+                for (auto* obj : scene_ptr->get_all_objects()) { if (obj) FreeGPUResources(*obj); }
+                LoadProject(inputHandler.droppedFilePath, scene_ptr, camera);
+                RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
+            } else if (droppedPath.extension() == ".obj") {
+                // It's an OBJ, trigger the import options popup
+                g_fileToImportPath = inputHandler.droppedFilePath;
+                g_showImportOptionsPopup = true;
+            }
+            
+            inputHandler.droppedFilePath.clear(); // Clear the path to prevent re-triggering
+        }
 
         // --- Update Active Tool ---
         toolManager.OnUpdate(currentSnap);
@@ -555,6 +669,22 @@ int main(int argc, char* argv[]) {
                     for (auto* obj : scene_ptr->get_all_objects()) { if (obj) FreeGPUResources(*obj); }
                     LoadProject(path, scene_ptr, camera);
                     RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
+                }
+            }
+
+            ImGui::SeparatorText("Exchange");
+            if (ImGui::Button("Import OBJ")) {
+                std::string path = OpenObjDialog(window);
+                if (!path.empty()) {
+                    g_fileToImportPath = path;
+                    g_showImportOptionsPopup = true;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Export OBJ")) {
+                std::string path = SaveObjDialog(window);
+                if (!path.empty()) {
+                    Urbaxio::FileIO::ExportSceneToObj(path, *scene_ptr);
                 }
             }
 
@@ -684,6 +814,9 @@ int main(int argc, char* argv[]) {
             }
             ImGui::End();
         }
+
+        // --- NEW: Render our custom modal popup if it's been triggered ---
+        RenderImportOptionsPopup(g_showImportOptionsPopup, g_fileToImportPath, *scene_ptr);
 
         ImGui::Render();
 

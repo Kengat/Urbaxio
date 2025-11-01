@@ -40,6 +40,10 @@ namespace Urbaxio::Engine {
         const std::string& get_name() const;
         void set_name(const std::string& name);
 
+        // --- NEW: Exportability flag ---
+        void setExportable(bool exportable);
+        bool isExportable() const;
+
         //           BRep
         void set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr shape);
         const TopoDS_Shape* get_shape() const;
@@ -72,6 +76,7 @@ namespace Urbaxio::Engine {
         uint64_t id_;
         std::string name_;
         Urbaxio::CadKernel::OCCT_ShapeUniquePtr shape_ = nullptr;
+        bool isExportable_ = true; // By default, all objects are exportable
         Urbaxio::CadKernel::MeshBuffers mesh_buffers_;
 
         // Указатель на реализацию, скрывающий std::map

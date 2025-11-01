@@ -27,6 +27,7 @@ namespace Urbaxio::Engine {
     SceneObject::SceneObject(SceneObject&& other) noexcept
         : id_(other.id_),
         name_(std::move(other.name_)),
+        isExportable_(other.isExportable_),
         shape_(std::move(other.shape_)),
         mesh_buffers_(std::move(other.mesh_buffers_)),
         boundaryLineIDs(std::move(other.boundaryLineIDs)), // <-- ДОБАВИТЬ
@@ -41,6 +42,7 @@ namespace Urbaxio::Engine {
         if (this != &other) {
             id_ = other.id_;
             name_ = std::move(other.name_);
+            isExportable_ = other.isExportable_;
             shape_ = std::move(other.shape_);
             mesh_buffers_ = std::move(other.mesh_buffers_);
             boundaryLineIDs = std::move(other.boundaryLineIDs); // <-- ДОБАВИТЬ
@@ -54,6 +56,10 @@ namespace Urbaxio::Engine {
     uint64_t SceneObject::get_id() const { return id_; }
     const std::string& SceneObject::get_name() const { return name_; }
     void SceneObject::set_name(const std::string& name) { name_ = name; }
+
+    // --- NEW: Exportability ---
+    void SceneObject::setExportable(bool exportable) { isExportable_ = exportable; }
+    bool SceneObject::isExportable() const { return isExportable_; }
 
     // --- B-Rep Shape ---
     void SceneObject::set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr shape) {

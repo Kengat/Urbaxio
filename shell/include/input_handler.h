@@ -16,6 +16,9 @@ namespace Urbaxio {
 
     class InputHandler {
     public:
+        // --- NEW: Public member to store dropped file path ---
+        std::string droppedFilePath;
+
         InputHandler();
 
         void ProcessEvents(
