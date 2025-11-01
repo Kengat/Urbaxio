@@ -711,6 +711,15 @@ int main(int argc, char* argv[]) {
                                 numpadInput = "0"; // Reset on activation
                             }
                         }
+                    } else if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::PushPull) {
+                        auto* pushPullTool = static_cast<Urbaxio::Tools::PushPullTool*>(toolManager.GetActiveTool());
+                        // Allow toggling input only if a push/pull is in progress, or if we are turning it off
+                        if (pushPullTool->IsPushPullActive() || numpadInputActive) {
+                            numpadInputActive = !numpadInputActive;
+                            if (numpadInputActive) {
+                                numpadInput = "0"; // Reset on activation
+                            }
+                        }
                     }
                 }
                 
@@ -746,6 +755,9 @@ int main(int argc, char* argv[]) {
                                     if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Line) {
                                         auto* lineTool = static_cast<Urbaxio::Tools::LineTool*>(toolManager.GetActiveTool());
                                         lineTool->SetLengthInput(numpadInput);
+                                    } else if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::PushPull) {
+                                        auto* pushPullTool = static_cast<Urbaxio::Tools::PushPullTool*>(toolManager.GetActiveTool());
+                                        pushPullTool->SetLengthInput(numpadInput);
                                     }
                                     toolManager.GetActiveTool()->OnKeyDown(SDLK_RETURN, *toolContext.shiftDown, *toolContext.ctrlDown);
                                 }
@@ -1013,6 +1025,13 @@ int main(int argc, char* argv[]) {
                                 if (lineTool->IsDrawing() && !numpadInputActive) {
                                     float length_m = lineTool->GetCurrentLineLength();
                                     numpadInput = fmt::format("{:.0f}", length_m * 1000.0f);
+                                }
+                            } else if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::PushPull) {
+                                auto* pushPullTool = static_cast<Urbaxio::Tools::PushPullTool*>(toolManager.GetActiveTool());
+                                // Only update display from push/pull distance if numpad is NOT active
+                                if (pushPullTool->IsPushPullActive() && !numpadInputActive) {
+                                    // Get current distance from the tool (would need to add a getter method)
+                                    // For now, we'll use the numpadInput directly
                                 }
                             } else if (!numpadInputActive) { // Don't clear if user is typing
                                 // Clear display if another tool is active

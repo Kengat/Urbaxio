@@ -31,6 +31,9 @@ public:
     // State query method for snapping control
     bool IsPushPullActive() const { return isPushPullActive; }
 
+    // Set length input from VR numpad
+    void SetLengthInput(const std::string& input);
+
     // -- START OF MODIFICATION --
 
     // This is now the primary hover update function, used by both VR and 2D.

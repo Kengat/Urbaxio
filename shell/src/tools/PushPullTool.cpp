@@ -21,6 +21,20 @@
 #include <memory> // For std::make_unique
 
 namespace { // Anonymous namespace for helpers
+    void AppendCharToBuffer(char* buf, size_t bufSize, char c) {
+        size_t len = strlen(buf);
+        if (len + 1 < bufSize) {
+            buf[len] = c;
+            buf[len + 1] = '\0';
+        }
+    }
+    void RemoveLastChar(char* buf) {
+        size_t len = strlen(buf);
+        if (len > 0) { buf[len - 1] = '\0'; }
+    }
+}
+
+namespace { // Anonymous namespace for helpers
 
 // Re-using FindCoplanarAdjacentTriangles from SelectTool's anonymous namespace is tricky.
 // So we just copy the improved version here.
@@ -199,25 +213,37 @@ void PushPullTool::OnKeyDown(SDL_Keycode key, bool shift, bool ctrl) {
         return;
     }
     
+    // Handle numeric input when push/pull is active
     if (isPushPullActive) {
         if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
             float length_mm;
             auto result = std::from_chars(lengthInputBuf, lengthInputBuf + strlen(lengthInputBuf), length_mm);
             if (result.ec == std::errc() && result.ptr == lengthInputBuf + strlen(lengthInputBuf)) {
-                float sign = (pushPullCurrentLength < 0.0f) ? -1.0f : 1.0f;
-                pushPullCurrentLength = (length_mm / 1000.0f) * sign;
+                // Use the current direction of the pull to determine the sign
+                float sign = (pushPullCurrentLength >= 0.0f) ? 1.0f : -1.0f;
+                // Apply the entered length (converted from mm to meters) with the correct sign
+                pushPullCurrentLength = (std::abs(length_mm) / 1000.0f) * sign;
                 finalizePushPull(ctrl);
             } else {
                 lengthInputBuf[0] = '\0'; // Clear bad input
             }
         } else if (key == SDLK_BACKSPACE) {
-            size_t len = strlen(lengthInputBuf); if (len > 0) lengthInputBuf[len - 1] = '\0';
+            RemoveLastChar(lengthInputBuf);
         } else {
             char c = '\0';
-            if ((key >= SDLK_0 && key <= SDLK_9)) c = (char)key;
-            else if ((key >= SDLK_KP_0 && key <= SDLK_KP_9)) c = '0' + (key - SDLK_KP_0);
-            else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) { if (strchr(lengthInputBuf, '.') == nullptr) c = '.'; }
-            if (c != '\0') { size_t len = strlen(lengthInputBuf); if (len + 1 < 64) { lengthInputBuf[len] = c; lengthInputBuf[len + 1] = '\0';} }
+            if (key >= SDLK_0 && key <= SDLK_9) {
+                c = (char)key;
+            } else if (key >= SDLK_KP_0 && key <= SDLK_KP_9) {
+                c = '0' + (key - SDLK_KP_0);
+            } else if (key == SDLK_PERIOD || key == SDLK_KP_PERIOD) {
+                // Allow dot only if it's not already there
+                if (strchr(lengthInputBuf, '.') == nullptr) {
+                    c = '.';
+                }
+            }
+            if (c != '\0') {
+                AppendCharToBuffer(lengthInputBuf, sizeof(lengthInputBuf), c);
+            }
         }
     }
 }
@@ -245,6 +271,11 @@ void PushPullTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, 
         if (glm::length2(rayDirection) > 1e-9) { // Check if we got a valid ray (from VR)
             updateHover(rayOrigin, rayDirection);
         }
+        return;
+    }
+
+    // --- NEW: Freeze preview when numpad is active ---
+    if (context.isNumpadActive && *context.isNumpadActive) {
         return;
     }
 
@@ -397,6 +428,8 @@ void PushPullTool::updateHover(const glm::vec3& rayOrigin, const glm::vec3& rayD
 void PushPullTool::RenderUI() {
     if (isPushPullActive) {
         ImGui::Separator();
+        float length_mm = std::abs(pushPullCurrentLength * 1000.0f);
+        ImGui::Text("Current Distance (mm): %.2f", length_mm);
         ImGui::Text("Length (mm): %s", lengthInputBuf);
         ImGui::Separator();
     }
@@ -412,6 +445,12 @@ void PushPullTool::RenderPreview(Renderer& renderer, const SnapResult& snap) {
         // Clear preview mesh when not active
         renderer.UpdatePushPullPreview(Urbaxio::Engine::SceneObject(0, ""), {}, {}, 0.0f);
     }
+}
+
+void PushPullTool::SetLengthInput(const std::string& input) {
+    size_t copyLen = std::min(input.length(), sizeof(lengthInputBuf) - 1);
+    std::memcpy(lengthInputBuf, input.c_str(), copyLen);
+    lengthInputBuf[copyLen] = '\0';
 }
 
 } // namespace Urbaxio::Tools 
