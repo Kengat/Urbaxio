@@ -9,6 +9,7 @@
 #include <map>
 #include <utility>
 #include <set>
+#include <iosfwd>
 #include <glm/glm.hpp>
 #include "engine/line.h"
 #include "engine/commands/CommandManager.h"
@@ -101,7 +102,11 @@ namespace Urbaxio::Engine {
         void UpdateObjectBoundary(SceneObject* obj);
 
         // --- Testing Infrastructure ---
-        void ClearScene();
+        // Renamed to NewScene for clarity in UI. Clears everything.
+        void NewScene();
+        // --- NEW: Save/Load functionality (stream-based) ---
+        bool SaveToStream(std::ostream& outStream);
+        bool LoadFromStream(std::istream& inStream);
         void TestFaceSplitting();
 
         // --- Finders ---
@@ -126,6 +131,11 @@ namespace Urbaxio::Engine {
         std::map<glm::vec3, std::vector<uint64_t>, Urbaxio::Vec3Comparator> vertexAdjacency_;
         
         std::unique_ptr<CommandManager> commandManager_;
+
+        // --- NEW: Private helper for loading ---
+        // Creates an object with a specific ID during file loading
+        SceneObject* create_object_with_id(uint64_t id, const std::string& name);
+        void ClearScene(); // The actual implementation remains private
 
         uint64_t AddSingleLineSegment(const glm::vec3& start, const glm::vec3& end);
         void RemoveLine(uint64_t lineId);

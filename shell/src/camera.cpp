@@ -154,6 +154,16 @@ namespace Urbaxio {
         // No need to update vectors here, as the camera's orientation (Front) hasn't changed.
     }
 
+    void Camera::UpdateFromPositionTarget() {
+        // This logic is copied from the constructor to re-initialize the camera's
+        // orbital parameters (Radius, Pitch, Yaw) and orientation vectors (Front, Up, Right)
+        // after manually setting Position and Target (e.g., from a file load).
+        glm::vec3 radiusVec = Position - Target; Radius = glm::length(radiusVec);
+        if (Radius < 1e-6f) { Radius = 1.0f; Position = Target + glm::vec3(0, -Radius, 0); radiusVec = Position - Target; }
+        float pitch_arg = radiusVec.z / Radius; Pitch = glm::asin(glm::clamp(pitch_arg, -1.0f, 1.0f)); Yaw = glm::atan(radiusVec.y, radiusVec.x);
+        updateCameraVectors();
+    }
+
     void Camera::updateCameraVectors() { Front = glm::normalize(Target - Position); Right = glm::normalize(glm::cross(Front, WorldUp)); Up = glm::normalize(glm::cross(Right, Front)); }
     void Camera::updateCameraPositionFromOrbit() { Position.x = Target.x + Radius * cos(Pitch) * cos(Yaw); Position.y = Target.y + Radius * cos(Pitch) * sin(Yaw); Position.z = Target.z + Radius * sin(Pitch); updateCameraVectors(); }
 

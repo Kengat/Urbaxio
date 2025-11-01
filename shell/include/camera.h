@@ -66,6 +66,9 @@ namespace Urbaxio {
         // NEW: Sets a new pivot point for orbiting and re-calculates orbital parameters
         void SetOrbitTarget(const glm::vec3& hitPoint);
 
+        // --- NEW: Recalculates all internal state from Position and Target ---
+        void UpdateFromPositionTarget();
+
         // --- Picking Ray Function ---
         // Calculates a world space ray from screen coordinates
         static void ScreenToWorldRay(

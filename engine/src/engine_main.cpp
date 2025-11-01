@@ -196,17 +196,6 @@ extern "C" {
             g_scene = std::make_unique<Urbaxio::Engine::Scene>();
             fmt::print("Engine: Scene created successfully.\n");
 
-            // --- Create Center Marker Sphere ---
-            auto* center_sphere = g_scene->create_object("CenterMarker");
-            if (center_sphere) {
-                // Subdivision level 2 gives a nicely rounded sphere
-                Urbaxio::CadKernel::MeshBuffers sphere_mesh = CreateIcoSphereMesh(0.25f, 2);
-                center_sphere->set_mesh_buffers(std::move(sphere_mesh));
-                fmt::print("Engine: Created 'CenterMarker' object with ID {}.\n", center_sphere->get_id());
-            } else {
-                fmt::print(stderr, "Engine: Error creating 'CenterMarker' object!\n");
-            }
-
         }
         else {
             fmt::print("Engine: Engine already initialized.\n");

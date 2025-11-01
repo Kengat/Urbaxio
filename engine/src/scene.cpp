@@ -76,6 +76,7 @@
 #include <ShapeExtend_Status.hxx>
 #include <sstream>
 #include <BinTools.hxx>
+#include <fstream>
 
 // --- NEW: Additional includes for deformation algorithm ---
 #include <BRepTools_ReShape.hxx>
@@ -385,6 +386,21 @@ namespace Urbaxio::Engine {
     }
 
     SceneObject* Scene::create_object(const std::string& name) { uint64_t new_id = next_object_id_++; auto result = objects_.emplace(new_id, std::make_unique<SceneObject>(new_id, name)); if (result.second) { return result.first->second.get(); } else { std::cerr << "Scene: Failed to insert new object with ID " << new_id << " into map." << std::endl; next_object_id_--; return nullptr; } }
+
+SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) {
+    // Check if ID is already taken
+    if (objects_.count(id)) {
+        return nullptr;
+    }
+    auto result = objects_.emplace(id, std::make_unique<SceneObject>(id, name));
+    if (result.second) {
+        // Ensure next generated ID will be higher than any loaded ID
+        next_object_id_ = std::max(next_object_id_, id + 1);
+        return result.first->second.get();
+    }
+    return nullptr;
+}
+
     SceneObject* Scene::create_box_object(const std::string& name, double dx, double dy, double dz) { SceneObject* new_obj = create_object(name); if (!new_obj) { return nullptr; } Urbaxio::CadKernel::OCCT_ShapeUniquePtr box_shape_ptr = Urbaxio::CadKernel::create_box(dx, dy, dz); if (!box_shape_ptr) { return nullptr; } const TopoDS_Shape* shape_to_triangulate = box_shape_ptr.get(); if (!shape_to_triangulate || shape_to_triangulate->IsNull()) { return nullptr; } new_obj->set_shape(std::move(box_shape_ptr)); UpdateObjectBoundary(new_obj); Urbaxio::CadKernel::MeshBuffers mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_obj->get_shape()); if (!mesh_data.isEmpty()) { new_obj->set_mesh_buffers(std::move(mesh_data)); } else { std::cerr << "Scene: Warning - Triangulation failed for box '" << name << "'." << std::endl; } return new_obj; }
     SceneObject* Scene::get_object_by_id(uint64_t id) { auto it = objects_.find(id); if (it != objects_.end()) { return it->second.get(); } return nullptr; }
     const SceneObject* Scene::get_object_by_id(uint64_t id) const { auto it = objects_.find(id); if (it != objects_.end()) { return it->second.get(); } return nullptr; }
@@ -1320,7 +1336,7 @@ namespace Urbaxio::Engine {
 
     // --- NEW: Testing Infrastructure ---
     
-    void Scene::ClearScene() {
+    void Scene::ClearScene() { // This is now private
         // This clears the engine's state. The shell is responsible for cleaning up GPU resources.
         objects_.clear();
         next_object_id_ = 1;
@@ -1333,6 +1349,81 @@ namespace Urbaxio::Engine {
         commandManager_->ClearHistory(); // <-- NEW
 
         std::cout << "Scene: Cleared all objects, lines and command history from engine state." << std::endl;
+    }
+
+    void Scene::NewScene() {
+        ClearScene();
+    }
+
+    bool Scene::SaveToStream(std::ostream& file) {
+        // 2. Scene Objects
+        uint64_t numObjects = objects_.size();
+        file.write(reinterpret_cast<const char*>(&numObjects), sizeof(numObjects));
+
+        for (const auto& [id, obj_ptr] : objects_) {
+            // ID
+            file.write(reinterpret_cast<const char*>(&id), sizeof(id));
+            // Name
+            std::string name = obj_ptr->get_name();
+            uint32_t nameLen = static_cast<uint32_t>(name.length());
+            file.write(reinterpret_cast<const char*>(&nameLen), sizeof(nameLen));
+            file.write(name.c_str(), nameLen);
+            
+            // Shape
+            bool hasShape = obj_ptr->has_shape() && obj_ptr->get_shape() && !obj_ptr->get_shape()->IsNull();
+            file.write(reinterpret_cast<const char*>(&hasShape), sizeof(hasShape));
+            if (hasShape) {
+                try {
+                    BinTools::Write(*obj_ptr->get_shape(), file);
+                } catch(...) {
+                    std::cerr << "Scene Error: Failed to write shape for object ID " << id << std::endl;
+                    // We can't easily recover here, so maybe it's best to fail the save.
+                    return false;
+                }
+            }
+        }
+
+        std::cout << "Scene: Saved " << numObjects << " objects to stream." << std::endl;
+        return true;
+    }
+
+    bool Scene::LoadFromStream(std::istream& file) {
+        ClearScene();
+
+        // 2. Scene Objects
+        uint64_t numObjects;
+        file.read(reinterpret_cast<char*>(&numObjects), sizeof(numObjects));
+
+        for (uint64_t i = 0; i < numObjects; ++i) {
+            uint64_t id;
+            file.read(reinterpret_cast<char*>(&id), sizeof(id));
+
+            uint32_t nameLen;
+            file.read(reinterpret_cast<char*>(&nameLen), sizeof(nameLen));
+            std::string name(nameLen, '\0');
+            file.read(&name[0], nameLen);
+            
+            SceneObject* newObj = create_object_with_id(id, name);
+            if (!newObj) continue;
+
+            bool hasShape;
+            file.read(reinterpret_cast<char*>(&hasShape), sizeof(hasShape));
+            if (hasShape) {
+                TopoDS_Shape shape;
+                try {
+                    BinTools::Read(shape, file);
+                    newObj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(shape)));
+                    UpdateObjectBoundary(newObj);
+                    newObj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*newObj->get_shape()));
+                    newObj->vao = 0; // Mark for GPU upload
+                } catch (...) {
+                     std::cerr << "Scene Error: Failed to read shape for object ID " << id << std::endl;
+                }
+            }
+        }
+
+        std::cout << "Scene: Loaded " << objects_.size() << " objects from stream." << std::endl;
+        return true;
     }
     
     // Helper to create a simple rectangular face object for testing.

@@ -24,6 +24,7 @@ extern "C" {
 #include "VRManager.h"
 
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_syswm.h>
 #include <glad/glad.h>
 
 #include <imgui.h>
@@ -52,7 +53,16 @@ extern "C" {
 #include <filesystem>
 // --- VR menu interaction helpers ---
 #include <glm/gtx/intersect.hpp>
+
+#include <fstream>
+// --- NEW: For File Dialogs on Windows ---
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 #include <limits>
+#include <cmath>
+#include <map>
 
 // --- OCCT includes for capsule generation (moved from engine) ---
 #include <gp_Ax2.hxx>
@@ -84,6 +94,58 @@ namespace { // Anonymous namespace for helpers
     // Helper to interpolate color from green to cyan
     glm::vec3 MixColorFromPress(float t) {
         return glm::mix(glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 1.0f, 1.0f), std::clamp(t, 0.0f, 1.0f));
+    }
+
+    // --- IcoSphere moved from engine_main to be a shell responsibility ---
+    // Helper function for icosphere subdivision
+    int get_middle_point(int p1, int p2, std::map<long long, int>& middlePointIndexCache, std::vector<glm::vec3>& vertices, float radius) {
+        bool firstIsSmaller = p1 < p2;
+        long long smallerIndex = firstIsSmaller ? p1 : p2;
+        long long greaterIndex = firstIsSmaller ? p2 : p1;
+        long long key = (smallerIndex << 32) + greaterIndex;
+
+        auto it = middlePointIndexCache.find(key);
+        if (it != middlePointIndexCache.end()) {
+            return it->second;
+        }
+
+        glm::vec3 point1 = vertices[p1];
+        glm::vec3 point2 = vertices[p2];
+        glm::vec3 middle = glm::vec3(
+            (point1.x + point2.x) / 2.0f,
+            (point1.y + point2.y) / 2.0f,
+            (point1.z + point2.z) / 2.0f
+        );
+        
+        vertices.push_back(glm::normalize(middle) * radius);
+        int i = vertices.size() - 1;
+        middlePointIndexCache[key] = i;
+        return i;
+    }
+
+    // Creates an icosphere mesh with a specified subdivision level
+    Urbaxio::CadKernel::MeshBuffers CreateIcoSphereMesh(float radius, int subdivision) {
+        Urbaxio::CadKernel::MeshBuffers mesh;
+        const float t = (1.0f + std::sqrt(5.0f)) / 2.0f;
+        std::vector<glm::vec3> base_vertices = { {-1,  t,  0}, { 1,  t,  0}, {-1, -t,  0}, { 1, -t,  0}, { 0, -1,  t}, { 0,  1,  t}, { 0, -1, -t}, { 0,  1, -t}, { t,  0, -1}, { t,  0,  1}, {-t,  0, -1}, {-t,  0,  1} };
+        for (auto& v : base_vertices) { v = glm::normalize(v) * radius; }
+        std::vector<unsigned int> base_indices = { 0, 11,  5,    0,  5,  1,    0,  1,  7,    0,  7, 10,    0, 10, 11, 1,  5,  9,    5, 11,  4,   11, 10,  2,   10,  7,  6,    7,  1,  8, 3,  9,  4,    3,  4,  2,    3,  2,  6,    3,  6,  8,    3,  8,  9, 4,  9,  5,    2,  4, 11,    6,  2, 10,    8,  6,  7,    9,  8,  1 };
+        std::map<long long, int> middlePointIndexCache;
+        std::vector<glm::vec3> temp_vertices_glm = base_vertices;
+        for (int s = 0; s < subdivision; s++) {
+            std::vector<unsigned int> new_indices;
+            for (size_t i = 0; i < base_indices.size(); i += 3) {
+                int i0 = base_indices[i], i1 = base_indices[i+1], i2 = base_indices[i+2];
+                int a = get_middle_point(i0, i1, middlePointIndexCache, temp_vertices_glm, radius); int b = get_middle_point(i1, i2, middlePointIndexCache, temp_vertices_glm, radius); int c = get_middle_point(i2, i0, middlePointIndexCache, temp_vertices_glm, radius);
+                new_indices.insert(new_indices.end(), { (unsigned int)i0, (unsigned int)a, (unsigned int)c }); new_indices.insert(new_indices.end(), { (unsigned int)i1, (unsigned int)b, (unsigned int)a }); new_indices.insert(new_indices.end(), { (unsigned int)i2, (unsigned int)c, (unsigned int)b }); new_indices.insert(new_indices.end(), { (unsigned int)a,  (unsigned int)b, (unsigned int)c });
+            }
+            base_indices = new_indices;
+        }
+        mesh.indices = base_indices;
+        for(const auto& v : temp_vertices_glm) {
+            glm::vec3 norm = glm::normalize(v); mesh.vertices.push_back(v.x); mesh.vertices.push_back(v.y); mesh.vertices.push_back(v.z); mesh.normals.push_back(norm.x); mesh.normals.push_back(norm.y); mesh.normals.push_back(norm.z);
+        }
+        return mesh;
     }
 
     // --- Capsule generation logic is now in the shell ---
@@ -123,6 +185,115 @@ namespace { // Anonymous namespace for helpers
             std::cerr << "OCCT Exception during capsule creation!" << std::endl;
             return Urbaxio::CadKernel::MeshBuffers();
         }
+    }
+
+    // --- NEW: Wrappers for native Windows file dialogs ---
+    std::string OpenFileDialog(SDL_Window* owner) {
+        char filename[MAX_PATH] = { 0 };
+        OPENFILENAMEA ofn = { 0 };
+        ofn.lStructSize = sizeof(ofn);
+        
+        SDL_SysWMinfo wmInfo;
+        SDL_VERSION(&wmInfo.version);
+        SDL_GetWindowWMInfo(owner, &wmInfo);
+        ofn.hwndOwner = wmInfo.info.win.window;
+
+        ofn.lpstrFile = filename;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrFilter = "Urbaxio Project (*.urbx)\0*.urbx\0All Files (*.*)\0*.*\0";
+        ofn.nFilterIndex = 1;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+        if (GetOpenFileNameA(&ofn)) {
+            return std::string(filename);
+        }
+        return "";
+    }
+
+    std::string SaveFileDialog(SDL_Window* owner) {
+        char filename[MAX_PATH] = { 0 };
+        OPENFILENAMEA ofn = { 0 };
+        ofn.lStructSize = sizeof(ofn);
+
+        SDL_SysWMinfo wmInfo;
+        SDL_VERSION(&wmInfo.version);
+        SDL_GetWindowWMInfo(owner, &wmInfo);
+        ofn.hwndOwner = wmInfo.info.win.window;
+        
+        ofn.lpstrFile = filename;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrFilter = "Urbaxio Project (*.urbx)\0*.urbx\0All Files (*.*)\0*.*\0";
+        ofn.lpstrDefExt = "urbx";
+        ofn.nFilterIndex = 1;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+
+        if (GetSaveFileNameA(&ofn)) {
+            return std::string(filename);
+        }
+        return "";
+    }
+
+    void FreeGPUResources(Urbaxio::Engine::SceneObject& obj) {
+        if (obj.vao != 0) { glDeleteVertexArrays(1, &obj.vao); obj.vao = 0; }
+        if (obj.vbo_vertices != 0) { glDeleteBuffers(1, &obj.vbo_vertices); obj.vbo_vertices = 0; }
+        if (obj.vbo_normals != 0) { glDeleteBuffers(1, &obj.vbo_normals); obj.vbo_normals = 0; }
+        if (obj.ebo != 0) { glDeleteBuffers(1, &obj.ebo); obj.ebo = 0; }
+    }
+
+    // --- NEW: Project Save/Load wrappers that also handle camera ---
+    bool SaveProject(const std::string& path, Urbaxio::Engine::Scene* scene, const Urbaxio::Camera& camera) {
+        std::ofstream file(path, std::ios::binary);
+        if (!file.is_open()) return false;
+
+        // 1. Header
+        const char* magic = "URBX";
+        uint32_t version = 1;
+        file.write(magic, 4);
+        file.write(reinterpret_cast<const char*>(&version), sizeof(version));
+
+        // 2. Camera State
+        file.write(reinterpret_cast<const char*>(&camera.Position), sizeof(camera.Position));
+        file.write(reinterpret_cast<const char*>(&camera.Target), sizeof(camera.Target));
+
+        // 3. Scene Data
+        return scene->SaveToStream(file);
+    }
+
+    bool LoadProject(const std::string& path, Urbaxio::Engine::Scene* scene, Urbaxio::Camera& camera) {
+        std::ifstream file(path, std::ios::binary);
+        if (!file.is_open()) return false;
+
+        // 1. Header
+        char magic[4];
+        uint32_t version;
+        file.read(magic, 4);
+        file.read(reinterpret_cast<char*>(&version), sizeof(version));
+        if (std::string(magic, 4) != "URBX" || version != 1) {
+            return false; // Invalid file
+        }
+
+        // 2. Camera State
+        file.read(reinterpret_cast<char*>(&camera.Position), sizeof(camera.Position));
+        file.read(reinterpret_cast<char*>(&camera.Target), sizeof(camera.Target));
+        // Crucial step: Recalculate internal camera state (vectors, angles) from loaded pos/target
+        camera.UpdateFromPositionTarget();
+        
+        // 3. Scene Data
+        return scene->LoadFromStream(file);
+    }
+
+    void RecreateEssentialMarkers(Urbaxio::Engine::Scene* scene, float capsuleRadius, float capsuleHeight10m, float capsuleHeight5m) {
+        if (!scene) return;
+        // Center Marker
+        auto* center_sphere = scene->create_object("CenterMarker");
+        if (center_sphere) {
+            center_sphere->set_mesh_buffers(CreateIcoSphereMesh(0.25f, 2));
+        }
+        // Capsule Markers
+        auto* cap10 = scene->create_object("UnitCapsuleMarker10m");
+        if (cap10) cap10->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight10m));
+        auto* cap5 = scene->create_object("UnitCapsuleMarker5m");
+        if (cap5) cap5->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight5m));
     }
 
 } // end anonymous namespace
@@ -230,18 +401,8 @@ int main(int argc, char* argv[]) {
     static float capsuleHeight10m = 3.2f;
     static float capsuleHeight5m = 1.4f;
 
-    // --- Create shell-specific markers ---
-    auto* capsule_marker_10m = scene_ptr->create_object("UnitCapsuleMarker10m");
-    if (capsule_marker_10m) {
-        Urbaxio::CadKernel::MeshBuffers mesh = CreateCapsuleMesh(capsuleRadius, capsuleHeight10m);
-        capsule_marker_10m->set_mesh_buffers(std::move(mesh));
-    }
-    
-    auto* capsule_marker_5m = scene_ptr->create_object("UnitCapsuleMarker5m");
-    if (capsule_marker_5m) {
-        Urbaxio::CadKernel::MeshBuffers mesh = CreateCapsuleMesh(capsuleRadius, capsuleHeight5m);
-        capsule_marker_5m->set_mesh_buffers(std::move(mesh));
-    }
+    // --- Create all essential markers ---
+    RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
 
     // --- NEW: Create VR Controller Visuals ---
     Urbaxio::Engine::SceneObject* leftControllerVisual = nullptr;
@@ -370,6 +531,33 @@ int main(int argc, char* argv[]) {
             ImGui::Text("App avg %.3f ms/f (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::Separator();
             if (ImGui::Button("Create Box Object")) { object_counter++; std::string box_name = "Box_" + std::to_string(object_counter); scene_ptr->create_box_object(box_name, 10.0, 20.0, 5.0); }
+            
+            ImGui::Separator();
+            ImGui::Text("File:");
+            if (ImGui::Button("New Scene")) {
+                for (auto* obj : scene_ptr->get_all_objects()) {
+                    if (obj) FreeGPUResources(*obj);
+                }
+                scene_ptr->NewScene();
+                RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Save Scene")) {
+                std::string path = SaveFileDialog(window);
+                if (!path.empty()) {
+                    SaveProject(path, scene_ptr, camera);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Open Scene")) {
+                std::string path = OpenFileDialog(window);
+                if (!path.empty()) {
+                    for (auto* obj : scene_ptr->get_all_objects()) { if (obj) FreeGPUResources(*obj); }
+                    LoadProject(path, scene_ptr, camera);
+                    RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
+                }
+            }
+
             ImGui::Separator();
             
             if (ImGui::Button("Appearance Settings")) show_style_editor = true;
@@ -399,14 +587,7 @@ int main(int argc, char* argv[]) {
             if (ImGui::Button("Run Split Test")) {
                 if (scene_ptr) {
                     std::vector<Urbaxio::Engine::SceneObject*> objects_to_clean = scene_ptr->get_all_objects();
-                    for (auto* obj : objects_to_clean) {
-                        if (obj) {
-                             if (obj->vao != 0) { glDeleteVertexArrays(1, &obj->vao); obj->vao = 0; }
-                             if (obj->vbo_vertices != 0) { glDeleteBuffers(1, &obj->vbo_vertices); obj->vbo_vertices = 0; }
-                             if (obj->vbo_normals != 0) { glDeleteBuffers(1, &obj->vbo_normals); obj->vbo_normals = 0; }
-                             if (obj->ebo != 0) { glDeleteBuffers(1, &obj->ebo); obj->ebo = 0; }
-                        }
-                    }
+                    for (auto* obj : objects_to_clean) { if (obj) FreeGPUResources(*obj); }
                     scene_ptr->TestFaceSplitting(); 
                 }
             }
@@ -482,17 +663,22 @@ int main(int argc, char* argv[]) {
                 bool height5m_changed = ImGui::SliderFloat("5m Capsule Height", &capsuleHeight5m, 0.2f, 5.0f);
 
                 if (radius_changed || height10m_changed) {
-                    Urbaxio::Engine::SceneObject* marker = scene_ptr->get_object_by_id(capsule_marker_10m->get_id());
-                    if (marker) {
-                        marker->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight10m));
-                        marker->vao = 0; // Invalidate GPU resource to trigger re-upload
+                    // This is tricky as we don't store the IDs. Easiest is to find by name.
+                    for (auto* obj : scene_ptr->get_all_objects()) {
+                        if (obj && obj->get_name() == "UnitCapsuleMarker10m") {
+                            obj->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight10m));
+                            obj->vao = 0;
+                            break;
+                        }
                     }
                 }
                 if (radius_changed || height5m_changed) {
-                    Urbaxio::Engine::SceneObject* marker = scene_ptr->get_object_by_id(capsule_marker_5m->get_id());
-                     if (marker) {
-                        marker->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight5m));
-                        marker->vao = 0; // Invalidate GPU resource to trigger re-upload
+                    for (auto* obj : scene_ptr->get_all_objects()) {
+                         if (obj && obj->get_name() == "UnitCapsuleMarker5m") {
+                            obj->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight5m));
+                            obj->vao = 0;
+                            break;
+                        }
                     }
                 }
             }
@@ -1271,5 +1457,5 @@ int main(int argc, char* argv[]) {
     std::cout << "Shell: <<< Exiting main loop." << std::endl;
     std::cout << "Shell: Cleaning up..." << std::endl; 
     if (vrManager) vrManager->Shutdown();
-    if (scene_ptr) { std::vector<Urbaxio::Engine::SceneObject*> objects_to_clean = scene_ptr->get_all_objects(); for (auto* obj : objects_to_clean) { if (obj && obj->vao != 0) glDeleteVertexArrays(1, &obj->vao); if (obj && obj->vbo_vertices != 0) glDeleteBuffers(1, &obj->vbo_vertices); if (obj && obj->vbo_normals != 0) glDeleteBuffers(1, &obj->vbo_normals); if (obj && obj->ebo != 0) glDeleteBuffers(1, &obj->ebo); } } ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui::DestroyContext(); SDL_GL_DeleteContext(gl_context); SDL_DestroyWindow(window); SDL_Quit(); std::cout << "Shell: Urbaxio Application finished gracefully." << std::endl; return 0;
+    if (scene_ptr) { for (auto* obj : scene_ptr->get_all_objects()) { if (obj) FreeGPUResources(*obj); } } ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui::DestroyContext(); SDL_GL_DeleteContext(gl_context); SDL_DestroyWindow(window); SDL_Quit(); std::cout << "Shell: Urbaxio Application finished gracefully." << std::endl; return 0;
 }
