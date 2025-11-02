@@ -720,6 +720,7 @@ void VRManager::PollActions() {
     };
     
     float leftTrigger = readFloat(triggerValueAction, leftHandPath);
+    rawLeftTriggerValue = leftTrigger; // Store the raw value
     float leftSqueeze = readFloat(squeezeValueAction, leftHandPath);
     float rightTrigger = readFloat(triggerValueAction, rightHandPath);
     float rightSqueeze = readFloat(squeezeValueAction, rightHandPath);
@@ -769,16 +770,6 @@ void VRManager::PollActions() {
     }
     rightHandVisual_.triggerWasPressed = isTriggerPressed;
     
-    // --- Update Left Hand Tool Menu Alpha ---
-    {
-        const float MENU_FADE_SPEED = 0.1f;
-        if (leftTrigger > 0.5f) {
-            leftMenuAlpha = std::min(1.0f, leftMenuAlpha + MENU_FADE_SPEED);
-        } else {
-            leftMenuAlpha = std::max(0.0f, leftMenuAlpha - MENU_FADE_SPEED);
-        }
-    }
-
     // --- NEW: Undo/Redo Gesture Logic ---
     // Reset the public action flag at the start of polling
     triggeredUndoRedoAction = UndoRedoAction::None;

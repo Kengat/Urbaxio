@@ -1268,9 +1268,9 @@ namespace Urbaxio {
     ) {
         if (vrMenuWidgetShaderProgram == 0 || splatVAO == 0) return;
 
-        glDepthMask(GL_FALSE);
+        glm::mat4 finalView = (view == glm::mat4(1.0f)) ? vrMenuWidgetShaderProgram_viewMatrix_HACK : view;
         glUseProgram(vrMenuWidgetShaderProgram);
-        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(finalView));
         glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
         

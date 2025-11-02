@@ -78,6 +78,8 @@ set(SOURCE_DIRS
     "${PROJECT_SOURCE_DIR}/shell"                    # Shell root (for CMakeLists.txt)
     "${PROJECT_SOURCE_DIR}/shell/include"            # Shell headers
     "${PROJECT_SOURCE_DIR}/shell/src"                # Shell sources
+    "${PROJECT_SOURCE_DIR}/shell/include/ui"         # UI headers
+    "${PROJECT_SOURCE_DIR}/shell/src/ui"             # UI sources
     "${PROJECT_SOURCE_DIR}/shell/include/tools"      # Tools headers (moved to shell)
     "${PROJECT_SOURCE_DIR}/shell/src/tools"          # Tools sources (moved to shell)
     "${PROJECT_SOURCE_DIR}/cmake"                    # CMake helper scripts

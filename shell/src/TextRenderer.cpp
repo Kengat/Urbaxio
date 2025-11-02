@@ -254,13 +254,14 @@ void TextRenderer::AddText(const std::string& text,
 }
 
 void TextRenderer::AddTextOnPanel(const std::string& text,
-                                const glm::mat4& panelTransform,
+                                const glm::vec3& localPosition,
                                 const glm::vec4& color,
                                 float height)
 {
     float finalScale = height / lineHeight_;
-    glm::vec3 right = glm::vec3(panelTransform[0]);
-    glm::vec3 up = glm::vec3(panelTransform[1]);
+    glm::vec3 right(1.0f, 0.0f, 0.0f); // Local X axis
+    glm::vec3 up(0.0f, 1.0f, 0.0f);    // Local Y axis
+
     float totalAdvance = 0.0f;
     for (char ch : text) {
         auto it = glyphs_.find((int)ch);
@@ -269,6 +270,7 @@ void TextRenderer::AddTextOnPanel(const std::string& text,
         }
     }
     float xCursor = -totalAdvance * 0.5f;
+
     for (char ch : text) {
         int uc = (int)ch;
         auto it = glyphs_.find(uc);
@@ -278,31 +280,40 @@ void TextRenderer::AddTextOnPanel(const std::string& text,
             xCursor += g.advance;
             continue;
         }
+
         float x0 = xCursor + g.planeBounds.x;
         float y0 = g.planeBounds.y;
         float x1 = xCursor + g.planeBounds.z;
         float y1 = g.planeBounds.w;
+
         float u0 = g.atlasBounds.x / atlasWidth_;
         float v0 = g.atlasBounds.y / atlasHeight_;
         float u1 = g.atlasBounds.z / atlasWidth_;
         float v1 = g.atlasBounds.w / atlasHeight_;
-        // Positions are relative to the panel's origin (0,0,0 in its local space)
-        glm::vec3 p0 = right * (x0 * finalScale) + up * (y0 * finalScale);
-        glm::vec3 p1 = right * (x1 * finalScale) + up * (y0 * finalScale);
-        glm::vec3 p2 = right * (x1 * finalScale) + up * (y1 * finalScale);
-        glm::vec3 p3 = right * (x0 * finalScale) + up * (y1 * finalScale);
+
+        // Positions are now relative to the panel's origin + localPosition offset
+        glm::vec3 p0 = localPosition + right * (x0 * finalScale) + up * (y0 * finalScale);
+        glm::vec3 p1 = localPosition + right * (x1 * finalScale) + up * (y0 * finalScale);
+        glm::vec3 p2 = localPosition + right * (x1 * finalScale) + up * (y1 * finalScale);
+        glm::vec3 p3 = localPosition + right * (x0 * finalScale) + up * (y1 * finalScale);
+
         panelVertices_.push_back({ p0, { u0, v1 }, color });
         panelVertices_.push_back({ p1, { u1, v1 }, color });
         panelVertices_.push_back({ p2, { u1, v0 }, color });
         panelVertices_.push_back({ p0, { u0, v1 }, color });
         panelVertices_.push_back({ p2, { u1, v0 }, color });
         panelVertices_.push_back({ p3, { u0, v0 }, color });
+
         xCursor += g.advance;
     }
 }
 
 void TextRenderer::SetPanelModelMatrix(const glm::mat4& modelMatrix) {
     currentPanelModelMatrix_ = modelMatrix;
+}
+
+void TextRenderer::ClearPanelModelMatrix() {
+    currentPanelModelMatrix_ = glm::mat4(1.0f);
 }
 
 void TextRenderer::Render(const glm::mat4& view, const glm::mat4& projection) {

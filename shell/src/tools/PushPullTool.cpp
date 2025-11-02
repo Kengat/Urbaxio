@@ -453,4 +453,8 @@ void PushPullTool::SetLengthInput(const std::string& input) {
     lengthInputBuf[copyLen] = '\0';
 }
 
+float PushPullTool::GetCurrentLength() const {
+    return pushPullCurrentLength;
+}
+
 } // namespace Urbaxio::Tools 

@@ -52,10 +52,18 @@ extern "C" {
 #include "TextRenderer.h"
 #include "file_io.h"
 #include <filesystem>
+// --- NEW: VR UI System includes ---
+#include "ui/IVRWidget.h"
+#include "ui/VRButtonWidget.h"
+#include "ui/VRConfirmButtonWidget.h"
+#include "ui/VRDisplayWidget.h"
+#include "ui/VRUIManager.h"
+#include "ui/VRPanel.h"
 // --- VR menu interaction helpers ---
 #include <glm/gtx/intersect.hpp>
 
 #include <fstream>
+#include <charconv>
 // --- NEW: For File Dialogs on Windows ---
 #if defined(_WIN32)
 #include <windows.h>
@@ -383,6 +391,108 @@ namespace { // Anonymous namespace for helpers
         }
     }
 
+    // --- NEW: Factory function to create our VR panels ---
+    void SetupVRPanels(Urbaxio::UI::VRUIManager& vruiManager, std::string& numpadInputTarget, Urbaxio::Tools::ToolManager& toolManager, bool& isNumpadActiveFlag, const Urbaxio::Tools::ToolContext& toolContext) {
+        {
+            float panelScale = 0.392f;
+            // Standard numpad position values
+            glm::vec3 translation = glm::vec3(-0.009f, -0.059f, -0.148f);
+            glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(436.000f, 176.000f, 180.500f));
+            glm::mat4 offset = glm::translate(glm::mat4(1.0f), translation) *
+                               glm::mat4_cast(glm::quat(eulerAnglesRad)) *
+                               glm::scale(glm::mat4(1.0f), glm::vec3(panelScale));
+            
+            auto& numpad = vruiManager.AddPanel("NewNumpad", glm::vec2(0.2f, 0.4f), offset);
+
+            // Add Display Widget
+            glm::vec2 displaySize(0.2f, 0.05f); 
+            glm::vec3 displayCenter(0, 0.06f, 0.005f);
+            numpad.AddWidget(std::make_unique<Urbaxio::UI::VRDisplayWidget>(displayCenter, displaySize, numpadInputTarget));
+
+            // Top button row: 4 buttons (grab handle is at -1.5, then -0.5, 0.5, 1.5)
+            float topButtonY = displayCenter.y + (displaySize.y * 0.5f + 0.012f + 0.01f);
+            float topButtonSize = 0.025f;
+            float topButtonSpacing = 0.04f;
+            glm::vec3 whiteColor(1.0f);
+            glm::vec3 greenColor(0.1f, 0.8f, 0.2f);
+
+            // Placeholder button 1 (second position, after grab handle)
+            numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
+                glm::vec3(-0.5f * topButtonSpacing, topButtonY, 0.01f), topButtonSize, whiteColor, []{}
+            ));
+            // Placeholder button 2 (third position)
+            numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
+                glm::vec3(0.5f * topButtonSpacing, topButtonY, 0.01f), topButtonSize, whiteColor, []{}
+            ));
+
+            // Confirm button at the top (fourth position)
+            auto confirmCallback = [&toolManager, &isNumpadActiveFlag, &numpadInputTarget, &toolContext]() {
+                float length_mm;
+                auto result = std::from_chars(numpadInputTarget.data(), numpadInputTarget.data() + numpadInputTarget.size(), length_mm);
+                if (result.ec != std::errc()) {
+                    numpadInputTarget = "0";
+                    return;
+                }
+
+                float length_m = length_mm / 1000.0f;
+                if (length_m < 1e-4f) {
+                    isNumpadActiveFlag = false;
+                    numpadInputTarget = "0";
+                    return;
+                }
+
+                if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Line) {
+                    static_cast<Urbaxio::Tools::LineTool*>(toolManager.GetActiveTool())->SetLengthInput(numpadInputTarget);
+                    toolManager.GetActiveTool()->OnKeyDown(SDLK_RETURN, *toolContext.shiftDown, *toolContext.ctrlDown);
+                } else if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::PushPull) {
+                    static_cast<Urbaxio::Tools::PushPullTool*>(toolManager.GetActiveTool())->SetLengthInput(numpadInputTarget);
+                    toolManager.GetActiveTool()->OnKeyDown(SDLK_RETURN, *toolContext.shiftDown, *toolContext.ctrlDown);
+                }
+
+                numpadInputTarget = "0";
+                isNumpadActiveFlag = false;
+            };
+            numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
+                glm::vec3(1.5f * topButtonSpacing, topButtonY, 0.01f), topButtonSize, greenColor, confirmCallback
+            ));
+
+            // Add Buttons (copied from old code)
+            float keySpacing = 0.06f;
+            float keyTextHeight = 0.03f;
+            
+            const char* keys[] = {"1","2","3", "4","5","6", "7","8","9", ".","0","<-"};
+            for (int i = 0; i < 12; ++i) {
+                int row = i / 3;
+                int col = i % 3;
+                glm::vec3 keyCenter(0,0,0);
+
+                if (i < 9) { // 1-9
+                     keyCenter = glm::vec3(((float)col - 1.0f) * keySpacing, 0.0f - (float)row * keySpacing, 0.01f);
+                } else if (i == 9) { // '.'
+                     keyCenter = glm::vec3(-1.0f * keySpacing, -3.0f * keySpacing, 0.01f);
+                } else if (i == 10) { // '0'
+                     keyCenter = glm::vec3(0.0f, -3.0f * keySpacing, 0.01f);
+                } else if (i == 11) { // Backspace
+                     keyCenter = glm::vec3(1.0f * keySpacing, -3.0f * keySpacing, 0.01f);
+                }
+
+                std::string keyStr = keys[i];
+                auto callback = [keyStr, &numpadInputTarget]() {
+                    if (keyStr == "<-") {
+                        if (numpadInputTarget.length() > 1) numpadInputTarget.pop_back(); else numpadInputTarget = "0";
+                    } else if (keyStr == ".") {
+                        if (numpadInputTarget.find('.') == std::string::npos) numpadInputTarget += ".";
+                    } else {
+                        // Logic from old numpad
+                        if (numpadInputTarget == "0" && keyStr != "0") numpadInputTarget.clear();
+                        if (numpadInputTarget != "0" || keyStr != "0") numpadInputTarget += keyStr;
+                    }
+                };
+                numpad.AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>(keyStr, keyCenter, glm::vec2(keyTextHeight), callback));
+            }
+        }
+    }
+
 } // end anonymous namespace
 
 // --- GPU Mesh Upload Helper ---
@@ -531,26 +641,18 @@ int main(int argc, char* argv[]) {
     std::vector<float> toolMenuAlphas;
     Urbaxio::Engine::SceneObject* menuSphere = nullptr; // For rendering widgets
 
-    int hoveredNumpadKey = -1; // -1 for none, 0-9 for digits, 10 for '.', 11 for 'Backspace', 12 for 'Confirm'
-    std::string numpadInput = "0";
-
-    glm::mat4 numpadTransform = glm::mat4(1.0f); // Transform for the entire numpad panel
-
-    bool isHoveringNumpad = false; // True if pointer is over any part of the numpad
-    const char* numpadKeys[13] = {"1","2","3", "4","5","6", "7","8","9", ".","0","<-", ""}; // 11=backspace, 12=confirm
-
     // --- NEW: Live tuning variables for controller model offset, initialized with tuned values ---
     static glm::vec3 g_controllerOffsetTranslate(0.012f, 0.002f, 0.006f);
     static glm::vec3 g_controllerOffsetEuler(273.000f, 166.500f, 81.000f);
     static float g_controllerModelScale = 0.7814f;
 
-    glm::mat4 numpadOffsetTransform = glm::mat4(1.0f); // Relative offset from the controller
-    bool numpadInitialized = false;
+    // --- NEW: VR UI Manager ---
+    Urbaxio::UI::VRUIManager vruiManager;
+    float leftMenuAlpha = 0.0f; // Moved from VRManager
+    std::string g_newNumpadInput = "0";
 
-    bool isGrabbingNumpad = false;
-    glm::mat4 grabbedNumpadInitialTransform;
-    glm::mat4 grabbedControllerInitialTransform;
-    bool isHoveringGrabHandle = false;
+    // --- NEW: Setup our VR panels using the new system ---
+    SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext);
 
     // --- NEW: State for the import options dialog ---
     bool g_showImportOptionsPopup = false;
@@ -759,44 +861,6 @@ int main(int argc, char* argv[]) {
                 ImGui::DragFloat("Model Scale", &g_controllerModelScale, 0.0001f, 0.0f, 2.0f, "%.4f");
             }
 
-            ImGui::Separator();
-            if (ImGui::CollapsingHeader("VR Panel Debug")) {
-                if (numpadInitialized) {
-                    // Decompose the current transform to display its components in the UI
-                    glm::vec3 scale, translation, skew;
-                    glm::quat rotation;
-                    glm::vec4 perspective;
-                    glm::decompose(numpadOffsetTransform, scale, rotation, translation, skew, perspective);
-
-                    glm::vec3 eulerAngles = glm::degrees(glm::eulerAngles(rotation));
-                    
-                    bool changed = false;
-                    // Use DragFloat for easier tuning; changes are applied immediately
-                    changed |= ImGui::DragFloat3("Translation", &translation.x, 0.001f);
-                    changed |= ImGui::DragFloat3("Rotation (Euler)", &eulerAngles.x, 0.1f);
-                    changed |= ImGui::DragFloat("Scale", &scale.x, 0.01f, 0.1f, 20.0f, "%.3f");
-
-                    if (changed) {
-                        scale = glm::vec3(std::max(0.1f, scale.x)); // Ensure scale is positive
-                        glm::mat4 newScale = glm::scale(glm::mat4(1.0f), scale);
-                        glm::mat4 newRotation = glm::mat4_cast(glm::quat(glm::radians(eulerAngles)));
-                        glm::mat4 newTranslation = glm::translate(glm::mat4(1.0f), translation);
-                        numpadOffsetTransform = newTranslation * newRotation * newScale;
-                    }
-
-                    if (ImGui::Button("Reset to Default")) {
-                         // The new default values from your tuning session
-                         float panelScale = 0.450f;
-                         glm::vec3 default_translation = glm::vec3(-0.024f, -0.047f, -0.197f);
-                         glm::vec3 default_eulerAnglesRad = glm::radians(glm::vec3(-103.003f, 4.477f, -14.612f));
-                         numpadOffsetTransform = glm::translate(glm::mat4(1.0f), default_translation) *
-                                           glm::mat4_cast(glm::quat(default_eulerAnglesRad)) *
-                                           glm::scale(glm::mat4(1.0f), glm::vec3(panelScale));
-                    }
-                } else {
-                    ImGui::TextDisabled("Numpad not yet initialized in VR.");
-                }
-            }
 
             ImGui::Text("Scene Info:");
             ImGui::Text("Lines in Scene: %zu", scene_ptr ? scene_ptr->GetAllLines().size() : 0);
@@ -861,6 +925,7 @@ int main(int argc, char* argv[]) {
             if (vrManager->BeginFrame()) {
                 // Poll controller state after syncing actions in BeginFrame
                 vrManager->PollActions();
+                const auto& leftHand = vrManager->GetLeftHandVisual();
                 // Update modifier state for VR after polling actions
 
                 // --- NEW: Handle Undo/Redo gesture actions ---
@@ -914,7 +979,6 @@ int main(int argc, char* argv[]) {
                 glm::mat4 leftControllerUnscaledTransform(1.0f);
                 glm::mat4 rightControllerUnscaledTransform(1.0f);
 
-                const auto& leftHand = vrManager->GetLeftHandVisual();
                 if (leftHand.isValid && leftControllerVisual) {
                     glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(leftHand.pose);
                     leftControllerUnscaledTransform = worldTransform * rawPoseMatrix;
@@ -953,7 +1017,7 @@ int main(int argc, char* argv[]) {
                     glm::vec3 rayEnd = (vrSnap.snapped && vrSnap.type != Urbaxio::SnapType::GRID) 
                                        ? vrSnap.worldPoint 
                                        : vrRayOrigin + vrRayDirection * rayLength;
-                    if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual) {
+                    if (leftMenuAlpha > 0.01f && leftControllerVisual && leftHand.isValid) {
                         float closestHit = std::numeric_limits<float>::max();
                         // Use the UNSCALED transform for menu logic
                         if (leftHand.isValid) {
@@ -978,77 +1042,13 @@ int main(int argc, char* argv[]) {
                         }
                     }
                     
-                    // Check if pointer intersects with numpad and shorten the ray
-                    if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual && numpadInputActive) {
-                        // Use the UNSCALED transform for numpad logic
-                        if (leftHand.isValid) {
-                            const glm::mat4& controllerTransform = leftControllerUnscaledTransform;
-                            glm::mat4 currentNumpadTransform;
-                            if (isGrabbingNumpad) {
-                                if (rightHand.isValid) {
-                                    glm::mat4 currentControllerTransform = vrManager->GetWorldTransform() * XrPoseToModelMatrix(rightHand.pose);
-                                    glm::mat4 deltaTransform = currentControllerTransform * glm::inverse(grabbedControllerInitialTransform);
-                                    currentNumpadTransform = deltaTransform * grabbedNumpadInitialTransform;
-                                } else {
-                                    currentNumpadTransform = numpadTransform;
-                                }
-                            } else {
-                                if (!numpadInitialized) {
-                                    float panelScale = 8.0f;
-                                    glm::vec3 translation = glm::vec3(-0.007f, -0.584f, -2.276f);
-                                    glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-104.560f, 1.023f, -11.718f));
-                                    numpadOffsetTransform = glm::translate(glm::mat4(1.0f), translation) *
-                                                          glm::mat4_cast(glm::quat(eulerAnglesRad)) *
-                                                          glm::scale(glm::mat4(1.0f), glm::vec3(panelScale));
-                                    numpadInitialized = true;
-                                }
-                                currentNumpadTransform = controllerTransform * numpadOffsetTransform;
-                            }
-                            
-                            glm::vec3 numpadOrigin = glm::vec3(currentNumpadTransform[3]);
-                            glm::vec3 numpadRight = glm::normalize(glm::vec3(currentNumpadTransform[0]));
-                            glm::vec3 numpadUp = glm::normalize(glm::vec3(currentNumpadTransform[1]));
-                            float panelLocalScale = glm::length(glm::vec3(currentNumpadTransform[0]));
-                            
-                            float displayHeight = 0.05f * panelLocalScale;
-                            float grabHandleRadius = 0.012f * panelLocalScale;
-                            glm::vec3 displayCenter = numpadOrigin + numpadUp * (0.06f * panelLocalScale);
-                            glm::vec3 grabHandleCenter = displayCenter + numpadUp * (displayHeight * 0.5f + grabHandleRadius + 0.01f * panelLocalScale);
-                            
-                            float closestHit = std::numeric_limits<float>::max();
-                            
-                            // Grab handle hit check
-                            float grabDist;
-                            if (glm::intersectRaySphere(vrRayOrigin, vrRayDirection, grabHandleCenter, grabHandleRadius * grabHandleRadius, grabDist)) {
-                                closestHit = std::min(closestHit, grabDist);
-                            }
-                            
-                            // Keys hit check
-                            float keySpacing = 0.06f * panelLocalScale;
-                            float keyRadius = 0.025f * panelLocalScale;
-                            for (int i = 0; i < 13; ++i) {
-                                int row = i / 3;
-                                int col = i % 3;
-                                glm::vec3 keyCenter = numpadOrigin - numpadUp * (float)row * keySpacing + numpadRight * ((float)col - 1.0f) * keySpacing;
-                                
-                                if (i == 9) {
-                                    keyCenter = numpadOrigin - numpadUp * 3.f * keySpacing - numpadRight * 1.f * keySpacing;
-                                } else if (i == 10) {
-                                    keyCenter = numpadOrigin - numpadUp * 3.f * keySpacing;
-                                } else if (i == 11) {
-                                    keyCenter = numpadOrigin - numpadUp * 3.f * keySpacing + numpadRight * 1.f * keySpacing;
-                                } else if (i == 12) {
-                                    keyCenter = numpadOrigin - numpadUp * 4.f * keySpacing;
-                                }
-                                
-                                float keyDist;
-                                if (glm::intersectRaySphere(vrRayOrigin, vrRayDirection, keyCenter, keyRadius * keyRadius, keyDist)) {
-                                    closestHit = std::min(closestHit, keyDist);
-                                }
-                            }
-                            
-                            if (closestHit < std::numeric_limits<float>::max() && closestHit < glm::distance(vrRayOrigin, rayEnd)) {
-                                rayEnd = vrRayOrigin + vrRayDirection * closestHit;
+                    // Check if pointer intersects with new numpad panel and shorten the ray
+                        if (auto* numpadPanel = vruiManager.GetPanel("NewNumpad")) {
+                        if (numpadPanel->alpha > 0.01f) {
+                            Urbaxio::UI::Ray testRay = {vrRayOrigin, vrRayDirection};
+                            Urbaxio::UI::HitResult panelHit = numpadPanel->CheckIntersection(testRay, leftControllerUnscaledTransform);
+                            if (panelHit.didHit && panelHit.distance < glm::distance(vrRayOrigin, rayEnd)) {
+                                rayEnd = vrRayOrigin + vrRayDirection * panelHit.distance;
                             }
                         }
                     }
@@ -1056,20 +1056,87 @@ int main(int argc, char* argv[]) {
                     renderer.UpdateVRPointer(vrRayOrigin, rayEnd, true);
                 }
 
+                    // --- NEW: Update and Render VR UI Manager ---
+                    Urbaxio::UI::Ray worldRay = {vrRayOrigin, vrRayDirection};
+                    
+                    vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked);
+
+                        // Handle grabbing for the new panel
+                    if (auto* numpadPanel = vruiManager.GetPanel("NewNumpad")) {
+                        if (rightHand.triggerClicked && numpadPanel->isHoveringGrabHandle) {
+                             numpadPanel->isGrabbing = true;
+                             numpadPanel->grabbedInitialTransform = numpadPanel->transform;
+                             numpadPanel->grabbedControllerInitialTransform = rightControllerUnscaledTransform;
+                        }
+                        if (rightHand.triggerReleased && numpadPanel->isGrabbing) {
+                            numpadPanel->isGrabbing = false;
+                            numpadPanel->GetOffsetTransform() = glm::inverse(leftControllerUnscaledTransform) * numpadPanel->transform;
+                        }
+
+                        if(numpadPanel->isGrabbing && rightHand.isValid) {
+                             glm::mat4 deltaTransform = rightControllerUnscaledTransform * glm::inverse(numpadPanel->grabbedControllerInitialTransform);
+                             numpadPanel->transform = deltaTransform * numpadPanel->grabbedInitialTransform;
+                        }
+                    }
+
                 // --- VR Tool Interaction Logic ---
                 if (toolManager.GetActiveTool()) {
-                    // Only update hover if the numpad isn't being interacted with
-                    if (!isHoveringNumpad) {
+                    // Only update hover if a VR UI Panel is not being interacted with
+                    if (vruiManager.GetHoveredPanel() == nullptr) {
                     if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::PushPull) {
                         static_cast<Urbaxio::Tools::PushPullTool*>(toolManager.GetActiveTool())->updateHover(vrRayOrigin, vrRayDirection);
                     }
                     } else {
-                        // Clear hover if pointer is on numpad
+                        // Clear hover if pointer is on any panel
                         *toolContext.hoveredObjId = 0;
                         toolContext.hoveredFaceTriangleIndices->clear();
                     }
                     // Step 2: Update tool with current snap result for drawing/actions
                     toolManager.GetActiveTool()->OnUpdate(vrSnap, vrRayOrigin, vrRayDirection);
+                }
+
+                // --- Unified UI State Update (Menus, Numpad Visibility & Display Text) ---
+                const float MENU_FADE_SPEED = 0.1f;
+                bool isTriggerPressed = vrManager->rawLeftTriggerValue > 0.5f;
+
+                // Update tool menu alpha
+                if (isTriggerPressed) {
+                    leftMenuAlpha = std::min(1.0f, leftMenuAlpha + MENU_FADE_SPEED);
+                } else {
+                    leftMenuAlpha = std::max(0.0f, leftMenuAlpha - MENU_FADE_SPEED);
+                }
+
+                // Update numpad alpha, visibility, and display text
+                if (auto* numpadPanel = vruiManager.GetPanel("NewNumpad")) {
+                    // The numpad is visible ONLY when the trigger is held. No other conditions.
+                    if (isTriggerPressed) {
+                        numpadPanel->alpha = std::min(1.0f, numpadPanel->alpha + MENU_FADE_SPEED);
+                    } else {
+                        numpadPanel->alpha = std::max(0.0f, numpadPanel->alpha - MENU_FADE_SPEED);
+                    }
+                    numpadPanel->SetVisible(numpadPanel->alpha > 0.01f);
+
+                    // Only update the display automatically if the user is NOT typing
+                    if (!numpadInputActive) {
+                        bool displayUpdated = false;
+                        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Line) {
+                            auto* lineTool = static_cast<Urbaxio::Tools::LineTool*>(toolManager.GetActiveTool());
+                            if (lineTool->IsDrawing()) {
+                                g_newNumpadInput = fmt::format("{:.0f}", lineTool->GetCurrentLineLength() * 1000.0f);
+                                displayUpdated = true;
+                            }
+                        } else if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::PushPull) {
+                            auto* pushPullTool = static_cast<Urbaxio::Tools::PushPullTool*>(toolManager.GetActiveTool());
+                            if (pushPullTool->IsPushPullActive()) {
+                                g_newNumpadInput = fmt::format("{:.0f}", std::abs(pushPullTool->GetCurrentLength() * 1000.0f));
+                                displayUpdated = true;
+                            }
+                        }
+
+                        if (!displayUpdated) {
+                            g_newNumpadInput = "0";
+                        }
+                    }
                 }
                 
                 if (vrManager->leftAButtonDoubleClicked) {
@@ -1079,7 +1146,7 @@ int main(int argc, char* argv[]) {
                         if (lineTool->IsDrawing() || numpadInputActive) {
                             numpadInputActive = !numpadInputActive;
                             if (numpadInputActive) {
-                                numpadInput = "0"; // Reset on activation
+                                g_newNumpadInput = "0"; // Reset on activation
                             }
                         }
                     } else if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::PushPull) {
@@ -1088,68 +1155,21 @@ int main(int argc, char* argv[]) {
                         if (pushPullTool->IsPushPullActive() || numpadInputActive) {
                             numpadInputActive = !numpadInputActive;
                             if (numpadInputActive) {
-                                numpadInput = "0"; // Reset on activation
+                                g_newNumpadInput = "0"; // Reset on activation
                             }
                         }
                     }
                 }
                 
                 if (rightHand.triggerClicked) {
-                    if (isHoveringGrabHandle) {
-                        isGrabbingNumpad = true;
-                        grabbedNumpadInitialTransform = numpadTransform;
-                        grabbedControllerInitialTransform = vrManager->GetWorldTransform() * XrPoseToModelMatrix(rightHand.pose);
-                    } 
-                    else if (numpadInputActive && isHoveringNumpad) {
-                        // --- Numpad Input Logic (only when active) ---
-                        if (hoveredNumpadKey != -1) {
-                            if (hoveredNumpadKey >= 0 && hoveredNumpadKey <= 8) { // Digits 1-9
-                                if (numpadInput == "0") numpadInput.clear();
-                                numpadInput += numpadKeys[hoveredNumpadKey];
-                            } else if (hoveredNumpadKey == 10) { // '0' key
-                                if (numpadInput != "0") {
-                                    numpadInput += numpadKeys[hoveredNumpadKey];
-                                }
-                            } else if (hoveredNumpadKey == 9) { // '.' key
-                                if (numpadInput.find('.') == std::string::npos) {
-                                    numpadInput += ".";
-                                }
-                            } else if (hoveredNumpadKey == 11) { // Backspace
-                                if (numpadInput.length() > 1) {
-                                    numpadInput.pop_back();
-                                } else {
-                                    numpadInput = "0";
-                                }
-                            } else if (hoveredNumpadKey == 12) { // Confirm
-                                if (toolManager.GetActiveTool()) {
-                                    // Pass the numpadInput to the tool before simulating Enter
-                                    if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Line) {
-                                        auto* lineTool = static_cast<Urbaxio::Tools::LineTool*>(toolManager.GetActiveTool());
-                                        lineTool->SetLengthInput(numpadInput);
-                                    } else if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::PushPull) {
-                                        auto* pushPullTool = static_cast<Urbaxio::Tools::PushPullTool*>(toolManager.GetActiveTool());
-                                        pushPullTool->SetLengthInput(numpadInput);
-                                    }
-                                    toolManager.GetActiveTool()->OnKeyDown(SDLK_RETURN, *toolContext.shiftDown, *toolContext.ctrlDown);
-                                }
-                                numpadInputActive = false; // Deactivate numpad on confirm
-                            }
-                        }
-                    }
-                    else { 
-                        // If not interacting with UI, it's a world action
-                        toolManager.OnLeftMouseDown(0, 0, *toolContext.shiftDown, *toolContext.ctrlDown, vrRayOrigin, vrRayDirection);
+                    bool clickConsumed = vruiManager.HandleClick();
+                    
+                    if (!clickConsumed) {
+                            // If not interacting with UI, it's a world action
+                            toolManager.OnLeftMouseDown(0, 0, *toolContext.shiftDown, *toolContext.ctrlDown, vrRayOrigin, vrRayDirection);
                     }
                 }
                 if (rightHand.triggerReleased) {
-                    if (isGrabbingNumpad) {
-                        isGrabbingNumpad = false;
-                        // When released, calculate the new relative offset from the controller
-                        // Use the UNSCALED transform for correct relative transform calculation
-                        if (leftHand.isValid) {
-                            numpadOffsetTransform = glm::inverse(leftControllerUnscaledTransform) * numpadTransform;
-                        }
-                    }
                     toolManager.OnLeftMouseUp(0, 0, *toolContext.shiftDown, *toolContext.ctrlDown);
                 }
 
@@ -1172,6 +1192,10 @@ int main(int argc, char* argv[]) {
                     const glm::mat4& view = current_view.viewMatrix;
                     const glm::mat4& projection = current_view.projectionMatrix;
                     const glm::vec3 viewPos = glm::vec3(glm::inverse(view)[3]);
+                    
+                    // --- Hack to pass view matrix to UI widgets ---
+                    renderer.vrMenuWidgetShaderProgram_viewMatrix_HACK = view;
+                    // --- End Hack ---
                     
                     uint64_t previewObjId = 0;
                     if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
@@ -1200,7 +1224,7 @@ int main(int argc, char* argv[]) {
                     );
                     
                     // --- Render VR Tool Menu ---
-                    if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual) {
+                    if (leftMenuAlpha > 0.01f && leftControllerVisual && leftHand.isValid) {
                         // Use the UNSCALED transform for menu logic
                         if (leftHand.isValid) {
                             const glm::mat4& controllerTransform = leftControllerUnscaledTransform;
@@ -1226,7 +1250,7 @@ int main(int argc, char* argv[]) {
                             hoveredToolIndex = -1;
                             float closestHit = std::numeric_limits<float>::max();
                             float hitboxHeight = 0.04f * worldScale;
-                            float hitboxWidth = 0.2f * worldScale;
+                            float hitboxWidth = 0.1f * worldScale; // Reduced width to avoid overlap with numpad
                             
                             if (rightHand.isValid) {
                                 for (size_t tool_idx = 0; tool_idx < toolNames.size(); ++tool_idx) {
@@ -1320,7 +1344,7 @@ int main(int argc, char* argv[]) {
                                 renderer.RenderVRMenuWidget(
                                     view, projection,
                                     finalModel,
-                                    baseColor, aberration, vrManager->leftMenuAlpha,
+                                    baseColor, aberration, leftMenuAlpha,
                                     abColor1, abColor2
                                 );
                                 
@@ -1337,7 +1361,7 @@ int main(int argc, char* argv[]) {
                                 textRenderer.AddText(
                                     toolNames[tool_idx],
                                     itemTextPos,
-                                    glm::vec4(1.0f, 1.0f, 1.0f, vrManager->leftMenuAlpha * toolMenuAlphas[tool_idx]),
+                                    glm::vec4(1.0f, 1.0f, 1.0f, leftMenuAlpha * toolMenuAlphas[tool_idx]),
                                     finalWorldHeight,
                                     view
                                 );
@@ -1345,180 +1369,9 @@ int main(int argc, char* argv[]) {
                         }
                     }
 
-                    // --- Render VR Numpad ---
-                    // Display is now tied to the main menu visibility (left trigger)
-                    if (vrManager->leftMenuAlpha > 0.01f && leftControllerVisual) {                        
-                        if (leftHand.isValid) {
-                            const glm::mat4& controllerTransform = leftControllerUnscaledTransform;
+                    // --- NEW: Render VR UI Manager ---
+                    vruiManager.Render(renderer, textRenderer, view, projection);
 
-                            float worldScale = glm::length(glm::vec3(vrManager->GetWorldTransform()[0]));
-
-                            // --- Numpad Transform Logic ---
-                            if (isGrabbingNumpad) {
-                                if (rightHand.isValid) {
-                                    glm::mat4 currentControllerTransform = vrManager->GetWorldTransform() * XrPoseToModelMatrix(rightHand.pose);
-                                    glm::mat4 deltaTransform = currentControllerTransform * glm::inverse(grabbedControllerInitialTransform);
-                                    numpadTransform = deltaTransform * grabbedNumpadInitialTransform;
-                                }
-                            } else {
-                                // If not grabbed, the panel's transform is based on the controller's transform plus a relative offset.
-                                if (!numpadInitialized) {
-                                    // On first appearance, set the default offset from tuned values
-                                    float panelScale = 0.450f;
-                                    glm::vec3 translation = glm::vec3(-0.024f, -0.047f, -0.197f);
-                                    glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-103.003f, 4.477f, -14.612f));
-
-                                    numpadOffsetTransform = glm::translate(glm::mat4(1.0f), translation) *
-                                                          glm::mat4_cast(glm::quat(eulerAnglesRad)) * // Use radians here
-                                                          glm::scale(glm::mat4(1.0f), glm::vec3(panelScale));
-                                    numpadInitialized = true;
-                                }
-                                numpadTransform = controllerTransform * numpadOffsetTransform;
-                            }
-
-                            glm::vec3 numpadOrigin = glm::vec3(numpadTransform[3]);
-                            glm::vec3 numpadRight = glm::normalize(glm::vec3(numpadTransform[0]));
-                            glm::vec3 numpadUp = glm::normalize(glm::vec3(numpadTransform[1]));
-
-                            float panelLocalScale = glm::length(glm::vec3(numpadTransform[0])); // Extract scale from the matrix
-
-                            // --- Display & Grab Handle ---
-                            float displayWidth = 0.2f * panelLocalScale;
-                            float displayHeight = 0.05f * panelLocalScale;
-                            glm::vec3 displayCenter = numpadOrigin + numpadUp * (0.06f * panelLocalScale);
-
-                            // --- Update Numpad Display String ---
-                            if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Line) {
-                                auto* lineTool = static_cast<Urbaxio::Tools::LineTool*>(toolManager.GetActiveTool());
-                                // Only update display from line length if numpad is NOT active
-                                if (lineTool->IsDrawing() && !numpadInputActive) {
-                                    float length_m = lineTool->GetCurrentLineLength();
-                                    numpadInput = fmt::format("{:.0f}", length_m * 1000.0f);
-                                }
-                            } else if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::PushPull) {
-                                auto* pushPullTool = static_cast<Urbaxio::Tools::PushPullTool*>(toolManager.GetActiveTool());
-                                // Only update display from push/pull distance if numpad is NOT active
-                                if (pushPullTool->IsPushPullActive() && !numpadInputActive) {
-                                    // Get current distance from the tool (would need to add a getter method)
-                                    // For now, we'll use the numpadInput directly
-                                }
-                            } else if (!numpadInputActive) { // Don't clear if user is typing
-                                // Clear display if another tool is active
-                                numpadInput = "0";
-                            }
-                            
-                            // Render the display panel
-                            glm::mat4 displayModel = glm::translate(glm::mat4(1.0f), displayCenter) *
-                                                     glm::mat4(glm::mat3(numpadRight, numpadUp, glm::cross(numpadRight, numpadUp))) *
-                                                     glm::scale(glm::mat4(1.0f), glm::vec3(displayWidth, displayHeight, 1.0f));
-                            renderer.RenderVRPanel(view, projection, displayModel, glm::vec3(0.1f, 0.15f, 0.25f), 0.2f, 0.7f * vrManager->leftMenuAlpha);
-                            
-                            // Render text on top of the display using the new method
-                            // We create a transform for the text itself, positioned at the display center
-                            glm::mat4 textTransform = glm::translate(glm::mat4(1.0f), displayCenter) *
-                                                      glm::mat4(glm::mat3(numpadRight, numpadUp, glm::cross(numpadRight, numpadUp)));
-                            
-                            textRenderer.SetPanelModelMatrix(textTransform);
-                            textRenderer.AddTextOnPanel(numpadInput, glm::mat4(1.0f), glm::vec4(1.0f), 0.03f * panelLocalScale);
-                            float grabHandleRadius = 0.012f * panelLocalScale;
-                            glm::vec3 grabHandleCenter = displayCenter + numpadUp * (displayHeight * 0.5f + grabHandleRadius + 0.01f * panelLocalScale);
-
-                            isHoveringGrabHandle = false;
-                            if (rightHand.isValid) {
-                                float dist;
-                                if (glm::intersectRaySphere(vrRayOrigin, vrRayDirection, grabHandleCenter, grabHandleRadius * grabHandleRadius, dist)) {
-                                    isHoveringGrabHandle = true;
-                                }
-                            }
-
-                            // Build model matrix for billboard grab handle
-                            glm::mat4 cameraWorld = glm::inverse(view);
-                            glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
-                            glm::vec3 camUp    = glm::normalize(glm::vec3(cameraWorld[1]));
-                            glm::vec3 camFwd   = glm::normalize(glm::vec3(cameraWorld[2]));
-
-                            glm::mat4 grabHandleModel = glm::translate(glm::mat4(1.0f), grabHandleCenter) *
-                                                   glm::mat4(glm::mat3(camRight, camUp, camFwd)) *
-                                                   glm::scale(glm::mat4(1.0f), glm::vec3(grabHandleRadius * 2.0f));
-                            renderer.RenderVRMenuWidget(view, projection, grabHandleModel, glm::vec3(1.0f), isHoveringGrabHandle ? 0.15f : 0.05f, vrManager->leftMenuAlpha, glm::vec3(1.0f), glm::vec3(1.0f));
-
-                            // --- Buttons ---
-                            float keySpacing = 0.06f * panelLocalScale;
-                            float keyRadius = 0.025f * panelLocalScale;
-                            hoveredNumpadKey = -1;
-                            isHoveringNumpad = false; // Reset per frame
-                            float closestHit = std::numeric_limits<float>::max();
-
-                            // Exclude grab handle from key intersection test
-                            if (rightHand.isValid) {
-                                float dist;
-                                if (glm::intersectRaySphere(vrRayOrigin, vrRayDirection, grabHandleCenter, grabHandleRadius * grabHandleRadius, dist)) {
-                                    isHoveringGrabHandle = true;
-                                }
-                            }
-                            
-                            if (isHoveringGrabHandle) {
-                                closestHit = 0; // Prioritize grab handle
-                            }
-
-                            for (int i = 0; i < 13; ++i) { // Updated loop limit to 13
-                                int row = i / 3;
-                                int col = i % 3;
-                                glm::vec3 keyCenter = numpadOrigin -
-                                                    numpadUp * (float)row * keySpacing +
-                                                    numpadRight * ((float)col - 1.0f) * keySpacing;
-
-                                if (i == 9) { // '.' key
-                                    keyCenter = numpadOrigin - numpadUp * 3.f * keySpacing - numpadRight * 1.f * keySpacing;
-                                } else if (i == 10) { // '0' key
-                                    keyCenter = numpadOrigin - numpadUp * 3.f * keySpacing;
-                                } else if (i == 11) { // Backspace key
-                                    keyCenter = numpadOrigin - numpadUp * 3.f * keySpacing + numpadRight * 1.f * keySpacing;
-                                } else if (i == 12) { // Confirm key
-                                    keyCenter = numpadOrigin - numpadUp * 4.f * keySpacing; // New row for confirm
-                                }
-
-                                // Intersection check
-                                if (rightHand.isValid && !isHoveringGrabHandle) { // Don't check keys if hovering handle
-                                    float dist;
-                                    if (glm::intersectRaySphere(vrRayOrigin, vrRayDirection, keyCenter, keyRadius * keyRadius, dist) && dist < closestHit) {
-                                        closestHit = dist;
-                                        hoveredNumpadKey = i;
-                                    }
-                                }
-
-                                bool isHovered = (hoveredNumpadKey == i);
-                                if (isHovered) isHoveringNumpad = true;
-
-                                // Render key (text or widget)
-                                if (i < 12) { // Text keys (0-11)
-                                    textRenderer.AddText(
-                                        numpadKeys[i],
-                                        keyCenter,
-                                        glm::vec4(1.0f, 1.0f, 1.0f, vrManager->leftMenuAlpha * (isHovered ? 1.0f : 0.7f)),
-                                        0.03f * panelLocalScale,
-                                        view
-                                    );
-                                } else { // Confirm key (widget)
-                                    float widget_diameter = 0.03f * panelLocalScale;
-
-                                    // Build model matrix for billboard
-                                    glm::mat4 cameraWorld = glm::inverse(view);
-                                    glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
-                                    glm::vec3 camUp    = glm::normalize(glm::vec3(cameraWorld[1]));
-                                    glm::vec3 camFwd   = glm::normalize(glm::vec3(cameraWorld[2]));
-
-                                    glm::mat4 finalModel = glm::translate(glm::mat4(1.0f), keyCenter) *
-                                                           glm::mat4(glm::mat3(camRight, camUp, camFwd)) *
-                                                           glm::scale(glm::mat4(1.0f), glm::vec3(widget_diameter));
-
-                                    glm::vec3 baseColor = glm::vec3(0.1f, 0.8f, 0.2f); // Green
-                                    float aberration = isHovered ? 0.15f : 0.05f;
-                                    renderer.RenderVRMenuWidget(view, projection, finalModel, baseColor, aberration, vrManager->leftMenuAlpha, baseColor, baseColor);
-                                }
-                            }
-                        }
-                    }
                     
                     // 3D distance text in VR
                     if (vrManager->zoomTextAlpha > 0.01f) {

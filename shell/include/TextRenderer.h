@@ -31,9 +31,10 @@ public:
                  bool billboard = true);
 
     void AddTextOnPanel(const std::string& text,
-                      const glm::mat4& panelTransform,
+                      const glm::vec3& localPosition,
                       const glm::vec4& color,
                       float height);
+    void ClearPanelModelMatrix();
     void SetPanelModelMatrix(const glm::mat4& modelMatrix);
 
     void Render(const glm::mat4& view, const glm::mat4& projection);

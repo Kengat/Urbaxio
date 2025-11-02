@@ -34,6 +34,9 @@ public:
     // Set length input from VR numpad
     void SetLengthInput(const std::string& input);
 
+    // Get current length for display
+    float GetCurrentLength() const;
+
     // -- START OF MODIFICATION --
 
     // This is now the primary hover update function, used by both VR and 2D.

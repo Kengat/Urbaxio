@@ -80,6 +80,7 @@ namespace Urbaxio {
             const glm::vec3& baseColor, float aberration, float globalAlpha,
             const glm::vec3& aberrationColor1, const glm::vec3& aberrationColor2
         );
+
         void RenderVRPanel(
             const glm::mat4& view, const glm::mat4& projection,
             const glm::mat4& model,
@@ -100,6 +101,7 @@ namespace Urbaxio {
         );
 
         GLuint vrMenuWidgetShaderProgram = 0; // For menu spheres
+        glm::mat4 vrMenuWidgetShaderProgram_viewMatrix_HACK = glm::mat4(1.0f);
 
     private:
         GLuint objectShaderProgram = 0;

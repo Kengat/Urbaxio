@@ -25,6 +25,12 @@ add_executable(Urbaxio
     src/tools/LineTool.cpp
     src/tools/PushPullTool.cpp
     src/tools/MoveTool.cpp
+    # Add UI source files
+    src/ui/VRUIManager.cpp
+    src/ui/VRPanel.cpp
+    src/ui/VRButtonWidget.cpp
+    src/ui/VRConfirmButtonWidget.cpp
+    src/ui/VRDisplayWidget.cpp
     # Add ImGui backend implementation files directly to the compilation
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_sdl2.cpp"
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_opengl3.cpp"
