@@ -30,6 +30,10 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, bool
         isHoveringGrabHandle = true;
     }
 
+    const float FADE_SPEED = 0.15f;
+    float targetAlpha = isHoveringGrabHandle ? 1.0f : 0.0f;
+    grabHandleHoverAlpha_ += (targetAlpha - grabHandleHoverAlpha_) * FADE_SPEED;
+
     if (isHoveringGrabHandle) {
         if(hoveredWidget_) hoveredWidget_->SetHover(false);
         hoveredWidget_ = nullptr;
@@ -61,9 +65,10 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, bool
             hoveredWidget_->SetHover(true);
         }
     }
-
-    if (hoveredWidget_) {
-        hoveredWidget_->Update(localRay, false);
+    
+    // --- MODIFIED: Update ALL widgets every frame so they can handle animations ---
+    for (auto& widget : widgets_) {
+        widget->Update(localRay, false); // isClicked is handled by HandleClick()
     }
 }
 
@@ -75,6 +80,11 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     float grabHandleRadius = 0.012f * panelLocalScale;
     glm::vec3 grabHandleCenter = GetGrabHandleCenter();
     
+    float aberration = 0.05f + grabHandleHoverAlpha_ * 0.10f;
+    glm::vec3 grabHandleBaseColor = glm::vec3(1.0f);
+    glm::vec3 grabHandleAbColor1 = glm::vec3(0.93f, 0.72f, 1.00f);
+    glm::vec3 grabHandleAbColor2 = glm::vec3(0.7f, 0.9f, 1.0f);
+
     // Correct billboarding for grab handle
     glm::mat4 cameraWorld = glm::inverse(view);
     glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
@@ -84,7 +94,7 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     glm::mat4 grabHandleModel = glm::translate(glm::mat4(1.0f), grabHandleCenter) *
                            glm::mat4(glm::mat3(camRight, camUp, camFwd)) *
                            glm::scale(glm::mat4(1.0f), glm::vec3(grabHandleRadius * 2.0f));
-    renderer.RenderVRMenuWidget(view, projection, grabHandleModel, glm::vec3(1.0f), isHoveringGrabHandle ? 0.15f : 0.05f, alpha, glm::vec3(1.0f), glm::vec3(1.0f));
+    renderer.RenderVRMenuWidget(view, projection, grabHandleModel, grabHandleBaseColor, aberration, alpha, grabHandleAbColor1, grabHandleAbColor2);
 
     textRenderer.SetPanelModelMatrix(transform);
 

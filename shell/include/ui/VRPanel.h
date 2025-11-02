@@ -35,6 +35,7 @@ public:
     bool isHoveringGrabHandle = false;
     glm::mat4 grabbedInitialTransform;
     glm::mat4 grabbedControllerInitialTransform;
+    float grabHandleHoverAlpha_ = 0.0f;
     glm::mat4& GetOffsetTransform() { return offsetTransform_; }
 
 private:

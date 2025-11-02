@@ -80,6 +80,13 @@ namespace Urbaxio {
             const glm::vec3& baseColor, float aberration, float globalAlpha,
             const glm::vec3& aberrationColor1, const glm::vec3& aberrationColor2
         );
+        void RenderVRMenuWidget(
+            const glm::mat4& view, const glm::mat4& projection,
+            const glm::mat4& model,
+            const glm::vec3& baseColor, float aberration, float globalAlpha,
+            const glm::vec3& aberrationColor1, const glm::vec3& aberrationColor2,
+            unsigned int textureId
+        );
 
         void RenderVRPanel(
             const glm::mat4& view, const glm::mat4& projection,

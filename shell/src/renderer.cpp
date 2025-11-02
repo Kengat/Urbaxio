@@ -375,6 +375,8 @@ namespace Urbaxio {
             "out vec4 FragColor;\n"
             "in vec2 vUv;\n"
             "\n"
+            "uniform sampler2D u_texture;\n"
+            "uniform bool u_useTexture;\n"
             "uniform vec3 u_baseColor;\n"
             "uniform float u_aberrationAmount;\n"
             "uniform float u_globalAlpha;\n"
@@ -407,6 +409,14 @@ namespace Urbaxio {
             "\n"
             "    if (u_shapeType == 1) {\n"
             "        FragColor = vec4(u_baseColor, alpha * u_globalAlpha);\n"
+            "        return;\n"
+            "    }\n"
+            "\n"
+            "    // --- NEW: Texture path for icons ---\n"
+            "    if (u_useTexture) {\n"
+            "        vec4 texColor = texture(u_texture, vUv + vec2(0.5));\n"
+            "        float finalAlpha = (1.0 - smoothstep(-edgeSoftness, edgeSoftness, dist));\n"
+            "        FragColor = vec4(texColor.rgb, texColor.a * finalAlpha * u_globalAlpha);\n"
             "        return;\n"
             "    }\n"
             "\n"
@@ -1277,9 +1287,38 @@ namespace Urbaxio {
         glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 0); // 0 for circle
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(baseColor));
         glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), globalAlpha);
+        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_useTexture"), 0);
         glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationAmount"), aberration);
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationColor1"), 1, glm::value_ptr(aberrationColor1));
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationColor2"), 1, glm::value_ptr(aberrationColor2));
+        
+        glBindVertexArray(splatVAO);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        glDepthMask(GL_TRUE);
+    }
+
+    void Renderer::RenderVRMenuWidget(
+        const glm::mat4& view, const glm::mat4& projection,
+        const glm::mat4& model,
+        const glm::vec3& baseColor, float aberration, float globalAlpha,
+        const glm::vec3& aberrationColor1, const glm::vec3& aberrationColor2,
+        unsigned int textureId
+    ) {
+        if (vrMenuWidgetShaderProgram == 0 || splatVAO == 0) return;
+
+        glm::mat4 finalView = (view == glm::mat4(1.0f)) ? vrMenuWidgetShaderProgram_viewMatrix_HACK : view;
+        glUseProgram(vrMenuWidgetShaderProgram);
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(finalView));
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+        
+        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 0); // 0 for circle
+        glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(baseColor));
+        glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), globalAlpha);
+        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_useTexture"), 1);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, textureId);
+        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_texture"), 0);
         
         glBindVertexArray(splatVAO);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);

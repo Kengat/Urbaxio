@@ -73,6 +73,9 @@ extern "C" {
 #include <cmath>
 #include <map>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 // --- OCCT includes for capsule generation (moved from engine) ---
 #include <gp_Ax2.hxx>
 #include <gp_Pnt.hxx>
@@ -392,7 +395,7 @@ namespace { // Anonymous namespace for helpers
     }
 
     // --- NEW: Factory function to create our VR panels ---
-    void SetupVRPanels(Urbaxio::UI::VRUIManager& vruiManager, std::string& numpadInputTarget, Urbaxio::Tools::ToolManager& toolManager, bool& isNumpadActiveFlag, const Urbaxio::Tools::ToolContext& toolContext) {
+    void SetupVRPanels(Urbaxio::UI::VRUIManager& vruiManager, std::string& numpadInputTarget, Urbaxio::Tools::ToolManager& toolManager, bool& isNumpadActiveFlag, const Urbaxio::Tools::ToolContext& toolContext, unsigned int dragIconTexture) {
         {
             float panelScale = 0.392f;
             // Standard numpad position values
@@ -416,11 +419,16 @@ namespace { // Anonymous namespace for helpers
             glm::vec3 whiteColor(1.0f);
             glm::vec3 greenColor(0.1f, 0.8f, 0.2f);
 
-            // Placeholder button 1 (second position, after grab handle)
+            // Placeholder button 1 (grab handle is now an icon button)
+            numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
+                glm::vec3(-1.5f * topButtonSpacing, topButtonY, 0.01f), topButtonSize, dragIconTexture, [] {}
+            ));
+
+            // Placeholder button 2 (second position)
             numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
                 glm::vec3(-0.5f * topButtonSpacing, topButtonY, 0.01f), topButtonSize, whiteColor, []{}
             ));
-            // Placeholder button 2 (third position)
+            // Placeholder button 3 (third position)
             numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
                 glm::vec3(0.5f * topButtonSpacing, topButtonY, 0.01f), topButtonSize, whiteColor, []{}
             ));
@@ -491,6 +499,30 @@ namespace { // Anonymous namespace for helpers
                 numpad.AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>(keyStr, keyCenter, glm::vec2(keyTextHeight), callback));
             }
         }
+    }
+
+    unsigned int LoadTextureFromFile(const std::string& path) {
+        int width, height, channels;
+        stbi_set_flip_vertically_on_load(true);
+        unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 4);
+        if (data == nullptr) {
+            std::cerr << "Failed to load texture: " << path << std::endl;
+            return 0;
+        }
+
+        unsigned int textureID;
+        glGenTextures(1, &textureID);
+        glBindTexture(GL_TEXTURE_2D, textureID);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        stbi_image_free(data);
+        return textureID;
     }
 
 } // end anonymous namespace
@@ -651,8 +683,16 @@ int main(int argc, char* argv[]) {
     float leftMenuAlpha = 0.0f; // Moved from VRManager
     std::string g_newNumpadInput = "0";
 
+    // --- NEW: Load UI Icons ---
+    unsigned int dragIconTexture = 0;
+    std::string dragIconPath = "../../resources/drag_icon.png";
+    if (!std::filesystem::exists(dragIconPath)) {
+        dragIconPath = "../../../resources/drag_icon.png";
+    }
+    dragIconTexture = LoadTextureFromFile(dragIconPath);
+
     // --- NEW: Setup our VR panels using the new system ---
-    SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext);
+    SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture);
 
     // --- NEW: State for the import options dialog ---
     bool g_showImportOptionsPopup = false;

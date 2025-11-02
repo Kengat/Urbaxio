@@ -3,14 +3,20 @@
 #include "renderer.h"
 #include <glm/gtx/intersect.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/norm.hpp>
 
 namespace Urbaxio::UI {
 
 VRConfirmButtonWidget::VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, glm::vec3 color, std::function<void()> onClick)
-    : localPosition_(localPos), diameter_(diameter), color_(color), onClick_(onClick) {}
+    : localPosition_(localPos), diameter_(diameter), color_(color), textureId_(0), onClick_(onClick) {}
+
+VRConfirmButtonWidget::VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, unsigned int textureId, std::function<void()> onClick)
+    : localPosition_(localPos), diameter_(diameter), color_(1.0f), textureId_(textureId), onClick_(onClick) {}
 
 void VRConfirmButtonWidget::Update(const Ray& localRay, bool isClicked) {
-    // Click handling is now done in HandleClick
+    const float FADE_SPEED = 0.15f;
+    float targetAlpha = isHovered_ ? 1.0f : 0.0f;
+    hoverAlpha_ += (targetAlpha - hoverAlpha_) * FADE_SPEED;
 }
 
 void VRConfirmButtonWidget::HandleClick() {
@@ -32,9 +38,27 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
     glm::vec3 camFwd   = glm::normalize(glm::vec3(cameraWorld[2]));
     glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), worldPos) * glm::mat4(glm::mat3(camRight, camUp, camFwd)) * glm::scale(glm::mat4(1.0f), glm::vec3(scaledDiameter));
     
-    float aberration = isHovered_ ? 0.15f : 0.05f;
+    if (textureId_ != 0) {
+        renderer.RenderVRMenuWidget(view, projection, modelMatrix, glm::vec3(1.0f), 0.0f, alpha, glm::vec3(0.0f), glm::vec3(0.0f), textureId_);
+    } else {
+        float aberration = 0.05f + hoverAlpha_ * 0.10f;
 
-    renderer.RenderVRMenuWidget(view, projection, modelMatrix, color_, aberration, alpha, color_, color_);
+        glm::vec3 abColor1 = color_;
+        glm::vec3 abColor2 = color_;
+
+        const glm::vec3 greenColor(0.1f, 0.8f, 0.2f);
+        const glm::vec3 whiteColor(1.0f, 1.0f, 1.0f);
+
+        if (glm::distance2(color_, greenColor) < 0.01f) {
+            abColor1 = glm::vec3(0.55f, 1.00f, 0.18f);
+            abColor2 = glm::vec3(0.00f, 1.00f, 0.75f);
+        } else if (glm::distance2(color_, whiteColor) < 0.01f) {
+            abColor1 = glm::vec3(0.93f, 0.72f, 1.00f);
+            abColor2 = glm::vec3(0.7f, 0.9f, 1.0f);
+        }
+
+        renderer.RenderVRMenuWidget(view, projection, modelMatrix, color_, aberration, alpha, abColor1, abColor2);
+    }
 }
 
 HitResult VRConfirmButtonWidget::CheckIntersection(const Ray& localRay) {

@@ -7,7 +7,7 @@
 #include <iostream>
 #include <cstddef>
 
-#define STB_IMAGE_IMPLEMENTATION
+// #define STB_IMAGE_IMPLEMENTATION // This is now defined in main.cpp to avoid linker errors
 #include "stb_image.h"
 #include "json.hpp"
 
