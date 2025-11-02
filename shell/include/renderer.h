@@ -50,6 +50,7 @@ namespace Urbaxio {
         // Tools
         const SnapResult& currentSnap,
         ImDrawData* imguiDrawData,
+        bool showSnapMarker = true, // NEW: Control snap marker visibility
         // --- NEW for Previews ---
         uint64_t previewObjectId = 0,
         const glm::mat4& previewTransform = glm::mat4(1.0f),
@@ -73,6 +74,10 @@ namespace Urbaxio {
         void UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance);
         void UpdateAxesVBO(const glm::vec4& colorX, const glm::vec4& colorY, const glm::vec4& colorZ, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor);
         void RenderSelectionBox(const glm::vec2& start, const glm::vec2& end, int screenWidth, int screenHeight); // <-- NEW
+
+        // NEW: Preview Box for 3D selection
+        void UpdatePreviewBox(const glm::vec3& p1, const glm::vec3& p2, bool enabled);
+        void UpdateDragStartPoint(const glm::vec3& point, bool enabled);
         
         void RenderVRMenuWidget(
             const glm::mat4& view, const glm::mat4& projection,
@@ -100,6 +105,9 @@ namespace Urbaxio {
             const glm::vec3& color,
             bool unlit = false
         );
+
+        // Public wrapper to allow tools to draw snap-style markers
+        void RenderSnapMarker(const SnapResult& snap, const glm::mat4& view, const glm::mat4& proj, int viewportWidth, int viewportHeight);
 
         GLuint vrMenuWidgetShaderProgram = 0; // For menu spheres
         glm::mat4 vrMenuWidgetShaderProgram_viewMatrix_HACK = glm::mat4(1.0f);
@@ -135,6 +143,17 @@ namespace Urbaxio {
         GLuint previewLineVAO = 0, previewLineVBO = 0; bool previewLineEnabled = false;
         GLuint previewOutlineVAO = 0, previewOutlineVBO = 0; GLsizei previewOutlineVertexCount = 0; // <-- NEW for dashed outline
         GLuint selectionBoxVAO = 0, selectionBoxVBO = 0; // <-- NEW
+
+        // NEW: Preview Box Resources
+        GLuint previewBoxVAO = 0, previewBoxVBO = 0;
+        GLuint previewBoxEBO_triangles = 0, previewBoxEBO_lines = 0;
+        bool previewBoxEnabled = false;
+        GLsizei previewBoxTriangleIndexCount = 0;
+        GLsizei previewBoxLineIndexCount = 0;
+
+        // NEW: Drag start point marker
+        glm::vec3 dragStartPoint;
+        bool dragStartPointEnabled = false;
 
         // --- NEW: VR Pointer Resources ---
         GLuint vrPointerVAO = 0, vrPointerVBO = 0;
@@ -185,10 +204,12 @@ namespace Urbaxio {
         bool CreatePreviewLineResources();
         bool CreatePreviewOutlineResources();
         bool CreateSelectionBoxResources();
+        bool CreatePreviewBoxResources(); // <-- NEW
         bool CreateVRPointerResources(); // <-- NEW
         bool CreateGhostMeshResources(); // <-- NEW
         void Cleanup();
         void DrawSnapMarker(const SnapResult& snap, const glm::mat4& view, const glm::mat4& proj, int viewportWidth, int viewportHeight);
+        void DrawPointMarker(const glm::vec3& worldPoint, const glm::vec4& color, const glm::mat4& view, const glm::mat4& proj, int viewportWidth, int viewportHeight);
 
         const char* objectVertexShaderSource; const char* objectFragmentShaderSource;
         const char* simpleLineVertexShaderSource; const char* simpleLineFragmentShaderSource;

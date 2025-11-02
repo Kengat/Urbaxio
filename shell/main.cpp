@@ -51,6 +51,7 @@ extern "C" {
 
 #include "TextRenderer.h"
 #include "file_io.h"
+#include "snapping.h"
 #include <filesystem>
 // --- NEW: VR UI System includes ---
 #include "ui/IVRWidget.h"
@@ -671,6 +672,9 @@ int main(int argc, char* argv[]) {
     toolContext.selectedLineIDs = &selectedLineIDs;
     toolContext.hoveredObjId = &hoveredObjId;
     toolContext.hoveredFaceTriangleIndices = &hoveredFaceTriangleIndices;
+    if (vrManager) {
+        toolContext.worldTransform = &vrManager->GetWorldTransform();
+    }
     
     Urbaxio::Tools::ToolManager toolManager(toolContext);
 
@@ -1099,7 +1103,12 @@ int main(int argc, char* argv[]) {
                 }
 
                 // Update VR pointer with menu clipping
-                if (rightHand.isValid) {
+                auto* selectTool = (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) 
+                    ? static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool()) 
+                    : nullptr;
+
+                // Update VR pointer with menu clipping
+                if (rightHand.isValid && (!selectTool || !selectTool->IsVrDragging())) { // MODIFIED: Hide pointer ray while dragging
                     float rayLength = 100.0f;
                     glm::vec3 rayEnd = (vrSnap.snapped && vrSnap.type != Urbaxio::SnapType::GRID) 
                                        ? vrSnap.worldPoint 
@@ -1128,6 +1137,8 @@ int main(int argc, char* argv[]) {
                     }
                     
                     renderer.UpdateVRPointer(vrRayOrigin, rayEnd, true);
+                } else {
+                    renderer.UpdateVRPointer({}, {}, false); // Hide pointer if invalid or dragging
                 }
 
                     // --- NEW: Update and Render VR UI Manager ---
@@ -1323,11 +1334,20 @@ int main(int argc, char* argv[]) {
                         *toolContext.hoveredObjId, *toolContext.hoveredFaceTriangleIndices, hoverHighlightColor,
                         vrSnap,
                         nullptr, // No ImGui data for VR eyes
+                        !selectTool || !selectTool->IsVrDragging(), // MODIFIED: Hide snap marker if dragging a 3D selection box
                         previewObjId, glm::mat4(1.0f),
                         transformOverrides,
                         colorOverrides,
                         unlitOverrides
                     );
+                    
+                    // Draw a yellow dot at the start point when dragging
+                    if (selectTool && selectTool->IsVrDragging()) {
+                        glm::vec3 start, end;
+                        selectTool->GetVrDragBoxCorners(start, end);
+                        Urbaxio::SnapResult fakeSnap = {true, start, Urbaxio::SnapType::ENDPOINT};
+                        renderer.RenderSnapMarker(fakeSnap, view, projection, swapchain.width, swapchain.height);
+                    }
                     
                     // --- NEW: Render VR UI Manager ---
                     vruiManager.Render(renderer, textRenderer, view, projection);
@@ -1436,6 +1456,7 @@ int main(int argc, char* argv[]) {
                 hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor,
                 currentSnap, 
                 ImGui::GetDrawData(),
+                true, // showSnapMarker - always show for desktop
                 previewObjId, glm::mat4(1.0f), {}, {}, {});
 
             if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) {

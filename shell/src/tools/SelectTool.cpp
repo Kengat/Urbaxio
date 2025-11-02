@@ -4,6 +4,7 @@
 #include "cad_kernel/MeshBuffers.h"
 #include "camera.h"
 #include "snapping.h"
+#include "renderer.h"
 #include <SDL2/SDL.h>
 #include <glm/glm.hpp>
 #include <glm/gtx/norm.hpp> // <-- FIX: Include header for distance2 and length2
@@ -168,73 +169,33 @@ void SelectTool::Activate(const ToolContext& context) {
     lastClickedTriangleIndex = 0;
     isMouseDown = false;
     isDragging = false;
+    isVrTriggerDown = false;
+    isVrDragging = false;
+    vrTriggerDownTimestamp = 0;
 }
 
 void SelectTool::Deactivate() {
     isMouseDown = false;
     isDragging = false;
+    isVrTriggerDown = false;
+    isVrDragging = false;
     ITool::Deactivate();
 }
 
 void SelectTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
     // Check if a valid ray was passed (indicates VR path)
     if (glm::length2(rayDirection) > 1e-9) {
-        // --- NEW, SIMPLIFIED VR CLICK LOGIC ---
-        // This logic now completely trusts the snapping system's result (the pinpoint pointer)
-        if (!shift) {
-            *context.selectedObjId = 0;
-            context.selectedTriangleIndices->clear();
-            context.selectedLineIDs->clear();
-        }
+        isVrTriggerDown = true;
+        isVrDragging = false;
+        vrTriggerDownTimestamp = SDL_GetTicks();
+        vrClickSnapResult = lastSnapResult; // Save snap result for a potential quick click
 
-        if (lastSnapResult.snapped) {
-            SnapType type = lastSnapResult.type;
-
-            // --- Case 1: Snapped to a line-like entity ---
-            if (type == SnapType::ON_EDGE || type == SnapType::ENDPOINT || type == SnapType::MIDPOINT) {
-                uint64_t lineId = lastSnapResult.snappedEntityId;
-                if (lineId != 0) {
-                    if (shift) {
-                        if (context.selectedLineIDs->count(lineId)) {
-                            context.selectedLineIDs->erase(lineId);
-                        } else {
-                            context.selectedLineIDs->insert(lineId);
-                        }
-                    } else {
-                        *context.selectedLineIDs = {lineId};
-                    }
-                }
-            } 
-            // --- Case 2: Snapped to a face ---
-            else if (type == SnapType::ON_FACE) {
-                uint64_t hitObjectId = lastSnapResult.snappedEntityId;
-                size_t hitTriangleBaseIndex = lastSnapResult.snappedTriangleIndex;
-                Urbaxio::Engine::SceneObject* hitObject = context.scene->get_object_by_id(hitObjectId);
-                
-                if (hitObject) {
-                    std::vector<size_t> newFace = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex);
-                    
-                    if (shift) {
-                        if (*context.selectedObjId == hitObjectId || *context.selectedObjId == 0) {
-                            *context.selectedObjId = hitObjectId; // Ensure object is selected
-                            std::set<size_t> currentSelection(context.selectedTriangleIndices->begin(), context.selectedTriangleIndices->end());
-                            bool isAlreadySelected = !newFace.empty() && currentSelection.count(newFace[0]);
-                            
-                            if (isAlreadySelected) {
-                                for(size_t idx : newFace) currentSelection.erase(idx);
-                            } else {
-                                for(size_t idx : newFace) currentSelection.insert(idx);
-                            }
-                            context.selectedTriangleIndices->assign(currentSelection.begin(), currentSelection.end());
-                        }
-                        // If shift-selecting a face on a different object, we currently do nothing. This could be changed later.
-                    } else {
-                        *context.selectedObjId = hitObjectId;
-                        *context.selectedTriangleIndices = newFace;
-                    }
-                }
-            }
-        }
+        // --- NEW: Calculate start point without snapping and with scaling ---
+        const float VISUAL_DISTANCE = 0.2f; // 20cm visual distance from controller
+        float worldScale = context.worldTransform ? glm::length(glm::vec3((*context.worldTransform)[0])) : 1.0f;
+        float worldDistance = VISUAL_DISTANCE * worldScale;
+        vrDragStartPoint = rayOrigin + rayDirection * worldDistance;
+        vrDragEndPoint = vrDragStartPoint;
     } else {
         // --- DESKTOP CLICK/DRAG START LOGIC ---
         isMouseDown = true;
@@ -251,6 +212,61 @@ void SelectTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, 
 }
 
 void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
+    if (isVrDragging) {
+        // TODO: Future logic for 3D box selection will go here.
+        isVrTriggerDown = false;
+        isVrDragging = false;
+        return;
+    }
+
+    if (isVrTriggerDown) {
+        // This was a QUICK VR CLICK because the drag state was never initiated.
+        isVrTriggerDown = false;
+
+        // Perform single selection logic using the snap result we saved at MouseDown
+        if (!shift) {
+            *context.selectedObjId = 0;
+            context.selectedTriangleIndices->clear();
+            context.selectedLineIDs->clear();
+        }
+
+        if (vrClickSnapResult.snapped) {
+            SnapType type = vrClickSnapResult.type;
+
+            if (type == SnapType::ON_EDGE || type == SnapType::ENDPOINT || type == SnapType::MIDPOINT) {
+                uint64_t lineId = vrClickSnapResult.snappedEntityId;
+                if (lineId != 0) {
+                    if (shift) {
+                        if (context.selectedLineIDs->count(lineId)) context.selectedLineIDs->erase(lineId);
+                        else context.selectedLineIDs->insert(lineId);
+                    } else {
+                        *context.selectedLineIDs = {lineId};
+                    }
+                }
+            } else if (type == SnapType::ON_FACE) {
+                uint64_t hitObjectId = vrClickSnapResult.snappedEntityId;
+                Urbaxio::Engine::SceneObject* hitObject = context.scene->get_object_by_id(hitObjectId);
+                if (hitObject) {
+                    std::vector<size_t> newFace = FindCoplanarAdjacentTriangles(*hitObject, vrClickSnapResult.snappedTriangleIndex);
+                    if (shift) {
+                        if (*context.selectedObjId == hitObjectId || *context.selectedObjId == 0) {
+                            *context.selectedObjId = hitObjectId;
+                            std::set<size_t> currentSelection(context.selectedTriangleIndices->begin(), context.selectedTriangleIndices->end());
+                            bool isAlreadySelected = !newFace.empty() && currentSelection.count(newFace[0]);
+                            if (isAlreadySelected) for(size_t idx : newFace) currentSelection.erase(idx);
+                            else for(size_t idx : newFace) currentSelection.insert(idx);
+                            context.selectedTriangleIndices->assign(currentSelection.begin(), currentSelection.end());
+                        }
+                    } else {
+                        *context.selectedObjId = hitObjectId;
+                        *context.selectedTriangleIndices = newFace;
+                    }
+                }
+            }
+        }
+        return; // End of VR click logic
+    }
+    
     if (isDragging) {
         // --- It was a DRAG ---
         bool isCrossingSelection = currentDragCoords.x < dragStartCoords.x;
@@ -456,6 +472,45 @@ bool SelectTool::IsDragging() const {
 void SelectTool::GetDragRect(glm::vec2& outStart, glm::vec2& outCurrent) const {
     outStart = dragStartCoords;
     outCurrent = currentDragCoords;
+}
+
+void SelectTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
+    ITool::OnUpdate(snap); // Store lastSnapResult for quick clicks
+
+    if (isVrTriggerDown) {
+        // Check if we should transition to dragging state
+        if (!isVrDragging) {
+            const uint32_t VR_DRAG_DELAY_MS = 150;
+            if (SDL_GetTicks() - vrTriggerDownTimestamp > VR_DRAG_DELAY_MS) {
+                isVrDragging = true;
+            }
+        }
+        // Always update the end point while trigger is held down
+        // --- NEW: Calculate end point without snapping and with scaling ---
+        const float VISUAL_DISTANCE = 0.2f;
+        float worldScale = context.worldTransform ? glm::length(glm::vec3((*context.worldTransform)[0])) : 1.0f;
+        float worldDistance = VISUAL_DISTANCE * worldScale;
+        vrDragEndPoint = rayOrigin + rayDirection * worldDistance;
+    }
+}
+
+void SelectTool::RenderPreview(Renderer& renderer, const SnapResult& snap) {
+    if (isVrDragging) {
+        renderer.UpdatePreviewBox(vrDragStartPoint, vrDragEndPoint, true);
+        renderer.UpdateDragStartPoint(vrDragStartPoint, true);
+    } else {
+        renderer.UpdatePreviewBox({}, {}, false);
+        renderer.UpdateDragStartPoint({}, false);
+    }
+}
+
+bool SelectTool::IsVrDragging() const {
+    return isVrDragging;
+}
+
+void SelectTool::GetVrDragBoxCorners(glm::vec3& outStart, glm::vec3& outEnd) const {
+    outStart = vrDragStartPoint;
+    outEnd = vrDragEndPoint;
 }
 
 } // namespace Urbaxio::Tools 

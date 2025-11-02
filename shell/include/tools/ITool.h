@@ -50,6 +50,9 @@ struct ToolContext {
     bool* shiftDown = nullptr;
     bool* ctrlDown = nullptr;
     bool* isNumpadActive = nullptr;
+
+    // NEW: VR world transform for scale-aware calculations
+    const glm::mat4* worldTransform = nullptr;
 };
 
 // Interface for all interactive tools
