@@ -177,14 +177,76 @@ void SelectTool::Deactivate() {
 }
 
 void SelectTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
-    isMouseDown = true;
-    dragStartCoords = glm::vec2(mouseX, mouseY);
-    currentDragCoords = dragStartCoords;
-    
-    if (!shift) {
-        *context.selectedObjId = 0;
-        context.selectedTriangleIndices->clear();
-        context.selectedLineIDs->clear();
+    // Check if a valid ray was passed (indicates VR path)
+    if (glm::length2(rayDirection) > 1e-9) {
+        // --- NEW, SIMPLIFIED VR CLICK LOGIC ---
+        // This logic now completely trusts the snapping system's result (the pinpoint pointer)
+        if (!shift) {
+            *context.selectedObjId = 0;
+            context.selectedTriangleIndices->clear();
+            context.selectedLineIDs->clear();
+        }
+
+        if (lastSnapResult.snapped) {
+            SnapType type = lastSnapResult.type;
+
+            // --- Case 1: Snapped to a line-like entity ---
+            if (type == SnapType::ON_EDGE || type == SnapType::ENDPOINT || type == SnapType::MIDPOINT) {
+                uint64_t lineId = lastSnapResult.snappedEntityId;
+                if (lineId != 0) {
+                    if (shift) {
+                        if (context.selectedLineIDs->count(lineId)) {
+                            context.selectedLineIDs->erase(lineId);
+                        } else {
+                            context.selectedLineIDs->insert(lineId);
+                        }
+                    } else {
+                        *context.selectedLineIDs = {lineId};
+                    }
+                }
+            } 
+            // --- Case 2: Snapped to a face ---
+            else if (type == SnapType::ON_FACE) {
+                uint64_t hitObjectId = lastSnapResult.snappedEntityId;
+                size_t hitTriangleBaseIndex = lastSnapResult.snappedTriangleIndex;
+                Urbaxio::Engine::SceneObject* hitObject = context.scene->get_object_by_id(hitObjectId);
+                
+                if (hitObject) {
+                    std::vector<size_t> newFace = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex);
+                    
+                    if (shift) {
+                        if (*context.selectedObjId == hitObjectId || *context.selectedObjId == 0) {
+                            *context.selectedObjId = hitObjectId; // Ensure object is selected
+                            std::set<size_t> currentSelection(context.selectedTriangleIndices->begin(), context.selectedTriangleIndices->end());
+                            bool isAlreadySelected = !newFace.empty() && currentSelection.count(newFace[0]);
+                            
+                            if (isAlreadySelected) {
+                                for(size_t idx : newFace) currentSelection.erase(idx);
+                            } else {
+                                for(size_t idx : newFace) currentSelection.insert(idx);
+                            }
+                            context.selectedTriangleIndices->assign(currentSelection.begin(), currentSelection.end());
+                        }
+                        // If shift-selecting a face on a different object, we currently do nothing. This could be changed later.
+                    } else {
+                        *context.selectedObjId = hitObjectId;
+                        *context.selectedTriangleIndices = newFace;
+                    }
+                }
+            }
+        }
+    } else {
+        // --- DESKTOP CLICK/DRAG START LOGIC ---
+        isMouseDown = true;
+        isDragging = false; // Reset drag state
+        dragStartCoords = glm::vec2(mouseX, mouseY);
+        currentDragCoords = dragStartCoords;
+        
+        if (!shift) {
+            *context.selectedObjId = 0;
+            context.selectedTriangleIndices->clear();
+            context.selectedLineIDs->clear();
+        }
     }
 }
 

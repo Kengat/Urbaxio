@@ -193,6 +193,7 @@ SnapResult SnappingSystem::FindSnapPoint(
                     faceSnapCandidate.type = SnapType::ON_FACE;
                     faceSnapCandidate.worldPoint = rayOrigin + rayDirection * t;
                     faceSnapCandidate.snappedEntityId = obj->get_id();
+                    faceSnapCandidate.snappedTriangleIndex = i; // NEW
                     faceWasHit = true;
                 }
             }
@@ -374,6 +375,7 @@ SnapResult SnappingSystem::FindSnapPointFromRay(
                     faceSnapCandidate.snapped = true; faceSnapCandidate.type = SnapType::ON_FACE;
                     faceSnapCandidate.worldPoint = rayOrigin + rayDirection * t;
                     faceSnapCandidate.snappedEntityId = obj->get_id();
+                    faceSnapCandidate.snappedTriangleIndex = i; // NEW
                 }
             }
         }

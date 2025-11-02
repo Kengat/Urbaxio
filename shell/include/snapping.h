@@ -31,6 +31,7 @@ namespace Urbaxio {
         glm::vec3 worldPoint = glm::vec3(0.0f);
         SnapType type = SnapType::NONE;
         uint64_t snappedEntityId = 0; // The ID of the line or object snapped to
+        size_t snappedTriangleIndex = 0; // NEW: Index of the triangle for ON_FACE snaps
     };
 
     class SnappingSystem {

@@ -1271,8 +1271,8 @@ int main(int argc, char* argv[]) {
                     bool clickConsumed = vruiManager.HandleClick();
                     
                     if (!clickConsumed) {
-                            // If not interacting with UI, it's a world action
-                            toolManager.OnLeftMouseDown(0, 0, *toolContext.shiftDown, *toolContext.ctrlDown, vrRayOrigin, vrRayDirection);
+                        // If not interacting with UI, it's a world action for the current tool
+                        toolManager.OnLeftMouseDown(0, 0, shiftDown, ctrlDown, vrRayOrigin, vrRayDirection);
                     }
                 }
                 if (rightHand.triggerReleased) {
