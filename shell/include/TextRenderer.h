@@ -8,6 +8,8 @@
 
 namespace Urbaxio {
 
+enum class TextAlign { LEFT, CENTER };
+
 struct Glyph {
     int unicode = 0;
     float advance = 0.0f;
@@ -33,7 +35,8 @@ public:
     void AddTextOnPanel(const std::string& text,
                       const glm::vec3& localPosition,
                       const glm::vec4& color,
-                      float height);
+                      float height,
+                      TextAlign alignment = TextAlign::CENTER);
     void ClearPanelModelMatrix();
     void SetPanelModelMatrix(const glm::mat4& modelMatrix);
 

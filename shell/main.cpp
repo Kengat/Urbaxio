@@ -500,7 +500,7 @@ namespace { // Anonymous namespace for helpers
     }
 
     // --- NEW: Factory function to create the tool menu panel ---
-    void SetupToolMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, unsigned int dragIconTexture) {
+    void SetupToolMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, unsigned int dragIconTexture, unsigned int selectIcon, unsigned int lineIcon, unsigned int pushpullIcon, unsigned int moveIcon) {
         // 1. Define panel properties
         // Offset from the left controller's grip pose
         // Positioned to the right of the controller and tilted for easy viewing
@@ -524,25 +524,25 @@ namespace { // Anonymous namespace for helpers
         // 2. Add widgets (buttons) for each tool
         glm::vec3 textCenterPos = grabHandlePos - glm::vec3(0, buttonSpacing, 0);
         toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Select", textCenterPos, glm::vec2(panelWidth, buttonHeight), 
-            Urbaxio::Tools::ToolType::Select, toolManager,
+            selectIcon, Urbaxio::Tools::ToolType::Select, toolManager,
             [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Select); }
         ));
 
         glm::vec3 linePos = textCenterPos - glm::vec3(0, buttonSpacing, 0);
         toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Line", linePos, glm::vec2(panelWidth, buttonHeight),
-            Urbaxio::Tools::ToolType::Line, toolManager,
+            lineIcon, Urbaxio::Tools::ToolType::Line, toolManager,
             [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Line); }
         ));
 
         glm::vec3 pushPullPos = linePos - glm::vec3(0, buttonSpacing, 0);
         toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Push/Pull", pushPullPos, glm::vec2(panelWidth, buttonHeight),
-            Urbaxio::Tools::ToolType::PushPull, toolManager,
+            pushpullIcon, Urbaxio::Tools::ToolType::PushPull, toolManager,
             [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull); }
         ));
 
         glm::vec3 movePos = pushPullPos - glm::vec3(0, buttonSpacing, 0);
         toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Move", movePos, glm::vec2(panelWidth, buttonHeight),
-            Urbaxio::Tools::ToolType::Move, toolManager,
+            moveIcon, Urbaxio::Tools::ToolType::Move, toolManager,
             [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Move); }
         ));
     }
@@ -724,16 +724,22 @@ int main(int argc, char* argv[]) {
     std::string g_newNumpadInput = "0";
 
     // --- NEW: Load UI Icons ---
-    unsigned int dragIconTexture = 0;
-    std::string dragIconPath = "../../resources/drag_icon.png";
-    if (!std::filesystem::exists(dragIconPath)) {
-        dragIconPath = "../../../resources/drag_icon.png";
-    }
-    dragIconTexture = LoadTextureFromFile(dragIconPath);
+    auto load_icon = [](const std::string& name) -> unsigned int {
+        std::string path = "../../resources/" + name;
+        if (!std::filesystem::exists(path)) {
+            path = "../../../resources/" + name;
+        }
+        return LoadTextureFromFile(path);
+    };
+    unsigned int dragIconTexture = load_icon("drag_icon.png");
+    unsigned int selectIconTexture = load_icon("select_icon.png");
+    unsigned int lineIconTexture = load_icon("line_icon.png");
+    unsigned int pushpullIconTexture = load_icon("pushpull_icon.png");
+    unsigned int moveIconTexture = load_icon("move_icon.png");
 
     // --- NEW: Setup our VR panels using the new system ---
     SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture);
-    SetupToolMenuPanel(vruiManager, toolManager, dragIconTexture);
+    SetupToolMenuPanel(vruiManager, toolManager, dragIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture);
 
     // --- NEW: State for the import options dialog ---
     bool g_showImportOptionsPopup = false;

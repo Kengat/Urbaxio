@@ -1,5 +1,7 @@
 #pragma once
 
+#include <glad/glad.h> // Include for GLuint definition
+
 #include "ui/IVRWidget.h"
 
 #include "tools/ToolManager.h"
@@ -18,6 +20,7 @@ namespace Urbaxio::UI {
 class VRToolButtonWidget : public IVRWidget {
 public:
     VRToolButtonWidget(const std::string& text, const glm::vec3& localPos, const glm::vec2& size,
+                       GLuint textureId,
                        Urbaxio::Tools::ToolType toolType, Urbaxio::Tools::ToolManager& toolManager,
                        std::function<void()> onClick);
 
@@ -33,6 +36,7 @@ private:
     Urbaxio::Tools::ToolType toolType_;
     Urbaxio::Tools::ToolManager& toolManager_;
     std::function<void()> onClick_;
+    GLuint textureId_ = 0;
 
     float sphereHoverAlpha_ = 0.0f;
     float textHoverAlpha_ = 0.0f;

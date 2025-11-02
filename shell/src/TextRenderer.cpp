@@ -256,7 +256,8 @@ void TextRenderer::AddText(const std::string& text,
 void TextRenderer::AddTextOnPanel(const std::string& text,
                                 const glm::vec3& localPosition,
                                 const glm::vec4& color,
-                                float height)
+                                float height,
+                                TextAlign alignment)
 {
     float finalScale = height / lineHeight_;
     glm::vec3 right(1.0f, 0.0f, 0.0f); // Local X axis
@@ -269,7 +270,12 @@ void TextRenderer::AddTextOnPanel(const std::string& text,
             totalAdvance += it->second.advance;
         }
     }
-    float xCursor = -totalAdvance * 0.5f;
+    
+    float xCursor = 0.0f;
+    if (alignment == TextAlign::CENTER) {
+        xCursor = -totalAdvance * 0.5f;
+    }
+    // For TextAlign::LEFT, xCursor starts at 0.0f
 
     for (char ch : text) {
         int uc = (int)ch;
