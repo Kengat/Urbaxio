@@ -28,6 +28,9 @@ public:
     bool IsVisible() const;
     const std::string& GetName() const;
     
+    IVRWidget* GetHoveredWidget() const { return hoveredWidget_; }
+    IVRWidget* GetWidget(size_t index) const { return (index < widgets_.size()) ? widgets_[index].get() : nullptr; }
+    
     glm::mat4 transform;
     float alpha = 0.0f;
 
@@ -46,8 +49,6 @@ private:
     
     IVRWidget* hoveredWidget_ = nullptr;
     std::vector<std::unique_ptr<IVRWidget>> widgets_;
-    
-    glm::vec3 GetGrabHandleCenter();
 };
 
 }

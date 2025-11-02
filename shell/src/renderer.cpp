@@ -385,6 +385,7 @@ namespace Urbaxio {
             "uniform int u_shapeType; // 0 for circle, 1 for rounded rect\n"
             "uniform float u_rectCornerRadius;\n"
             "uniform vec2 u_rectSize;\n"
+            "uniform float u_panelAspectRatio;\n"
             "\n"
             "// SDF for a rounded box\n"
             "float sdRoundedBox( in vec2 p, in vec2 b, in float r )\n"
@@ -398,7 +399,12 @@ namespace Urbaxio {
             "void main() {\n"
             "    float dist;\n"
             "    if (u_shapeType == 1) { // Rounded Rect\n"
-            "        dist = sdRoundedBox(vUv, u_rectSize, u_rectCornerRadius);\n"
+            "        // Correct UVs and parameters for aspect ratio to prevent distortion\n"
+            "        vec2 p = vUv;\n"
+            "        p.x *= u_panelAspectRatio;\n"
+            "        vec2 b = u_rectSize;\n"
+            "        b.x *= u_panelAspectRatio;\n"
+            "        dist = sdRoundedBox(p, b, u_rectCornerRadius);\n"
             "    } else { // Circle\n"
             "        dist = length(vUv) - 0.5;\n"
             "    }\n"
@@ -1274,7 +1280,8 @@ namespace Urbaxio {
         const glm::mat4& view, const glm::mat4& projection,
         const glm::mat4& model,
         const glm::vec3& baseColor, float aberration, float globalAlpha,
-        const glm::vec3& aberrationColor1, const glm::vec3& aberrationColor2
+        const glm::vec3& aberrationColor1, const glm::vec3& aberrationColor2,
+        GLuint textureId
     ) {
         if (vrMenuWidgetShaderProgram == 0 || splatVAO == 0) return;
 
@@ -1284,41 +1291,21 @@ namespace Urbaxio {
         glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
         
+        if (textureId != 0) {
+            glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_useTexture"), 1);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, textureId);
+            glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_texture"), 0);
+        } else {
+            glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_useTexture"), 0);
+        }
+        
         glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 0); // 0 for circle
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(baseColor));
         glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), globalAlpha);
-        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_useTexture"), 0);
         glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationAmount"), aberration);
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationColor1"), 1, glm::value_ptr(aberrationColor1));
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationColor2"), 1, glm::value_ptr(aberrationColor2));
-        
-        glBindVertexArray(splatVAO);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-        glDepthMask(GL_TRUE);
-    }
-
-    void Renderer::RenderVRMenuWidget(
-        const glm::mat4& view, const glm::mat4& projection,
-        const glm::mat4& model,
-        const glm::vec3& baseColor, float aberration, float globalAlpha,
-        const glm::vec3& aberrationColor1, const glm::vec3& aberrationColor2,
-        unsigned int textureId
-    ) {
-        if (vrMenuWidgetShaderProgram == 0 || splatVAO == 0) return;
-
-        glm::mat4 finalView = (view == glm::mat4(1.0f)) ? vrMenuWidgetShaderProgram_viewMatrix_HACK : view;
-        glUseProgram(vrMenuWidgetShaderProgram);
-        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(finalView));
-        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
-        
-        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 0); // 0 for circle
-        glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(baseColor));
-        glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), globalAlpha);
-        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_useTexture"), 1);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, textureId);
-        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_texture"), 0);
         
         glBindVertexArray(splatVAO);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
@@ -1340,8 +1327,13 @@ namespace Urbaxio {
         glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 1); // 1 for rounded rect
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(color));
         glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), alpha);
+
+        // Get panel dimensions from its scale matrix to calculate aspect ratio
+        float width = glm::length(glm::vec3(model[0]));
+        float height = glm::length(glm::vec3(model[1]));
+        float aspect = (height > 1e-5) ? (width / height) : 1.0f;
+        glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_panelAspectRatio"), aspect);
         
-        // Size is from -0.5 to 0.5, so total size is 1.0.
         glUniform2f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_rectSize"), 0.5f, 0.5f);
         glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_rectCornerRadius"), cornerRadius);
         glBindVertexArray(splatVAO);

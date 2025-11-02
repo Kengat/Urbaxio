@@ -30,6 +30,8 @@ add_executable(Urbaxio
     src/ui/VRPanel.cpp
     src/ui/VRButtonWidget.cpp
     src/ui/VRConfirmButtonWidget.cpp
+    src/ui/VRMenuSphereWidget.cpp
+    src/ui/VRToolButtonWidget.cpp
     src/ui/VRDisplayWidget.cpp
     # Add ImGui backend implementation files directly to the compilation
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_sdl2.cpp"

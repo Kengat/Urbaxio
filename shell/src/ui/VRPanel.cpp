@@ -20,26 +20,6 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, bool
         transform = parentTransform * offsetTransform_;
     }
 
-    // --- GRAB HANDLE HOVER CHECK (copied from main.cpp) ---
-    glm::vec3 grabHandleCenter = GetGrabHandleCenter(); // Use helper
-
-    isHoveringGrabHandle = false;
-    float dist;
-    float grabHandleRadius = 0.012f * glm::length(glm::vec3(transform[0]));
-    if (glm::intersectRaySphere(worldRay.origin, worldRay.direction, grabHandleCenter, grabHandleRadius * grabHandleRadius, dist)) {
-        isHoveringGrabHandle = true;
-    }
-
-    const float FADE_SPEED = 0.15f;
-    float targetAlpha = isHoveringGrabHandle ? 1.0f : 0.0f;
-    grabHandleHoverAlpha_ += (targetAlpha - grabHandleHoverAlpha_) * FADE_SPEED;
-
-    if (isHoveringGrabHandle) {
-        if(hoveredWidget_) hoveredWidget_->SetHover(false);
-        hoveredWidget_ = nullptr;
-        return;
-    }
-
     glm::mat4 invTransform = glm::inverse(transform);
     Ray localRay;
     localRay.origin = invTransform * glm::vec4(worldRay.origin, 1.0f);
@@ -74,34 +54,19 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, bool
 
 void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection) {
     if (!isVisible_ || alpha < 0.01f) return;
+
+    // Render panel background
+    glm::mat4 backgroundModel = transform * glm::scale(glm::mat4(1.0f), glm::vec3(size_.x, size_.y, 1.0f));
+    renderer.RenderVRPanel(view, projection, backgroundModel, glm::vec3(0.43f, 0.65f, 0.82f), 0.1f, 0.25f * alpha);
     
-    // Grab Handle
-    float panelLocalScale = glm::length(glm::vec3(transform[0]));
-    float grabHandleRadius = 0.012f * panelLocalScale;
-    glm::vec3 grabHandleCenter = GetGrabHandleCenter();
-    
-    float aberration = 0.05f + grabHandleHoverAlpha_ * 0.10f;
-    glm::vec3 grabHandleBaseColor = glm::vec3(1.0f);
-    glm::vec3 grabHandleAbColor1 = glm::vec3(0.93f, 0.72f, 1.00f);
-    glm::vec3 grabHandleAbColor2 = glm::vec3(0.7f, 0.9f, 1.0f);
-
-    // Correct billboarding for grab handle
-    glm::mat4 cameraWorld = glm::inverse(view);
-    glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
-    glm::vec3 camUp    = glm::normalize(glm::vec3(cameraWorld[1]));
-    glm::vec3 camFwd   = glm::normalize(glm::vec3(cameraWorld[2]));
-
-    glm::mat4 grabHandleModel = glm::translate(glm::mat4(1.0f), grabHandleCenter) *
-                           glm::mat4(glm::mat3(camRight, camUp, camFwd)) *
-                           glm::scale(glm::mat4(1.0f), glm::vec3(grabHandleRadius * 2.0f));
-    renderer.RenderVRMenuWidget(view, projection, grabHandleModel, grabHandleBaseColor, aberration, alpha, grabHandleAbColor1, grabHandleAbColor2);
-
     textRenderer.SetPanelModelMatrix(transform);
 
     // Render all widgets on this panel
     for (auto& widget : widgets_) {
         widget->Render(renderer, textRenderer, transform, view, projection, alpha);
     }
+
+    textRenderer.Render(view, projection);
 }
 
 HitResult VRPanel::CheckIntersection(const Ray& worldRay, const glm::mat4& parentTransform) {
@@ -139,25 +104,11 @@ const std::string& VRPanel::GetName() const {
 }
 
 bool VRPanel::HandleClick() {
-    if (isHoveringGrabHandle) {
-        isGrabbing = true;
-        return true;
+    if (hoveredWidget_) { 
+        hoveredWidget_->HandleClick(); 
+        return true; 
     }
-    if (hoveredWidget_) { hoveredWidget_->HandleClick(); return true; }
     return false;
-}
-
-glm::vec3 VRPanel::GetGrabHandleCenter() {
-    float panelLocalScale = glm::length(glm::vec3(transform[0]));
-    glm::vec3 panelOrigin = glm::vec3(transform[3]);
-    glm::vec3 panelUp = glm::normalize(glm::vec3(transform[1]));
-    glm::vec3 panelRight = glm::normalize(glm::vec3(transform[0]));
-    float displayHeight = 0.05f * panelLocalScale;
-    glm::vec3 displayCenter = panelOrigin + panelUp * (0.06f * panelLocalScale);
-    float grabHandleRadius = 0.012f * panelLocalScale;
-    glm::vec3 baseTopPosition = displayCenter + panelUp * (displayHeight * 0.5f + grabHandleRadius + 0.01f * panelLocalScale);
-    float spacing = 0.04f * panelLocalScale;
-    return baseTopPosition + panelRight * (-1.5f * spacing);
 }
 
 }

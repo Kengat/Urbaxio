@@ -350,12 +350,14 @@ void TextRenderer::Render(const glm::mat4& view, const glm::mat4& projection) {
         glBindBuffer(GL_ARRAY_BUFFER, panel_vbo_);
         glBufferSubData(GL_ARRAY_BUFFER, 0, panelVertices_.size() * sizeof(PanelVertex), panelVertices_.data());
         glDrawArrays(GL_TRIANGLES, 0, (GLsizei)panelVertices_.size());
+
+        panelVertices_.clear(); // MODIFIED: Clear buffer immediately after drawing panel text
     }
 
     glEnable(GL_DEPTH_TEST);
     glBindVertexArray(0);
     vertices_.clear();
-    panelVertices_.clear();
+    // panelVertices_.clear(); // Already cleared above
 }
 
 } // namespace Urbaxio

@@ -56,6 +56,8 @@ extern "C" {
 #include "ui/IVRWidget.h"
 #include "ui/VRButtonWidget.h"
 #include "ui/VRConfirmButtonWidget.h"
+#include "ui/VRMenuSphereWidget.h"
+#include "ui/VRToolButtonWidget.h"
 #include "ui/VRDisplayWidget.h"
 #include "ui/VRUIManager.h"
 #include "ui/VRPanel.h"
@@ -428,10 +430,6 @@ namespace { // Anonymous namespace for helpers
             numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
                 glm::vec3(-0.5f * topButtonSpacing, topButtonY, 0.01f), topButtonSize, whiteColor, []{}
             ));
-            // Placeholder button 3 (third position)
-            numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
-                glm::vec3(0.5f * topButtonSpacing, topButtonY, 0.01f), topButtonSize, whiteColor, []{}
-            ));
 
             // Confirm button at the top (fourth position)
             auto confirmCallback = [&toolManager, &isNumpadActiveFlag, &numpadInputTarget, &toolContext]() {
@@ -499,6 +497,54 @@ namespace { // Anonymous namespace for helpers
                 numpad.AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>(keyStr, keyCenter, glm::vec2(keyTextHeight), callback));
             }
         }
+    }
+
+    // --- NEW: Factory function to create the tool menu panel ---
+    void SetupToolMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, unsigned int dragIconTexture) {
+        // 1. Define panel properties
+        // Offset from the left controller's grip pose
+        // Positioned to the right of the controller and tilted for easy viewing
+        glm::mat4 panelOffset = 
+            glm::translate(glm::mat4(1.0f), glm::vec3(0.1f, 0.0f, 0.0f)) * 
+            glm::rotate(glm::mat4(1.0f), glm::radians(-70.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+
+        float buttonHeight = 0.025f; // This now defines the sphere diameter
+        float buttonSpacing = 0.04f;
+        float panelWidth = buttonHeight * 1.2f; // Panel is just a bit wider than the spheres
+        float panelHeight = (5 * buttonSpacing); // Height for 4 buttons + 1 grab handle
+
+        auto& toolMenu = vruiManager.AddPanel("ToolMenu", glm::vec2(panelWidth, panelHeight), panelOffset);
+
+        // 1. Add Grab Handle widget at the top
+        glm::vec3 grabHandlePos(0.0f, (panelHeight / 2.0f) - (buttonSpacing * 0.5f), 0.01f);
+        toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
+            grabHandlePos, buttonHeight, dragIconTexture, [] {}
+        ));
+
+        // 2. Add widgets (buttons) for each tool
+        glm::vec3 textCenterPos = grabHandlePos - glm::vec3(0, buttonSpacing, 0);
+        toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Select", textCenterPos, glm::vec2(panelWidth, buttonHeight), 
+            Urbaxio::Tools::ToolType::Select, toolManager,
+            [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Select); }
+        ));
+
+        glm::vec3 linePos = textCenterPos - glm::vec3(0, buttonSpacing, 0);
+        toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Line", linePos, glm::vec2(panelWidth, buttonHeight),
+            Urbaxio::Tools::ToolType::Line, toolManager,
+            [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Line); }
+        ));
+
+        glm::vec3 pushPullPos = linePos - glm::vec3(0, buttonSpacing, 0);
+        toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Push/Pull", pushPullPos, glm::vec2(panelWidth, buttonHeight),
+            Urbaxio::Tools::ToolType::PushPull, toolManager,
+            [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull); }
+        ));
+
+        glm::vec3 movePos = pushPullPos - glm::vec3(0, buttonSpacing, 0);
+        toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Move", movePos, glm::vec2(panelWidth, buttonHeight),
+            Urbaxio::Tools::ToolType::Move, toolManager,
+            [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Move); }
+        ));
     }
 
     unsigned int LoadTextureFromFile(const std::string& path) {
@@ -668,11 +714,6 @@ int main(int argc, char* argv[]) {
         if(rightControllerVisual) rightControllerVisual->setExportable(false);
         }
     }
-    // --- VR menu interaction state ---
-    int hoveredToolIndex = -1;
-    std::vector<float> toolMenuAlphas;
-    Urbaxio::Engine::SceneObject* menuSphere = nullptr; // For rendering widgets
-
     // --- NEW: Live tuning variables for controller model offset, initialized with tuned values ---
     static glm::vec3 g_controllerOffsetTranslate(0.012f, 0.002f, 0.006f);
     static glm::vec3 g_controllerOffsetEuler(273.000f, 166.500f, 81.000f);
@@ -680,7 +721,6 @@ int main(int argc, char* argv[]) {
 
     // --- NEW: VR UI Manager ---
     Urbaxio::UI::VRUIManager vruiManager;
-    float leftMenuAlpha = 0.0f; // Moved from VRManager
     std::string g_newNumpadInput = "0";
 
     // --- NEW: Load UI Icons ---
@@ -693,6 +733,7 @@ int main(int argc, char* argv[]) {
 
     // --- NEW: Setup our VR panels using the new system ---
     SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture);
+    SetupToolMenuPanel(vruiManager, toolManager, dragIconTexture);
 
     // --- NEW: State for the import options dialog ---
     bool g_showImportOptionsPopup = false;
@@ -1057,33 +1098,20 @@ int main(int argc, char* argv[]) {
                     glm::vec3 rayEnd = (vrSnap.snapped && vrSnap.type != Urbaxio::SnapType::GRID) 
                                        ? vrSnap.worldPoint 
                                        : vrRayOrigin + vrRayDirection * rayLength;
-                    if (leftMenuAlpha > 0.01f && leftControllerVisual && leftHand.isValid) {
-                        float closestHit = std::numeric_limits<float>::max();
-                        // Use the UNSCALED transform for menu logic
-                        if (leftHand.isValid) {
-                            const glm::mat4& controllerTransform = leftControllerUnscaledTransform;
-                            float worldScale = glm::length(glm::vec3(vrManager->GetWorldTransform()[0]));
-                            glm::vec3 controllerRight = glm::normalize(glm::vec3(controllerTransform[0]));
-                            glm::quat menuTilt = glm::angleAxis(glm::radians(-70.0f), controllerRight);
-                            glm::vec3 menuUp = menuTilt * glm::normalize(glm::vec3(controllerTransform[1]));
-                            glm::vec3 menuStartPos = glm::vec3(controllerTransform[3]) + controllerRight * (0.1f * worldScale);
-                            float lineSpacing = 0.05f * worldScale;
-                            float sphereRadius = 0.02f * worldScale;
-                            for (size_t tool_idx = 0; tool_idx < 4; ++tool_idx) {
-                                glm::vec3 sphereCenter = menuStartPos - menuUp * (float)tool_idx * lineSpacing - controllerRight * (sphereRadius * 2.0f);
-                                float dist;
-                                if (glm::intersectRaySphere(vrRayOrigin, vrRayDirection, sphereCenter, sphereRadius * sphereRadius, dist) && dist < closestHit) {
-                                    closestHit = dist;
-                                }
+
+                    // NEW: Check intersection with ToolMenu panel
+                    if (auto* toolMenuPanel = vruiManager.GetPanel("ToolMenu")) {
+                        if (toolMenuPanel->alpha > 0.01f) {
+                            Urbaxio::UI::Ray testRay = {vrRayOrigin, vrRayDirection};
+                            Urbaxio::UI::HitResult panelHit = toolMenuPanel->CheckIntersection(testRay, leftControllerUnscaledTransform);
+                            if (panelHit.didHit && panelHit.distance < glm::distance(vrRayOrigin, rayEnd)) {
+                                rayEnd = vrRayOrigin + vrRayDirection * panelHit.distance;
                             }
-                         }
-                        if (closestHit < std::numeric_limits<float>::max() && closestHit < glm::distance(vrRayOrigin, rayEnd)) {
-                            rayEnd = vrRayOrigin + vrRayDirection * closestHit;
                         }
                     }
                     
                     // Check if pointer intersects with new numpad panel and shorten the ray
-                        if (auto* numpadPanel = vruiManager.GetPanel("NewNumpad")) {
+                    if (auto* numpadPanel = vruiManager.GetPanel("NewNumpad")) {
                         if (numpadPanel->alpha > 0.01f) {
                             Urbaxio::UI::Ray testRay = {vrRayOrigin, vrRayDirection};
                             Urbaxio::UI::HitResult panelHit = numpadPanel->CheckIntersection(testRay, leftControllerUnscaledTransform);
@@ -1101,9 +1129,38 @@ int main(int argc, char* argv[]) {
                     
                     vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked);
 
-                        // Handle grabbing for the new panel
+                    // --- NEW: Handle grabbing for the tool menu panel ---
+                    if (auto* toolMenuPanel = vruiManager.GetPanel("ToolMenu")) {
+                        // Check hover on the specific widget (grab handle is the first widget)
+                        bool isHoveringGrabHandle = toolMenuPanel->IsVisible() && toolMenuPanel->alpha > 0.01f && 
+                                                    vruiManager.GetHoveredPanel() == toolMenuPanel && 
+                                                    toolMenuPanel->GetHoveredWidget() == toolMenuPanel->GetWidget(0);
+
+                        if (rightHand.triggerClicked && isHoveringGrabHandle) {
+                            toolMenuPanel->isGrabbing = true;
+                            toolMenuPanel->grabbedInitialTransform = toolMenuPanel->transform;
+                            toolMenuPanel->grabbedControllerInitialTransform = rightControllerUnscaledTransform;
+                        }
+                        if (rightHand.triggerReleased && toolMenuPanel->isGrabbing) {
+                            toolMenuPanel->isGrabbing = false;
+                            toolMenuPanel->GetOffsetTransform() = glm::inverse(leftControllerUnscaledTransform) * toolMenuPanel->transform;
+                        }
+
+                        if(toolMenuPanel->isGrabbing && rightHand.isValid) {
+                            glm::mat4 deltaTransform = rightControllerUnscaledTransform * glm::inverse(toolMenuPanel->grabbedControllerInitialTransform);
+                            toolMenuPanel->transform = deltaTransform * toolMenuPanel->grabbedInitialTransform;
+                        }
+                    }
+
+                    // Handle grabbing for the new panel
                     if (auto* numpadPanel = vruiManager.GetPanel("NewNumpad")) {
-                        if (rightHand.triggerClicked && numpadPanel->isHoveringGrabHandle) {
+                        // MODIFIED: Use the same robust hover check as the tool menu
+                        // FIX: The grab handle on the numpad is the SECOND widget (index 1), not the first.
+                        bool isHoveringNumpadGrabHandle = numpadPanel->IsVisible() && numpadPanel->alpha > 0.01f && 
+                                                          vruiManager.GetHoveredPanel() == numpadPanel && 
+                                                          numpadPanel->GetHoveredWidget() == numpadPanel->GetWidget(1);
+
+                        if (rightHand.triggerClicked && isHoveringNumpadGrabHandle) {
                              numpadPanel->isGrabbing = true;
                              numpadPanel->grabbedInitialTransform = numpadPanel->transform;
                              numpadPanel->grabbedControllerInitialTransform = rightControllerUnscaledTransform;
@@ -1140,10 +1197,13 @@ int main(int argc, char* argv[]) {
                 bool isTriggerPressed = vrManager->rawLeftTriggerValue > 0.5f;
 
                 // Update tool menu alpha
-                if (isTriggerPressed) {
-                    leftMenuAlpha = std::min(1.0f, leftMenuAlpha + MENU_FADE_SPEED);
-                } else {
-                    leftMenuAlpha = std::max(0.0f, leftMenuAlpha - MENU_FADE_SPEED);
+                if (auto* toolMenuPanel = vruiManager.GetPanel("ToolMenu")) {
+                    if (isTriggerPressed) {
+                        toolMenuPanel->alpha = std::min(1.0f, toolMenuPanel->alpha + MENU_FADE_SPEED);
+                    } else {
+                        toolMenuPanel->alpha = std::max(0.0f, toolMenuPanel->alpha - MENU_FADE_SPEED);
+                    }
+                    toolMenuPanel->SetVisible(toolMenuPanel->alpha > 0.01f);
                 }
 
                 // Update numpad alpha, visibility, and display text
@@ -1263,152 +1323,6 @@ int main(int argc, char* argv[]) {
                         unlitOverrides
                     );
                     
-                    // --- Render VR Tool Menu ---
-                    if (leftMenuAlpha > 0.01f && leftControllerVisual && leftHand.isValid) {
-                        // Use the UNSCALED transform for menu logic
-                        if (leftHand.isValid) {
-                            const glm::mat4& controllerTransform = leftControllerUnscaledTransform;
-                            float worldScale = glm::length(glm::vec3(vrManager->GetWorldTransform()[0]));
-
-                            glm::vec3 controllerPos = glm::vec3(controllerTransform[3]);
-                            glm::vec3 controllerRight = glm::normalize(glm::vec3(controllerTransform[0]));
-                            glm::vec3 controllerUp = glm::normalize(glm::vec3(controllerTransform[1]));
-                            // Apply a -70-degree tilt around the RIGHT axis (tablet-like tilt)
-                            glm::quat menuTilt = glm::angleAxis(glm::radians(-70.0f), controllerRight);
-                            glm::vec3 menuUp = menuTilt * controllerUp;
-
-                            // Offset and spacing scale with worldScale to keep menu attached to the controller
-                            glm::vec3 menuStartPos = controllerPos + controllerRight * (0.1f * worldScale);
-                            float lineSpacing = 0.05f * worldScale;
-
-                            const std::vector<std::string> toolNames = {"Select", "Line", "Push/Pull", "Move"};
-                            if (toolMenuAlphas.size() != toolNames.size()) {
-                                toolMenuAlphas.assign(toolNames.size(), 0.0f);
-                            }
-
-                            // Ray-menu hit testing
-                            hoveredToolIndex = -1;
-                            float closestHit = std::numeric_limits<float>::max();
-                            float hitboxHeight = 0.04f * worldScale;
-                            float hitboxWidth = 0.1f * worldScale; // Reduced width to avoid overlap with numpad
-                            
-                            if (rightHand.isValid) {
-                                for (size_t tool_idx = 0; tool_idx < toolNames.size(); ++tool_idx) {
-                                    glm::vec3 itemTextPos = menuStartPos - menuUp * (float)tool_idx * lineSpacing;
-                                    
-                                    glm::vec3 p0 = itemTextPos - controllerRight * (hitboxWidth / 2.0f) + menuUp * (hitboxHeight / 2.0f);
-                                    glm::vec3 p1 = itemTextPos + controllerRight * (hitboxWidth / 2.0f) + menuUp * (hitboxHeight / 2.0f);
-                                    glm::vec3 p2 = itemTextPos + controllerRight * (hitboxWidth / 2.0f) - menuUp * (hitboxHeight / 2.0f);
-                                    glm::vec3 p3 = itemTextPos - controllerRight * (hitboxWidth / 2.0f) - menuUp * (hitboxHeight / 2.0f);
-                                    glm::vec2 baryPosition;
-                                    float dist1, dist2;
-                                    bool hit1 = glm::intersectRayTriangle(vrRayOrigin, vrRayDirection, p0, p1, p2, baryPosition, dist1);
-                                    bool hit2 = glm::intersectRayTriangle(vrRayOrigin, vrRayDirection, p0, p2, p3, baryPosition, dist2);
-                                    if ((hit1 && dist1 < closestHit) || (hit2 && dist2 < closestHit)) {
-                                        closestHit = hit1 ? dist1 : dist2;
-                                        hoveredToolIndex = static_cast<int>(tool_idx);
-                                    }
-                                }
-                            }
-
-                            // --- Tool Selection Logic ---
-                            if (rightHand.triggerClicked && hoveredToolIndex != -1) {
-                                Urbaxio::Tools::ToolType selectedToolType;
-                                switch (hoveredToolIndex) {
-                                    case 0: selectedToolType = Urbaxio::Tools::ToolType::Select; break;
-                                    case 1: selectedToolType = Urbaxio::Tools::ToolType::Line; break;
-                                    case 2: selectedToolType = Urbaxio::Tools::ToolType::PushPull; break;
-                                    case 3: selectedToolType = Urbaxio::Tools::ToolType::Move; break;
-                                    default: selectedToolType = Urbaxio::Tools::ToolType::Select; break;
-                                }
-                                toolManager.SetTool(selectedToolType);
-                            }
-
-                            const float HIGHLIGHT_FADE_SPEED = 0.15f;
-                            Urbaxio::Tools::ToolType activeToolType = toolManager.GetActiveToolType();
-                            for (size_t tool_idx = 0; tool_idx < toolNames.size(); ++tool_idx) {
-                                Urbaxio::Tools::ToolType toolType;
-                                switch (tool_idx) {
-                                    case 0: toolType = Urbaxio::Tools::ToolType::Select; break;
-                                    case 1: toolType = Urbaxio::Tools::ToolType::Line; break;
-                                    case 2: toolType = Urbaxio::Tools::ToolType::PushPull; break;
-                                    case 3: toolType = Urbaxio::Tools::ToolType::Move; break;
-                                    default: toolType = Urbaxio::Tools::ToolType::Select; break;
-                                }
-                                bool isSelected = activeToolType == toolType;
-                                bool isHovered = hoveredToolIndex == static_cast<int>(tool_idx);
-                                
-                                float targetAlpha = isHovered ? 1.0f : (isSelected ? 0.8f : 0.5f);
-                                toolMenuAlphas[tool_idx] += (targetAlpha - toolMenuAlphas[tool_idx]) * HIGHLIGHT_FADE_SPEED;
-                                glm::vec3 itemTextPos = menuStartPos - menuUp * (float)tool_idx * lineSpacing;
-
-                                // Render Sprite Widget (Quad)
-                                float widget_diameter_scaled = 0.03f * worldScale;
-                                glm::vec3 widgetCenter = itemTextPos - controllerRight * (widget_diameter_scaled * 0.75f + 0.01f * worldScale);
-                                
-                                // --- Build Model Matrix for the Billboard ---
-                                // 1. Get camera's world-space orientation vectors from the inverse view matrix.
-                                // These vectors are guaranteed to be orthogonal and define the camera's orientation.
-                                glm::mat4 cameraWorld = glm::inverse(view);
-                                glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
-                                glm::vec3 camUp    = glm::normalize(glm::vec3(cameraWorld[1]));
-                                glm::vec3 camFwd   = glm::normalize(glm::vec3(cameraWorld[2]));
-                                
-                                // 2. Construct the model matrix manually.
-                                // The rotation part aligns the widget with the camera, the scale part sizes it,
-                                // and the translation part positions it.
-                                glm::mat4 finalModel = glm::translate(glm::mat4(1.0f), widgetCenter) * // 3. Translate
-                                                       glm::mat4(glm::mat3(camRight, camUp, camFwd)) * // 2. Rotate to face camera
-                                                       glm::scale(glm::mat4(1.0f), glm::vec3(widget_diameter_scaled)); // 1. Scale
-                                // --- End Build Model Matrix ---
-                                
-                                // Define colors
-                                glm::vec3 selectedColor = glm::vec3(1.0f, 0.79f, 0.4f);
-                                glm::vec3 inactiveColor = glm::vec3(0.3f, 0.75f, 1.0f);
-                                
-                                // Define aberration colors
-                                glm::vec3 orange_aberration1 = glm::vec3(1.00f, 0.84f, 0.26f);
-                                glm::vec3 orange_aberration2 = glm::vec3(1.0f, 0.1f, 0.1f);
-                                glm::vec3 blue_aberration1 = glm::vec3(0.67f, 0.5f, 1.0f);
-                                glm::vec3 blue_aberration2 = glm::vec3(0.3f, 1.0f, 0.76f);
-                                
-                                // Smoothly interpolate all colors based on selection state
-                                float selectionFactor = isSelected ? 1.0f : 0.0f;
-                                glm::vec3 baseColor = glm::mix(inactiveColor, selectedColor, selectionFactor);
-                                glm::vec3 abColor1 = glm::mix(blue_aberration1, orange_aberration1, selectionFactor);
-                                glm::vec3 abColor2 = glm::mix(blue_aberration2, orange_aberration2, selectionFactor);
-                                
-                                // Aberration amount still animates on hover
-                                float aberration = toolMenuAlphas[tool_idx] * 0.11f;
-                                
-                                renderer.RenderVRMenuWidget(
-                                    view, projection,
-                                    finalModel,
-                                    baseColor, aberration, leftMenuAlpha,
-                                    abColor1, abColor2
-                                );
-                                
-                                // Render Text
-                                const float desiredPxHeight = 40.0f; 
-                                float viewportH = static_cast<float>(swapchain.height);
-                                const auto& fov = current_view.fov;
-                                float viewZ = -(view * glm::vec4(itemTextPos, 1.0f)).z;
-                                viewZ = std::max(0.1f, viewZ);
-                                float worldUnitsPerPixel = viewZ * (tanf(fov.angleUp) - tanf(fov.angleDown)) / viewportH;
-                                float textWorldSize = desiredPxHeight * worldUnitsPerPixel;
-                                float finalWorldHeight = textWorldSize * worldScale;
-
-                                textRenderer.AddText(
-                                    toolNames[tool_idx],
-                                    itemTextPos,
-                                    glm::vec4(1.0f, 1.0f, 1.0f, leftMenuAlpha * toolMenuAlphas[tool_idx]),
-                                    finalWorldHeight,
-                                    view
-                                );
-                            }
-                        }
-                    }
-
                     // --- NEW: Render VR UI Manager ---
                     vruiManager.Render(renderer, textRenderer, view, projection);
 
@@ -1439,7 +1353,8 @@ int main(int argc, char* argv[]) {
                         const float textOpacity = 0.7f;
                         textRenderer.AddText(distStr, midpoint_transformed, glm::vec4(1,1,1, vrManager->zoomTextAlpha * textOpacity), finalWorldHeight, view);
                     }
-                    textRenderer.Render(view, projection); // Now this renders ALL text (menu, numpad, distance)
+                    // MODIFIED: Render only the non-panel text (like distance text). Panel text is now rendered inside vruiManager.
+                    textRenderer.Render(view, projection);
 
                     glFinish();
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
