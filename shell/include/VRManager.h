@@ -118,6 +118,7 @@ public:
     float rawLeftTriggerValue = 0.0f;
     bool aButtonIsPressed = false;
     bool leftAButtonDoubleClicked = false;
+    float rightThumbstickY = 0.0f;
 
 private:
     bool initialized = false;
@@ -156,6 +157,7 @@ private:
     XrAction hapticAction_ = XR_NULL_HANDLE; // <-- NEW for haptics
     XrAction aButtonAction = XR_NULL_HANDLE;
     XrAction undoRedoActivationAction_ = XR_NULL_HANDLE; // <-- RENAMED from leftAButtonAction
+    XrAction thumbstickYAction_ = XR_NULL_HANDLE;
     // Internal state for double click detection
     bool leftAWasPressed = false;
     uint32_t leftALastPressTime = 0;

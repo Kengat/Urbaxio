@@ -28,6 +28,7 @@ public:
     // NEW: Public methods for VR 3D drag box
     bool IsVrDragging() const;
     void GetVrDragBoxCorners(glm::vec3& outStart, glm::vec3& outEnd) const;
+    float GetVrDragDistanceOffset() const;
 
 
 private:
@@ -49,6 +50,7 @@ private:
     SnapResult vrClickSnapResult; // Stores the snap result at the moment of the click
     glm::vec3 vrDragStartPoint;
     glm::vec3 vrDragEndPoint;
+    float vrDragDistanceOffset = 0.0f;
 };
 
 } // namespace Urbaxio::Tools 

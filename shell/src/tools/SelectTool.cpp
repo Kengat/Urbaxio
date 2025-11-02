@@ -172,6 +172,7 @@ void SelectTool::Activate(const ToolContext& context) {
     isVrTriggerDown = false;
     isVrDragging = false;
     vrTriggerDownTimestamp = 0;
+    vrDragDistanceOffset = 0.0f;
 }
 
 void SelectTool::Deactivate() {
@@ -190,12 +191,12 @@ void SelectTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, 
         vrTriggerDownTimestamp = SDL_GetTicks();
         vrClickSnapResult = lastSnapResult; // Save snap result for a potential quick click
 
-        // --- NEW: Calculate start point without snapping and with scaling ---
-        const float VISUAL_DISTANCE = 0.2f; // 20cm visual distance from controller
+        // --- CORRECTED LOGIC: Set the start point immediately on click ---
+        const float VISUAL_DISTANCE = 0.2f;
         float worldScale = context.worldTransform ? glm::length(glm::vec3((*context.worldTransform)[0])) : 1.0f;
-        float worldDistance = VISUAL_DISTANCE * worldScale;
+        float worldDistance = (VISUAL_DISTANCE + vrDragDistanceOffset) * worldScale;
         vrDragStartPoint = rayOrigin + rayDirection * worldDistance;
-        vrDragEndPoint = vrDragStartPoint;
+        vrDragEndPoint = vrDragStartPoint; // Start and end are the same initially
     } else {
         // --- DESKTOP CLICK/DRAG START LOGIC ---
         isMouseDown = true;
@@ -477,19 +478,49 @@ void SelectTool::GetDragRect(glm::vec2& outStart, glm::vec2& outCurrent) const {
 void SelectTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
     ITool::OnUpdate(snap); // Store lastSnapResult for quick clicks
 
+    // --- MODIFIED: Joystick logic is now always active for this tool ---
+    if (context.rightThumbstickY) {
+        float joyY = *context.rightThumbstickY;
+        if (std::abs(joyY) > 0.1f) { // Deadzone
+            // --- NEW: Non-linear speed calculation ---
+            const float BASE_JOYSTICK_SPEED = 0.01f;   // Speed when the point is at its base distance
+            const float ACCELERATION_FACTOR = 0.05f;   // How quickly speed increases with distance
+            const float MAX_DISTANCE_OFFSET = 100.0f;  // A far-away limit (100m)
+            const float VISUAL_DISTANCE = 0.2f;
+            const float MIN_DISTANCE_OFFSET = 0.01f - VISUAL_DISTANCE; // ~ -0.19m
+
+            // Speed is proportional to the current offset from the base distance
+            float dynamicSpeed = BASE_JOYSTICK_SPEED + std::abs(vrDragDistanceOffset) * ACCELERATION_FACTOR;
+
+            vrDragDistanceOffset += joyY * dynamicSpeed;
+
+            // Clamp the offset to prevent it from going too close or too far
+            vrDragDistanceOffset = std::clamp(vrDragDistanceOffset, MIN_DISTANCE_OFFSET, MAX_DISTANCE_OFFSET);
+        }
+    }
+
     if (isVrTriggerDown) {
         // Check if we should transition to dragging state
         if (!isVrDragging) {
             const uint32_t VR_DRAG_DELAY_MS = 150;
             if (SDL_GetTicks() - vrTriggerDownTimestamp > VR_DRAG_DELAY_MS) {
                 isVrDragging = true;
+                // The start point is already correctly set from OnLeftMouseDown
             }
         }
-        // Always update the end point while trigger is held down
-        // --- NEW: Calculate end point without snapping and with scaling ---
+        
+        // --- CORRECTED LOGIC: Always update only the end point while dragging or preparing to drag ---
         const float VISUAL_DISTANCE = 0.2f;
         float worldScale = context.worldTransform ? glm::length(glm::vec3((*context.worldTransform)[0])) : 1.0f;
-        float worldDistance = VISUAL_DISTANCE * worldScale;
+        float worldDistance = (VISUAL_DISTANCE + vrDragDistanceOffset) * worldScale;
+
+        // The check for positive distance is now implicitly handled by clamping the offset above
+        
+        // If we are NOT dragging yet, the end point just follows the ghost point
+        if (!isVrDragging) {
+            vrDragStartPoint = rayOrigin + rayDirection * worldDistance;
+        }
+        // Once we ARE dragging, vrDragStartPoint is fixed, and only vrDragEndPoint moves.
         vrDragEndPoint = rayOrigin + rayDirection * worldDistance;
     }
 }
@@ -511,6 +542,10 @@ bool SelectTool::IsVrDragging() const {
 void SelectTool::GetVrDragBoxCorners(glm::vec3& outStart, glm::vec3& outEnd) const {
     outStart = vrDragStartPoint;
     outEnd = vrDragEndPoint;
+}
+
+float SelectTool::GetVrDragDistanceOffset() const {
+    return vrDragDistanceOffset;
 }
 
 } // namespace Urbaxio::Tools 

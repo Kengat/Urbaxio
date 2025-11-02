@@ -674,6 +674,7 @@ int main(int argc, char* argv[]) {
     toolContext.hoveredFaceTriangleIndices = &hoveredFaceTriangleIndices;
     if (vrManager) {
         toolContext.worldTransform = &vrManager->GetWorldTransform();
+        toolContext.rightThumbstickY = &vrManager->rightThumbstickY;
     }
     
     Urbaxio::Tools::ToolManager toolManager(toolContext);
@@ -1322,6 +1323,10 @@ int main(int argc, char* argv[]) {
                     renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), *toolContext.selectedLineIDs, previewObjId, scene_ptr);
                     toolManager.RenderPreview(renderer, vrSnap);
                     
+                    auto* selectTool = (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) 
+                        ? static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool()) 
+                        : nullptr;
+                    
                     // Call the main render function BEFORE drawing UI elements like menus
                     renderer.RenderFrame(
                         swapchain.width, swapchain.height,
@@ -1341,12 +1346,28 @@ int main(int argc, char* argv[]) {
                         unlitOverrides
                     );
                     
-                    // Draw a yellow dot at the start point when dragging
-                    if (selectTool && selectTool->IsVrDragging()) {
+                    bool isJoystickActive = std::abs(vrManager->rightThumbstickY) > 0.1f;
+                    bool isDraggingBox = selectTool && selectTool->IsVrDragging();
+
+                    if (isDraggingBox) {
+                        // While dragging, draw a yellow dot at the END point to show where you are moving it.
                         glm::vec3 start, end;
                         selectTool->GetVrDragBoxCorners(start, end);
-                        Urbaxio::SnapResult fakeSnap = {true, start, Urbaxio::SnapType::ENDPOINT};
+                        Urbaxio::SnapResult fakeSnap = {true, end, Urbaxio::SnapType::ENDPOINT};
                         renderer.RenderSnapMarker(fakeSnap, view, projection, swapchain.width, swapchain.height);
+                    } else if (selectTool && isJoystickActive) {
+                        // When NOT dragging but adjusting distance, draw a yellow dot at the potential start/end point.
+                        const float VISUAL_DISTANCE = 0.2f;
+                        float worldScale = glm::length(glm::vec3(worldTransform[0]));
+                        float offset = selectTool->GetVrDragDistanceOffset();
+                        float worldDistance = (VISUAL_DISTANCE + offset) * worldScale;
+                        glm::vec3 ghostPoint = vrRayOrigin + vrRayDirection * worldDistance;
+                        
+                        Urbaxio::SnapResult fakeSnap = {true, ghostPoint, Urbaxio::SnapType::ENDPOINT};
+                        renderer.RenderSnapMarker(fakeSnap, view, projection, swapchain.width, swapchain.height);
+                    } else {
+                        // Default behavior: draw the regular snap marker.
+                        renderer.RenderSnapMarker(vrSnap, view, projection, swapchain.width, swapchain.height);
                     }
                     
                     // --- NEW: Render VR UI Manager ---

@@ -128,6 +128,7 @@ void VRManager::Shutdown() {
     if (controllerPoseAction != XR_NULL_HANDLE) xrDestroyAction(controllerPoseAction);
     if (aButtonAction != XR_NULL_HANDLE) xrDestroyAction(aButtonAction);
     if (undoRedoActivationAction_ != XR_NULL_HANDLE) xrDestroyAction(undoRedoActivationAction_);
+    if (thumbstickYAction_ != XR_NULL_HANDLE) xrDestroyAction(thumbstickYAction_);
     if (hapticAction_ != XR_NULL_HANDLE) xrDestroyAction(hapticAction_);
     if (triggerValueAction != XR_NULL_HANDLE) xrDestroyAction(triggerValueAction);
     if (squeezeValueAction != XR_NULL_HANDLE) xrDestroyAction(squeezeValueAction);
@@ -445,6 +446,15 @@ bool VRManager::CreateActions() {
         actionCI.subactionPaths = &leftHandPath;
         XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &undoRedoActivationAction_), "Failed to create undo/redo activation action");
     }
+    { // NEW: Scope for thumbstick Y action
+        XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
+        actionCI.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+        strcpy_s(actionCI.actionName, "thumbstick_y");
+        strcpy_s(actionCI.localizedActionName, "Thumbstick Y");
+        actionCI.countSubactionPaths = 1;
+        actionCI.subactionPaths = &rightHandPath;
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &thumbstickYAction_), "Failed to create thumbstick Y action");
+    }
     { // --- NEW: Scope for haptic feedback action ---
         XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
         actionCI.actionType = XR_ACTION_TYPE_VIBRATION_OUTPUT;
@@ -484,6 +494,10 @@ bool VRManager::CreateActions() {
         // Left X Button
         XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/input/x/click", &path), "Failed to get path");
         bindings.push_back({ undoRedoActivationAction_, path });
+
+        // NEW: Thumbstick Y
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/thumbstick/y", &path), "Failed to get path");
+        bindings.push_back({ thumbstickYAction_, path });
 
         // --- NEW: Haptic binding ---
         XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/output/haptic", &path), "Failed to get path");
@@ -735,6 +749,7 @@ void VRManager::PollActions() {
     };
     aButtonIsPressed = readBool(aButtonAction, rightHandPath);
     bool isUndoRedoHeld = readBool(undoRedoActivationAction_, leftHandPath);
+    rightThumbstickY = readFloat(thumbstickYAction_, rightHandPath);
 
     // --- Double Click Logic for Left A/X Button ---
     leftAButtonDoubleClicked = false;
