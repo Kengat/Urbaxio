@@ -15,7 +15,7 @@ class VRUIManager {
 public:
     VRUIManager();
 
-    VRPanel& AddPanel(const std::string& name, const glm::vec2& size, const glm::mat4& offsetTransform);
+    VRPanel& AddPanel(const std::string& name, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius = 0.1f);
     VRPanel* GetPanel(const std::string& name);
     VRPanel* GetHoveredPanel();
 

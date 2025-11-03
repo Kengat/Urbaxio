@@ -151,6 +151,10 @@ namespace Urbaxio {
         GLsizei previewBoxTriangleIndexCount = 0;
         GLsizei previewBoxLineIndexCount = 0;
 
+        // --- ADD THESE TWO LINES ---
+        GLuint panelOutlineVAO_ = 0;
+        GLuint panelOutlineVBO_ = 0;
+
         // NEW: Drag start point marker
         glm::vec3 dragStartPoint;
         bool dragStartPointEnabled = false;
@@ -207,6 +211,7 @@ namespace Urbaxio {
         bool CreatePreviewBoxResources(); // <-- NEW
         bool CreateVRPointerResources(); // <-- NEW
         bool CreateGhostMeshResources(); // <-- NEW
+        bool CreatePanelOutlineResources(); // <-- NEW
         void Cleanup();
         void DrawSnapMarker(const SnapResult& snap, const glm::mat4& view, const glm::mat4& proj, int viewportWidth, int viewportHeight);
         void DrawPointMarker(const glm::vec3& worldPoint, const glm::vec4& color, const glm::mat4& view, const glm::mat4& proj, int viewportWidth, int viewportHeight);

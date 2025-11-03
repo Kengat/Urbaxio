@@ -8,8 +8,8 @@
 
 namespace Urbaxio::UI {
 
-VRPanel::VRPanel(const std::string& name, const glm::vec2& size, const glm::mat4& offsetTransform)
-    : name_(name), size_(size), offsetTransform_(offsetTransform), hoveredWidget_(nullptr), isGrabbing(false), isHoveringGrabHandle(false) {}
+VRPanel::VRPanel(const std::string& name, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius)
+    : name_(name), size_(size), offsetTransform_(offsetTransform), cornerRadius_(cornerRadius), hoveredWidget_(nullptr), isGrabbing(false), isHoveringGrabHandle(false) {}
 
 void VRPanel::AddWidget(std::unique_ptr<IVRWidget> widget) {
     widgets_.push_back(std::move(widget));
@@ -57,7 +57,7 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
 
     // Render panel background
     glm::mat4 backgroundModel = transform * glm::scale(glm::mat4(1.0f), glm::vec3(size_.x, size_.y, 1.0f));
-    renderer.RenderVRPanel(view, projection, backgroundModel, glm::vec3(0.43f, 0.65f, 0.82f), 0.1f, 0.25f * alpha);
+    renderer.RenderVRPanel(view, projection, backgroundModel, glm::vec3(0.43f, 0.65f, 0.82f), cornerRadius_, 0.25f * alpha);
     
     textRenderer.SetPanelModelMatrix(transform);
 

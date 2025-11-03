@@ -7,8 +7,8 @@ namespace Urbaxio::UI {
 
 VRUIManager::VRUIManager() {}
 
-VRPanel& VRUIManager::AddPanel(const std::string& name, const glm::vec2& size, const glm::mat4& offsetTransform) {
-    auto [it, success] = panels_.try_emplace(name, name, size, offsetTransform);
+VRPanel& VRUIManager::AddPanel(const std::string& name, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius) {
+    auto [it, success] = panels_.try_emplace(name, name, size, offsetTransform, cornerRadius);
     return it->second;
 }
 

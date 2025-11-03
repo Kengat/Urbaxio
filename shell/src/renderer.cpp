@@ -397,28 +397,38 @@ namespace Urbaxio {
             "const float edgeSoftness = 0.4;\n"
             "\n"
             "void main() {\n"
-            "    float dist;\n"
-            "    if (u_shapeType == 1) { // Rounded Rect\n"
-            "        // Correct UVs and parameters for aspect ratio to prevent distortion\n"
+            "    if (u_shapeType == 1) { // Rounded Rect (Panel Background OR Display)\n"
+            "        // Correct UVs and parameters for aspect ratio\n"
             "        vec2 p = vUv;\n"
             "        p.x *= u_panelAspectRatio;\n"
             "        vec2 b = u_rectSize;\n"
             "        b.x *= u_panelAspectRatio;\n"
-            "        dist = sdRoundedBox(p, b, u_rectCornerRadius);\n"
-            "    } else { // Circle\n"
-            "        dist = length(vUv) - 0.5;\n"
-            "    }\n"
+            "        float clampedRadius = min(u_rectCornerRadius, min(b.x, b.y));\n"
+            "        float dist = sdRoundedBox(p, b, clampedRadius);\n"
             "\n"
-            "    // The rest of the logic can be simplified as it's not needed for the display panel\n"
-            "    float edgeSoftnessDisplay = 0.02;\n"
-            "    float alpha = 1.0 - smoothstep(-edgeSoftnessDisplay, edgeSoftnessDisplay, dist);\n"
+            "        float fill_mask = 1.0 - step(0.0, dist);\n"
+            "        \n"
+            "        vec4 final_output_color;\n"
+            "        bool isMainPanel = u_baseColor.g > 0.5;\n"
             "\n"
-            "    if (u_shapeType == 1) {\n"
-            "        FragColor = vec4(u_baseColor, alpha * u_globalAlpha);\n"
+            "        if (isMainPanel) {\n"
+            "            // --- FIX: Faster and correct fade ---\n"
+            "            // The pow(..., 12.0) makes the fade extremely sharp and close to the edge.\n"
+            "            float fade_distance = 0.4; // The fade will complete at this distance from the border.\n"
+            "            float fade_factor = pow(clamp(1.0 + dist / fade_distance, 0.0, 1.0), 12.0);\n"
+            "            \n"
+            "            final_output_color = vec4(u_baseColor, fill_mask * fade_factor);\n"
+            "        } else { // Display panel logic (unchanged)\n"
+            "            final_output_color = vec4(u_baseColor, fill_mask);\n"
+            "        }\n"
+            "\n"
+            "        FragColor = vec4(final_output_color.rgb, final_output_color.a * u_globalAlpha);\n"
             "        return;\n"
             "    }\n"
             "\n"
-            "    // --- NEW: Texture path for icons ---\n"
+            "    // --- Original logic for other shapes (circles, icons) ---\n"
+            "    float dist = length(vUv) - 0.5;\n"
+            "\n"
             "    if (u_useTexture) {\n"
             "        vec4 texColor = texture(u_texture, vUv + vec2(0.5));\n"
             "        float finalAlpha = (1.0 - smoothstep(-edgeSoftness, edgeSoftness, dist));\n"
@@ -447,7 +457,7 @@ namespace Urbaxio {
             "}\n";
     }
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreatePreviewBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateSplatResources()) return false; if (!CreateGhostMeshResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreatePreviewBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateSplatResources()) return false; if (!CreateGhostMeshResources()) return false; if (!CreatePanelOutlineResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
     
     void Renderer::RenderFrame(
@@ -1039,6 +1049,8 @@ namespace Urbaxio {
         if (ghostMeshVBO_normals != 0) { glDeleteBuffers(1, &ghostMeshVBO_normals); ghostMeshVBO_normals = 0; }
         if (ghostMeshEBO_triangles != 0) { glDeleteBuffers(1, &ghostMeshEBO_triangles); ghostMeshEBO_triangles = 0; }
         if (ghostMeshEBO_lines != 0) { glDeleteBuffers(1, &ghostMeshEBO_lines); ghostMeshEBO_lines = 0; }
+        if (panelOutlineVAO_ != 0) glDeleteVertexArrays(1, &panelOutlineVAO_); panelOutlineVAO_ = 0;
+        if (panelOutlineVBO_ != 0) glDeleteBuffers(1, &panelOutlineVBO_); panelOutlineVBO_ = 0;
         for (auto const& [shape, vao] : markerVAOs) { if (vao != 0) glDeleteVertexArrays(1, &vao); } markerVAOs.clear();
         for (auto const& [shape, vbo] : markerVBOs) { if (vbo != 0) glDeleteBuffers(1, &vbo); } markerVBOs.clear();
         markerVertexCounts.clear();
@@ -1438,28 +1450,100 @@ namespace Urbaxio {
         const glm::mat4& model,
         const glm::vec3& color, float cornerRadius, float alpha
     ) {
-        if (vrMenuWidgetShaderProgram == 0 || splatVAO == 0) return;
-        glDepthMask(GL_FALSE);
-        glUseProgram(vrMenuWidgetShaderProgram);
-        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
-        
-        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 1); // 1 for rounded rect
-        glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(color));
-        glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), alpha);
+        if (alpha < 0.01f) return;
 
-        // Get panel dimensions from its scale matrix to calculate aspect ratio
-        float width = glm::length(glm::vec3(model[0]));
-        float height = glm::length(glm::vec3(model[1]));
-        float aspect = (height > 1e-5) ? (width / height) : 1.0f;
-        glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_panelAspectRatio"), aspect);
-        
-        glUniform2f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_rectSize"), 0.5f, 0.5f);
-        glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_rectCornerRadius"), cornerRadius);
-        glBindVertexArray(splatVAO);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-        glDepthMask(GL_TRUE);
+        // --- 1. RENDER PANEL FILL (using the SDF shader) ---
+        if (vrMenuWidgetShaderProgram != 0 && splatVAO != 0) {
+            glDepthMask(GL_FALSE);
+            glUseProgram(vrMenuWidgetShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+            
+            glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 1);
+            glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(color));
+            glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), alpha);
+
+            float width = glm::length(glm::vec3(model[0]));
+            float height = glm::length(glm::vec3(model[1]));
+            float aspect = (height > 1e-5) ? (width / height) : 1.0f;
+            glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_panelAspectRatio"), aspect);
+            
+            glUniform2f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_rectSize"), 0.5f, 0.5f);
+            glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_rectCornerRadius"), cornerRadius);
+            
+            glBindVertexArray(splatVAO);
+            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+            glDepthMask(GL_TRUE);
+        }
+
+        // --- 2. RENDER PANEL OUTLINE (using real GL_LINES) ---
+        // FIX: This section is completely rewritten to perfectly match the shader's logic.
+        bool isMainPanel = color.g > 0.5f;
+        if (isMainPanel && simpleLineShaderProgram != 0 && panelOutlineVAO_ != 0) {
+            std::vector<float> vertices;
+            glm::vec4 outlineColor(1.0f, 1.0f, 1.0f, 0.5f);
+            const int corner_segments = 8;
+            
+            // --- START FIX ---
+            // Replicate the exact same dimension and radius calculations as the fragment shader.
+            float width = glm::length(glm::vec3(model[0]));
+            float height = glm::length(glm::vec3(model[1]));
+            float aspect = (height > 1e-5) ? (width / height) : 1.0f;
+
+            // Dimensions in the shader's internal stretched space
+            float w_stretched = 0.5f * aspect;
+            float h_stretched = 0.5f;
+            
+            // Clamped radius, same as in the shader
+            float r = std::min(cornerRadius, std::min(w_stretched, h_stretched));
+
+            // Helper to generate a vertex. It creates a point in the stretched space
+            // and then transforms it back into the local model space of the quad (from -0.5 to 0.5).
+            auto add_vert = [&](const glm::vec3& p) {
+                vertices.insert(vertices.end(), {p.x, p.y, p.z, outlineColor.r, outlineColor.g, outlineColor.b, outlineColor.a});
+            };
+            // --- END FIX ---
+
+            // Generate vertices for the line loop using the corrected dimensions
+            // Top-right corner
+            for (int i = 0; i <= corner_segments; ++i) {
+                float angle = glm::pi<float>() / 2.0f * (float)i / (float)corner_segments;
+                add_vert({ ((w_stretched - r) + r * cos(angle)) / aspect, (h_stretched - r) + r * sin(angle), 0.0f });
+            }
+            // Top-left corner
+            for (int i = 0; i <= corner_segments; ++i) {
+                float angle = glm::pi<float>() / 2.0f + (glm::pi<float>() / 2.0f * (float)i / (float)corner_segments);
+                add_vert({ (-(w_stretched - r) + r * cos(angle)) / aspect, (h_stretched - r) + r * sin(angle), 0.0f });
+            }
+            // Bottom-left corner
+            for (int i = 0; i <= corner_segments; ++i) {
+                float angle = glm::pi<float>() + (glm::pi<float>() / 2.0f * (float)i / (float)corner_segments);
+                add_vert({ (-(w_stretched - r) + r * cos(angle)) / aspect, -(h_stretched - r) + r * sin(angle), 0.0f });
+            }
+            // Bottom-right corner
+            for (int i = 0; i <= corner_segments; ++i) {
+                float angle = 3.0f * glm::pi<float>() / 2.0f + (glm::pi<float>() / 2.0f * (float)i / (float)corner_segments);
+                add_vert({ ((w_stretched - r) + r * cos(angle)) / aspect, -(h_stretched - r) + r * sin(angle), 0.0f });
+            }
+
+            // Upload and draw
+            glDepthMask(GL_FALSE);
+            glLineWidth(1.5f);
+            glUseProgram(simpleLineShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+            
+            glBindVertexArray(panelOutlineVAO_);
+            glBindBuffer(GL_ARRAY_BUFFER, panelOutlineVBO_);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(float), vertices.data());
+            glDrawArrays(GL_LINE_LOOP, 0, vertices.size() / 7);
+
+            glBindVertexArray(0);
+            glLineWidth(1.0f);
+            glDepthMask(GL_TRUE);
+        }
     }
 
     bool Renderer::CreateGhostMeshResources() {
@@ -1512,6 +1596,24 @@ namespace Urbaxio {
 
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    }
+
+    bool Renderer::CreatePanelOutlineResources() {
+        glGenVertexArrays(1, &panelOutlineVAO_);
+        glGenBuffers(1, &panelOutlineVBO_);
+        glBindVertexArray(panelOutlineVAO_);
+        glBindBuffer(GL_ARRAY_BUFFER, panelOutlineVBO_);
+        // Allocate a buffer for a rounded rect outline (e.g., 4 corners * 8 segments + 4 straight segments = 36 vertices max)
+        glBufferData(GL_ARRAY_BUFFER, 100 * 7 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+        // Position attribute
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        // Color attribute
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glBindVertexArray(0);
+        std::cout << "Renderer: Panel Outline VAO/VBO created." << std::endl;
+        return panelOutlineVAO_ != 0 && panelOutlineVBO_ != 0;
     }
 
     void Renderer::ClearGhostMesh() {

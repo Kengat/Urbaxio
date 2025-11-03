@@ -16,7 +16,7 @@ namespace Urbaxio::UI {
 
 class VRPanel {
 public:
-    VRPanel(const std::string& name, const glm::vec2& size, const glm::mat4& offsetTransform);
+    VRPanel(const std::string& name, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius = 0.1f);
 
     void AddWidget(std::unique_ptr<IVRWidget> widget);
     void Update(const Ray& worldRay, const glm::mat4& parentTransform, bool isClicked);
@@ -46,6 +46,7 @@ private:
     glm::vec2 size_;
     glm::mat4 offsetTransform_;
     bool isVisible_ = true;
+    float cornerRadius_;
     
     IVRWidget* hoveredWidget_ = nullptr;
     std::vector<std::unique_ptr<IVRWidget>> widgets_;

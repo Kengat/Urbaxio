@@ -514,7 +514,7 @@ namespace { // Anonymous namespace for helpers
         float panelWidth = buttonHeight * 1.2f; // Panel is just a bit wider than the spheres
         float panelHeight = (5 * buttonSpacing); // Height for 4 buttons + 1 grab handle
 
-        auto& toolMenu = vruiManager.AddPanel("ToolMenu", glm::vec2(panelWidth, panelHeight), panelOffset);
+        auto& toolMenu = vruiManager.AddPanel("ToolMenu", glm::vec2(panelWidth, panelHeight), panelOffset, 0.5f);
 
         // 1. Add Grab Handle widget at the top
         glm::vec3 grabHandlePos(0.0f, (panelHeight / 2.0f) - (buttonSpacing * 0.5f), 0.01f);
