@@ -112,6 +112,81 @@ namespace { // Anonymous namespace for helpers
         return glm::mix(glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 1.0f, 1.0f), std::clamp(t, 0.0f, 1.0f));
     }
 
+    // Holds pointers to all SceneObjects that make up a single controller's visual representation.
+    struct ControllerVisuals {
+        Urbaxio::Engine::SceneObject* mainBody = nullptr;
+        Urbaxio::Engine::SceneObject* joystick = nullptr;
+        Urbaxio::Engine::SceneObject* triggerButton = nullptr;
+        Urbaxio::Engine::SceneObject* grabButton = nullptr;
+        Urbaxio::Engine::SceneObject* menuButton = nullptr;
+        Urbaxio::Engine::SceneObject* buttonAX = nullptr;
+        Urbaxio::Engine::SceneObject* buttonBY = nullptr;
+        Urbaxio::Engine::SceneObject* panel = nullptr;
+        Urbaxio::Engine::SceneObject* upperDisk = nullptr;
+        Urbaxio::Engine::SceneObject* middleDisk = nullptr;
+        Urbaxio::Engine::SceneObject* lowerDisk = nullptr;
+
+        // Helper to get all valid part pointers for easier iteration
+        std::vector<Urbaxio::Engine::SceneObject*> GetAllParts() const {
+            std::vector<Urbaxio::Engine::SceneObject*> parts;
+            // A macro to reduce boilerplate
+            #define ADD_PART(p) if (p) parts.push_back(p)
+            ADD_PART(mainBody);
+            ADD_PART(joystick);
+            ADD_PART(triggerButton);
+            ADD_PART(grabButton);
+            ADD_PART(menuButton);
+            ADD_PART(buttonAX);
+            ADD_PART(buttonBY);
+            ADD_PART(panel);
+            ADD_PART(upperDisk);
+            ADD_PART(middleDisk);
+            ADD_PART(lowerDisk);
+            #undef ADD_PART
+            return parts;
+        }
+    };
+
+    // Helper function to load all OBJ parts for a single controller and create SceneObjects
+    void CreateControllerPartObjects(Urbaxio::Engine::Scene* scene, ControllerVisuals& visuals, const std::string& handPrefix) {
+        if (!scene) return;
+        
+        // Map internal names to file names and struct members
+        const std::map<std::string, std::pair<std::string, Urbaxio::Engine::SceneObject**>> partMap = {
+            { "mainBody",     { "controller_mainBody.obj",        &visuals.mainBody } },
+            { "joystick",     { "controller_joystick.obj",        &visuals.joystick } },
+            { "button_trigger", { "controller_button_trigger.obj",  &visuals.triggerButton } },
+            { "button_grab",  { "controller_button_grab.obj",     &visuals.grabButton } },
+            { "button_menu",  { "controller_button_menu.obj",     &visuals.menuButton } },
+            { "button_AX",    { "controller_button_AX.obj",       &visuals.buttonAX } },
+            { "button_BY",    { "controller_button_BY.obj",       &visuals.buttonBY } },
+            { "panel",        { "controller_panel.obj",           &visuals.panel } },
+            { "upper_disk",   { "controller_upper_disk.obj",      &visuals.upperDisk } },
+            { "middle_disk",  { "controller_middle_disk.obj",     &visuals.middleDisk } },
+            { "lower_disk",   { "controller_lower_disk.obj",     &visuals.lowerDisk } },
+        };
+
+        for (const auto& [name, data] : partMap) {
+            std::string objPath = "../../resources/" + data.first;
+            if (!std::filesystem::exists(objPath)) {
+                objPath = "../../../resources/" + data.first;
+            }
+
+            Urbaxio::CadKernel::MeshBuffers partMesh = Urbaxio::FileIO::LoadMeshFromObj(objPath);
+            if (!partMesh.isEmpty()) {
+                std::string objectName = handPrefix + "_" + name;
+                Urbaxio::Engine::SceneObject* newPart = scene->create_object(objectName);
+                if (newPart) {
+                    newPart->set_mesh_buffers(partMesh);
+                    newPart->setExportable(false);
+                    *(data.second) = newPart; // Assign the created object pointer to the struct member
+                }
+            } else {
+                std::cerr << "Shell Warning: Could not load controller part model from " << objPath << std::endl;
+            }
+        }
+    }
+
     // --- IcoSphere moved from engine_main to be a shell responsibility ---
     // Helper function for icosphere subdivision
     int get_middle_point(int p1, int p2, std::map<long long, int>& middlePointIndexCache, std::vector<glm::vec3>& vertices, float radius) {
@@ -650,36 +725,12 @@ int main(int argc, char* argv[]) {
     RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
 
     // --- NEW: Create VR Controller Visuals ---
-    Urbaxio::Engine::SceneObject* leftControllerVisual = nullptr;
-    Urbaxio::Engine::SceneObject* rightControllerVisual = nullptr;
+    ControllerVisuals leftController;
+    ControllerVisuals rightController;
     if (vr_mode) {
-        // --- NEW: Load controller model from OBJ instead of creating cubes ---
-        std::string controllerObjPath = "../../resources/controller.obj";
-        if (!std::filesystem::exists(controllerObjPath)) {
-            controllerObjPath = "../../../resources/controller.obj";
-        }
-        Urbaxio::CadKernel::MeshBuffers controllerMesh = Urbaxio::FileIO::LoadMeshFromObj(controllerObjPath);
-
-        if (!controllerMesh.isEmpty()) {
-            leftControllerVisual = scene_ptr->create_object("LeftControllerVisual");
-            if (leftControllerVisual) {
-                leftControllerVisual->set_mesh_buffers(controllerMesh); // Makes a copy
-                leftControllerVisual->setExportable(false);
-            }
-            rightControllerVisual = scene_ptr->create_object("RightControllerVisual");
-            if (rightControllerVisual) {
-                rightControllerVisual->set_mesh_buffers(controllerMesh); // Makes another copy
-                rightControllerVisual->setExportable(false);
-            }
-            std::cout << "Shell: Successfully loaded controller model." << std::endl;
-        } else {
-            std::cerr << "Shell Warning: Could not load controller model from " << controllerObjPath 
-                      << ". Falling back to cubes." << std::endl;
-        leftControllerVisual = scene_ptr->create_box_object("LeftControllerVisual", 1.0, 1.0, 1.0);
-        if(leftControllerVisual) leftControllerVisual->setExportable(false);
-        rightControllerVisual = scene_ptr->create_box_object("RightControllerVisual", 1.0, 1.0, 1.0);
-        if(rightControllerVisual) rightControllerVisual->setExportable(false);
-        }
+        CreateControllerPartObjects(scene_ptr, leftController, "Left");
+        CreateControllerPartObjects(scene_ptr, rightController, "Right");
+        std::cout << "Shell: Successfully loaded multi-part controller models." << std::endl;
     }
     // --- NEW: Live tuning variables for controller model offset, initialized with tuned values ---
     static glm::vec3 g_controllerOffsetTranslate(0.012f, 0.002f, 0.006f);
@@ -992,7 +1043,7 @@ int main(int argc, char* argv[]) {
                 }
 
 
-                shiftDown = vrManager->aButtonIsPressed;
+                shiftDown = vrManager->rightAButtonIsPressed;
                 ctrlDown = false;
                 // Prepare VR snap for this frame (used per-eye)
                 Urbaxio::SnapResult vrSnap; vrSnap.snapped = false;
@@ -1033,36 +1084,76 @@ int main(int argc, char* argv[]) {
                 glm::mat4 leftControllerUnscaledTransform(1.0f);
                 glm::mat4 rightControllerUnscaledTransform(1.0f);
 
-                if (leftHand.isValid && leftControllerVisual) {
+                // --- NEW: Define all controller colors ---
+                const glm::vec3 mainBodyColor(0.11f, 0.11f, 0.11f);
+                const glm::vec3 upperDiskColor = mainBodyColor + 0.04f;
+                const glm::vec3 middleDiskColor = upperDiskColor + 0.04f;
+                const glm::vec3 lowerDiskColor = middleDiskColor + 0.04f;
+                
+                // --- FIX: Panel inactive color is now same as lower disk ---
+                const glm::vec3 panelInactiveColor = lowerDiskColor;
+                const glm::vec3 buttonInactiveColor = mainBodyColor;
+
+                const glm::vec3 buttonActivatedColor(0.89f, 0.96f, 0.99f);
+
+                // --- PROCESS LEFT CONTROLLER ---
+                if (leftHand.isValid) {
                     glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(leftHand.pose);
                     leftControllerUnscaledTransform = worldTransform * rawPoseMatrix;
-
-                    // Build the mirrored local transform for the left hand
-                    glm::mat4 localOffset =
-                        glm::translate(glm::mat4(1.0f), g_controllerOffsetTranslate * glm::vec3(-1, 1, 1)) *
-                        glm::mat4_cast(glm::quat(glm::radians(g_controllerOffsetEuler * glm::vec3(1, -1, -1))));
-
+                    glm::mat4 localOffset = glm::translate(glm::mat4(1.0f), g_controllerOffsetTranslate * glm::vec3(-1, 1, 1)) * glm::mat4_cast(glm::quat(glm::radians(g_controllerOffsetEuler * glm::vec3(1, -1, -1))));
                     glm::mat4 scaleMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(-g_controllerModelScale, g_controllerModelScale, g_controllerModelScale));
-                    transformOverrides[leftControllerVisual->get_id()] = leftControllerUnscaledTransform * localOffset * scaleMatrix;
-
-                    colorOverrides[leftControllerVisual->get_id()] = MixColorFromPress(leftHand.pressValue);
-                    unlitOverrides[leftControllerVisual->get_id()] = true;
+                    glm::mat4 finalPartTransform = leftControllerUnscaledTransform * localOffset * scaleMatrix;
+                    
+                    for (auto* part : leftController.GetAllParts()) {
+                        transformOverrides[part->get_id()] = finalPartTransform;
+                        unlitOverrides[part->get_id()] = true;
+                    }
+                    
+                    // Set base colors
+                    if (leftController.mainBody)    colorOverrides[leftController.mainBody->get_id()] = mainBodyColor;
+                    if (leftController.upperDisk)   colorOverrides[leftController.upperDisk->get_id()] = upperDiskColor;
+                    if (leftController.middleDisk)  colorOverrides[leftController.middleDisk->get_id()] = middleDiskColor;
+                    if (leftController.lowerDisk)   colorOverrides[leftController.lowerDisk->get_id()] = lowerDiskColor;
+                    
+                    // Apply interactive colors
+                    if (leftController.panel)       colorOverrides[leftController.panel->get_id()] = glm::mix(panelInactiveColor, buttonActivatedColor, vrManager->leftTriggerValue);
+                    if (leftController.triggerButton) colorOverrides[leftController.triggerButton->get_id()] = glm::mix(middleDiskColor, buttonActivatedColor, vrManager->leftTriggerValue);
+                    if (leftController.grabButton)    colorOverrides[leftController.grabButton->get_id()] = glm::mix(middleDiskColor, buttonActivatedColor, vrManager->leftSqueezeValue);
+                    if (leftController.joystick)    colorOverrides[leftController.joystick->get_id()] = glm::mix(buttonInactiveColor, buttonActivatedColor, glm::length(vrManager->leftJoystick));
+                    if (leftController.menuButton)  colorOverrides[leftController.menuButton->get_id()] = vrManager->leftMenuButtonIsPressed ? buttonActivatedColor : buttonInactiveColor;
+                    if (leftController.buttonAX)    colorOverrides[leftController.buttonAX->get_id()] = vrManager->leftXButtonIsPressed ? buttonActivatedColor : buttonInactiveColor;
+                    if (leftController.buttonBY)    colorOverrides[leftController.buttonBY->get_id()] = vrManager->leftYButtonIsPressed ? buttonActivatedColor : buttonInactiveColor;
+                    if (vrManager->leftJoystickIsPressed && leftController.joystick) colorOverrides[leftController.joystick->get_id()] = buttonActivatedColor;
                 }
 
-                if (rightHand.isValid && rightControllerVisual) {
+                // --- PROCESS RIGHT CONTROLLER ---
+                if (rightHand.isValid) {
                     glm::mat4 rawPoseMatrix = XrPoseToModelMatrix(rightHand.pose);
                     rightControllerUnscaledTransform = worldTransform * rawPoseMatrix;
-
-                    // Build the standard local transform for the right hand from the UI values
-                    glm::mat4 localOffset =
-                        glm::translate(glm::mat4(1.0f), g_controllerOffsetTranslate) *
-                        glm::mat4_cast(glm::quat(glm::radians(g_controllerOffsetEuler)));
-
+                    glm::mat4 localOffset = glm::translate(glm::mat4(1.0f), g_controllerOffsetTranslate) * glm::mat4_cast(glm::quat(glm::radians(g_controllerOffsetEuler)));
                     glm::mat4 scaleMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(g_controllerModelScale));
-                    transformOverrides[rightControllerVisual->get_id()] = rightControllerUnscaledTransform * localOffset * scaleMatrix;
+                    glm::mat4 finalPartTransform = rightControllerUnscaledTransform * localOffset * scaleMatrix;
 
-                    colorOverrides[rightControllerVisual->get_id()] = MixColorFromPress(rightHand.pressValue);
-                    unlitOverrides[rightControllerVisual->get_id()] = true;
+                    for (auto* part : rightController.GetAllParts()) {
+                        transformOverrides[part->get_id()] = finalPartTransform;
+                        unlitOverrides[part->get_id()] = true;
+                    }
+
+                    // Set base colors
+                    if (rightController.mainBody)    colorOverrides[rightController.mainBody->get_id()] = mainBodyColor;
+                    if (rightController.upperDisk)   colorOverrides[rightController.upperDisk->get_id()] = upperDiskColor;
+                    if (rightController.middleDisk)  colorOverrides[rightController.middleDisk->get_id()] = middleDiskColor;
+                    if (rightController.lowerDisk)   colorOverrides[rightController.lowerDisk->get_id()] = lowerDiskColor;
+                    
+                    // Apply interactive colors
+                    if (rightController.panel)       colorOverrides[rightController.panel->get_id()] = panelInactiveColor;
+                    if (rightController.triggerButton) colorOverrides[rightController.triggerButton->get_id()] = glm::mix(middleDiskColor, buttonActivatedColor, vrManager->rightTriggerValue);
+                    if (rightController.grabButton)    colorOverrides[rightController.grabButton->get_id()] = glm::mix(middleDiskColor, buttonActivatedColor, vrManager->rightSqueezeValue);
+                    if (rightController.joystick)    colorOverrides[rightController.joystick->get_id()] = glm::mix(buttonInactiveColor, buttonActivatedColor, glm::length(vrManager->rightJoystick));
+                    if (rightController.menuButton)  colorOverrides[rightController.menuButton->get_id()] = buttonInactiveColor; // No menu button on right
+                    if (rightController.buttonAX)    colorOverrides[rightController.buttonAX->get_id()] = vrManager->rightAButtonIsPressed ? buttonActivatedColor : buttonInactiveColor;
+                    if (rightController.buttonBY)    colorOverrides[rightController.buttonBY->get_id()] = vrManager->rightBButtonIsPressed ? buttonActivatedColor : buttonInactiveColor;
+                    if (vrManager->rightJoystickIsPressed && rightController.joystick) colorOverrides[rightController.joystick->get_id()] = buttonActivatedColor;
                 }
 
                 auto* selectTool = (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) 
@@ -1121,7 +1212,7 @@ int main(int argc, char* argv[]) {
                     // --- NEW: Update and Render VR UI Manager ---
                     Urbaxio::UI::Ray worldRay = {vrRayOrigin, vrRayDirection};
                     
-                    vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, vrManager->aButtonIsPressed);
+                    vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, vrManager->rightAButtonIsPressed);
                     
                     // --- НОВЫЙ БЛОК: Проверяем, занят ли UI, и блокируем инструменты ---
                     bool isInteractingWithPanelSystem = vruiManager.IsInteracting();
@@ -1191,7 +1282,7 @@ int main(int argc, char* argv[]) {
 
                 // --- Unified UI State Update (Menus, Numpad Visibility & Display Text) ---
                 const float MENU_FADE_SPEED = 0.1f;
-                bool isTriggerPressed = vrManager->rawLeftTriggerValue > 0.5f;
+                bool isTriggerPressed = vrManager->leftTriggerValue > 0.5f;
 
                 // Update tool menu alpha
                 if (auto* toolMenuPanel = vruiManager.GetPanel("ToolMenu")) {

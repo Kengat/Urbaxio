@@ -115,8 +115,23 @@ public:
     float zoomDistance = 0.0f;
     glm::vec3 zoomMidPoint = glm::vec3(0.0f);
     float zoomTextAlpha = 0.0f;    
-    float rawLeftTriggerValue = 0.0f;
-    bool aButtonIsPressed = false;
+    float leftTriggerValue = 0.0f;
+    float rightTriggerValue = 0.0f;
+    float leftSqueezeValue = 0.0f;
+    float rightSqueezeValue = 0.0f;
+
+    glm::vec2 leftJoystick{};
+    glm::vec2 rightJoystick{};
+
+    bool leftJoystickIsPressed = false;
+    bool rightJoystickIsPressed = false;
+    bool leftMenuButtonIsPressed = false;
+
+    bool leftXButtonIsPressed = false;
+    bool leftYButtonIsPressed = false;
+    bool rightAButtonIsPressed = false;
+    bool rightBButtonIsPressed = false;
+
     bool leftAButtonDoubleClicked = false;
     float rightThumbstickY = 0.0f;
 
@@ -157,6 +172,11 @@ private:
     XrAction hapticAction_ = XR_NULL_HANDLE; // <-- NEW for haptics
     XrAction aButtonAction = XR_NULL_HANDLE;
     XrAction undoRedoActivationAction_ = XR_NULL_HANDLE; // <-- RENAMED from leftAButtonAction
+    XrAction leftYButtonAction_ = XR_NULL_HANDLE;
+    XrAction rightBButtonAction_ = XR_NULL_HANDLE;
+    XrAction joystickValueAction_ = XR_NULL_HANDLE;
+    XrAction joystickClickAction_ = XR_NULL_HANDLE;
+    XrAction menuClickAction_ = XR_NULL_HANDLE;
     XrAction thumbstickYAction_ = XR_NULL_HANDLE;
     // Internal state for double click detection
     bool leftAWasPressed = false;

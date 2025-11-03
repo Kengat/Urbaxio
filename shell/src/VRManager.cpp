@@ -128,6 +128,11 @@ void VRManager::Shutdown() {
     if (controllerPoseAction != XR_NULL_HANDLE) xrDestroyAction(controllerPoseAction);
     if (aButtonAction != XR_NULL_HANDLE) xrDestroyAction(aButtonAction);
     if (undoRedoActivationAction_ != XR_NULL_HANDLE) xrDestroyAction(undoRedoActivationAction_);
+    if (leftYButtonAction_ != XR_NULL_HANDLE) xrDestroyAction(leftYButtonAction_);
+    if (rightBButtonAction_ != XR_NULL_HANDLE) xrDestroyAction(rightBButtonAction_);
+    if (joystickValueAction_ != XR_NULL_HANDLE) xrDestroyAction(joystickValueAction_);
+    if (joystickClickAction_ != XR_NULL_HANDLE) xrDestroyAction(joystickClickAction_);
+    if (menuClickAction_ != XR_NULL_HANDLE) xrDestroyAction(menuClickAction_);
     if (thumbstickYAction_ != XR_NULL_HANDLE) xrDestroyAction(thumbstickYAction_);
     if (hapticAction_ != XR_NULL_HANDLE) xrDestroyAction(hapticAction_);
     if (triggerValueAction != XR_NULL_HANDLE) xrDestroyAction(triggerValueAction);
@@ -446,6 +451,51 @@ bool VRManager::CreateActions() {
         actionCI.subactionPaths = &leftHandPath;
         XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &undoRedoActivationAction_), "Failed to create undo/redo activation action");
     }
+    { // Scope for Left 'Y' button
+        XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
+        actionCI.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        strcpy_s(actionCI.actionName, "y_button_click");
+        strcpy_s(actionCI.localizedActionName, "Y Button Click");
+        actionCI.countSubactionPaths = 1;
+        actionCI.subactionPaths = &leftHandPath;
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &leftYButtonAction_), "Failed to create 'Y' button action");
+    }
+    { // Scope for Right 'B' button
+        XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
+        actionCI.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        strcpy_s(actionCI.actionName, "b_button_click");
+        strcpy_s(actionCI.localizedActionName, "B Button Click");
+        actionCI.countSubactionPaths = 1;
+        actionCI.subactionPaths = &rightHandPath;
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &rightBButtonAction_), "Failed to create 'B' button action");
+    }
+    { // Scope for Joystick XY value
+        XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
+        actionCI.actionType = XR_ACTION_TYPE_VECTOR2F_INPUT;
+        strcpy_s(actionCI.actionName, "joystick_value");
+        strcpy_s(actionCI.localizedActionName, "Joystick Value");
+        actionCI.countSubactionPaths = 2;
+        actionCI.subactionPaths = subactionPaths;
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &joystickValueAction_), "Failed to create joystick value action");
+    }
+    { // Scope for Joystick click
+        XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
+        actionCI.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        strcpy_s(actionCI.actionName, "joystick_click");
+        strcpy_s(actionCI.localizedActionName, "Joystick Click");
+        actionCI.countSubactionPaths = 2;
+        actionCI.subactionPaths = subactionPaths;
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &joystickClickAction_), "Failed to create joystick click action");
+    }
+    { // Scope for Left Menu button
+        XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
+        actionCI.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        strcpy_s(actionCI.actionName, "menu_click");
+        strcpy_s(actionCI.localizedActionName, "Menu Click");
+        actionCI.countSubactionPaths = 1;
+        actionCI.subactionPaths = &leftHandPath;
+        XR_CHECK_INIT(xrCreateAction(actionSet, &actionCI, &menuClickAction_), "Failed to create menu click action");
+    }
     { // NEW: Scope for thumbstick Y action
         XrActionCreateInfo actionCI{XR_TYPE_ACTION_CREATE_INFO};
         actionCI.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
@@ -494,6 +544,30 @@ bool VRManager::CreateActions() {
         // Left X Button
         XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/input/x/click", &path), "Failed to get path");
         bindings.push_back({ undoRedoActivationAction_, path });
+
+        // Left Y Button
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/input/y/click", &path), "Failed to get path");
+        bindings.push_back({ leftYButtonAction_, path });
+
+        // Right B Button
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/b/click", &path), "Failed to get path");
+        bindings.push_back({ rightBButtonAction_, path });
+
+        // Joysticks XY
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/input/thumbstick", &path), "Failed to get path");
+        bindings.push_back({ joystickValueAction_, path });
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/thumbstick", &path), "Failed to get path");
+        bindings.push_back({ joystickValueAction_, path });
+
+        // Joystick Clicks
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/input/thumbstick/click", &path), "Failed to get path");
+        bindings.push_back({ joystickClickAction_, path });
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/thumbstick/click", &path), "Failed to get path");
+        bindings.push_back({ joystickClickAction_, path });
+
+        // Menu Click
+        XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/left/input/menu/click", &path), "Failed to get path");
+        bindings.push_back({ menuClickAction_, path });
 
         // NEW: Thumbstick Y
         XR_CHECK_INIT(xrStringToPath(instance, "/user/hand/right/input/thumbstick/y", &path), "Failed to get path");
@@ -732,12 +806,6 @@ void VRManager::PollActions() {
         xrGetActionStateFloat(session, &getInfo, &state);
         return (state.isActive) ? state.currentState : 0.0f;
     };
-    
-    float leftTrigger = readFloat(triggerValueAction, leftHandPath);
-    rawLeftTriggerValue = leftTrigger; // Store the raw value
-    float leftSqueeze = readFloat(squeezeValueAction, leftHandPath);
-    float rightTrigger = readFloat(triggerValueAction, rightHandPath);
-    float rightSqueeze = readFloat(squeezeValueAction, rightHandPath);
 
     auto readBool = [&](XrAction action, XrPath handPath) -> bool {
         XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
@@ -747,36 +815,42 @@ void VRManager::PollActions() {
         xrGetActionStateBoolean(session, &getInfo, &state);
         return (state.isActive && state.currentState);
     };
-    aButtonIsPressed = readBool(aButtonAction, rightHandPath);
+
+    auto readVec2 = [&](XrAction action, XrPath handPath) -> glm::vec2 {
+        XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
+        getInfo.action = action;
+        getInfo.subactionPath = handPath;
+        XrActionStateVector2f state{XR_TYPE_ACTION_STATE_VECTOR2F};
+        xrGetActionStateVector2f(session, &getInfo, &state);
+        return (state.isActive) ? glm::vec2(state.currentState.x, state.currentState.y) : glm::vec2(0.0f);
+    };
+
+    // Read analog values
+    leftTriggerValue = readFloat(triggerValueAction, leftHandPath);
+    rightTriggerValue = readFloat(triggerValueAction, rightHandPath);
+    leftSqueezeValue = readFloat(squeezeValueAction, leftHandPath);
+    rightSqueezeValue = readFloat(squeezeValueAction, rightHandPath);
+    leftJoystick = readVec2(joystickValueAction_, leftHandPath);
+    rightJoystick = readVec2(joystickValueAction_, rightHandPath);
+    rightThumbstickY = rightJoystick.y; // Keep this for compatibility with old code
+
+    // Read digital (boolean) values
+    rightAButtonIsPressed = readBool(aButtonAction, rightHandPath);
     bool isUndoRedoHeld = readBool(undoRedoActivationAction_, leftHandPath);
-    rightThumbstickY = readFloat(thumbstickYAction_, rightHandPath);
+    leftXButtonIsPressed = isUndoRedoHeld;
+    leftYButtonIsPressed = readBool(leftYButtonAction_, leftHandPath);
+    rightBButtonIsPressed = readBool(rightBButtonAction_, rightHandPath);
+    leftJoystickIsPressed = readBool(joystickClickAction_, leftHandPath);
+    rightJoystickIsPressed = readBool(joystickClickAction_, rightHandPath);
+    leftMenuButtonIsPressed = readBool(menuClickAction_, leftHandPath);
 
-    // --- Double Click Logic for Left A/X Button ---
-    leftAButtonDoubleClicked = false;
-    const uint32_t DOUBLE_CLICK_TIME_MS = 300;
-    if (isUndoRedoHeld && !leftAWasPressed) {
-        uint32_t currentTime = SDL_GetTicks();
-        if (currentTime - leftALastPressTime < DOUBLE_CLICK_TIME_MS) {
-            leftAButtonDoubleClicked = true;
-            leftALastPressTime = 0; // Reset timer to prevent triple clicks
-        } else {
-            leftALastPressTime = currentTime;
-        }
-    }
-    leftAWasPressed = isUndoRedoHeld;
-
-    // --- Combine and Smooth Values for Visuals ---
-    float targetLeftPress = std::max(leftTrigger, leftSqueeze);
-    float targetRightPress = std::max(rightTrigger, rightSqueeze);
-
-    const float smoothingFactor = 0.25f;
-    leftHandVisual_.pressValue += smoothingFactor * (targetLeftPress - leftHandVisual_.pressValue);
-    rightHandVisual_.pressValue += smoothingFactor * (targetRightPress - rightHandVisual_.pressValue);
+    // --- Update Smoothed Visuals & Click States ---
+    leftHandVisual_.pressValue = std::max(leftTriggerValue, leftSqueezeValue);
+    rightHandVisual_.pressValue = std::max(rightTriggerValue, rightSqueezeValue);
     
-    // --- Update Right Hand Trigger Click State ---
-    rightHandVisual_.triggerClicked = false; // Reset every frame
+    rightHandVisual_.triggerClicked = false;
     rightHandVisual_.triggerReleased = false;
-    bool isTriggerPressed = (rightTrigger > 0.8f);
+    bool isTriggerPressed = (rightTriggerValue > 0.8f);
     if (isTriggerPressed && !rightHandVisual_.triggerWasPressed) {
         rightHandVisual_.triggerClicked = true;
     }
@@ -784,19 +858,32 @@ void VRManager::PollActions() {
         rightHandVisual_.triggerReleased = true;
     }
     rightHandVisual_.triggerWasPressed = isTriggerPressed;
-    
-    // --- NEW: Undo/Redo Gesture Logic ---
-    // Reset the public action flag at the start of polling
+
+    // --- Double Click & Gesture Logic ---
+    leftAButtonDoubleClicked = false;
+    const uint32_t DOUBLE_CLICK_TIME_MS = 300;
+    if (leftXButtonIsPressed && !leftAWasPressed) {
+        uint32_t currentTime = SDL_GetTicks();
+        if (currentTime - leftALastPressTime < DOUBLE_CLICK_TIME_MS) {
+            leftAButtonDoubleClicked = true;
+            leftALastPressTime = 0;
+        } else {
+            leftALastPressTime = currentTime;
+        }
+    }
+    leftAWasPressed = leftXButtonIsPressed;
+
+    // --- Undo/Redo Gesture Logic ---
     triggeredUndoRedoAction = UndoRedoAction::None;
 
-    if (isUndoRedoHeld && !isUndoRedoGestureActive_) {
+    if (leftXButtonIsPressed && !isUndoRedoGestureActive_) {
         // Gesture started
         isUndoRedoGestureActive_ = true;
         if (leftHandVisual_.isValid) {
             gestureStartOrientation_ = leftHandVisual_.pose.orientation;
         }
         currentUndoRedoZone_ = UndoRedoZone::None;
-    } else if (!isUndoRedoHeld && isUndoRedoGestureActive_) {
+    } else if (!leftXButtonIsPressed && isUndoRedoGestureActive_) {
         // Gesture ended
         isUndoRedoGestureActive_ = false;
         if (currentUndoRedoZone_ == UndoRedoZone::InUndoZone) {
@@ -860,8 +947,8 @@ void VRManager::PollActions() {
         return squeezeValue > threshold;
     };
 
-    bool leftWantsToGrab = wantsToGrab(leftGrabState_.isGrabbing, leftSqueeze);
-    bool rightWantsToGrab = wantsToGrab(rightGrabState_.isGrabbing, rightSqueeze);
+    bool leftWantsToGrab = wantsToGrab(leftGrabState_.isGrabbing, leftSqueezeValue);
+    bool rightWantsToGrab = wantsToGrab(rightGrabState_.isGrabbing, rightSqueezeValue);
 
     auto poseToMat4 = [](const XrPosef& pose) {
         glm::quat q(pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z);
