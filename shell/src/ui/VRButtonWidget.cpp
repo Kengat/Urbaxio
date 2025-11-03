@@ -13,7 +13,7 @@ void VRButtonWidget::Update(const Ray& localRay, bool isClicked, bool isClickRel
     // Click logic moved to HandleClick, Update is for continuous state changes like animations.
 }
 
-void VRButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) {
+void VRButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) const {
     textRenderer.SetPanelModelMatrix(panelTransform);
     float textHeight = size_.y;
     glm::vec4 color = glm::vec4(1.0f, 1.0f, 1.0f, alpha * (isHovered_ ? 1.0f : 0.7f));

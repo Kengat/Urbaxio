@@ -1418,6 +1418,8 @@ namespace Urbaxio {
     ) {
         if (vrMenuWidgetShaderProgram == 0 || splatVAO == 0) return;
 
+        glDepthMask(GL_FALSE); // Отключаем ЗАПИСЬ в буфер глубины для полупрозрачных виджетов
+
         glm::mat4 finalView = (view == glm::mat4(1.0f)) ? vrMenuWidgetShaderProgram_viewMatrix_HACK : view;
         glUseProgram(vrMenuWidgetShaderProgram);
         glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(finalView));

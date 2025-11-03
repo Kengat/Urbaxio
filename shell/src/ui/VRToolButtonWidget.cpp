@@ -43,7 +43,7 @@ HitResult VRToolButtonWidget::CheckIntersection(const Ray& localRay) {
     return result;
 }
 
-void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) {
+void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) const {
     bool isSelected = toolManager_.GetActiveToolType() == toolType_;
     float panelLocalScale = glm::length(glm::vec3(panelTransform[0]));
 

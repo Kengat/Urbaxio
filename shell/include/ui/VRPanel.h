@@ -17,6 +17,12 @@ namespace Urbaxio {
 
 namespace Urbaxio::UI {
 
+enum class VisibilityMode {
+    ALWAYS_VISIBLE,    // Всегда видна (если isVisible_ = true)
+    ON_LEFT_TRIGGER,   // Появляется при зажатии левого курка
+    TOGGLE_VIA_FLAG    // Видимость переключается внешним флагом (для PanelManager)
+};
+
 class VRPanel {
 public:
     VRPanel(const std::string& name, const std::string& displayName, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius, unsigned int grabIcon, unsigned int closeIcon, unsigned int minimizeIcon);
@@ -24,14 +30,17 @@ public:
     void AddWidget(std::unique_ptr<IVRWidget> widget);
     void SetLayout(std::unique_ptr<ILayout> layout);
     void RecalculateLayout();
-    void Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed, float stickY);
-    void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection);
+    void Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed, float stickY, bool isLeftTriggerPressed);
+    void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection) const;
     HitResult CheckIntersection(const Ray& worldRay, const glm::mat4& parentTransform);
     bool HandleClick();
 
     void SetVisible(bool visible);
     bool IsVisible() const;
     const std::string& GetName() const;
+    
+    void SetVisibilityMode(VisibilityMode mode);
+    VisibilityMode GetVisibilityMode() const;
     
     IVRWidget* GetHoveredWidget() const { return hoveredWidget_; }
     IVRWidget* GetWidget(size_t index) const { return (index < widgets_.size()) ? widgets_[index].get() : nullptr; }
@@ -56,6 +65,8 @@ private:
     glm::mat4 offsetTransform_;
     bool isVisible_ = true;
     float cornerRadius_;
+    VisibilityMode visibilityMode_ = VisibilityMode::ON_LEFT_TRIGGER;
+    bool isExternallyToggled_ = false;
     std::unique_ptr<ILayout> layout_;
     
     std::unique_ptr<VRConfirmButtonWidget> grabHandle_;

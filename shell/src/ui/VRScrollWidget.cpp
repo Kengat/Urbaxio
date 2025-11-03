@@ -96,7 +96,7 @@ void VRScrollWidget::Update(const Ray& localRay, bool isClicked, bool isClickRel
 	}
 }
 
-void VRScrollWidget::Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& scissor) {
+void VRScrollWidget::Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& scissor) const {
     glm::mat4 maskTransform = panelTransform * glm::translate(glm::mat4(1.0f), localPosition_);
 
     MaskData maskData = {

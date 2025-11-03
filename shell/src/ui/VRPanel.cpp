@@ -10,6 +10,8 @@
 #include <cmath>
 #include <iostream>
 #include <iomanip>
+#include <algorithm>
+#include <vector>
 
 namespace Urbaxio::UI {
 
@@ -44,9 +46,30 @@ void VRPanel::RecalculateLayout() {
     }
 }
 
-void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed, float stickY) {
-    // --- Animation Logic ---
+void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed, float stickY, bool isLeftTriggerPressed) {
+    // --- НОВАЯ ЛОГИКА АНИМАЦИИ ALPHA ---
     const float ANIM_SPEED = 0.1f;
+    float targetAlpha = 0.0f;
+
+    if (isVisible_) {
+        switch (visibilityMode_) {
+            case VisibilityMode::ALWAYS_VISIBLE:
+                targetAlpha = 1.0f;
+                break;
+            case VisibilityMode::ON_LEFT_TRIGGER:
+                targetAlpha = isLeftTriggerPressed ? 1.0f : 0.0f;
+                break;
+            case VisibilityMode::TOGGLE_VIA_FLAG:
+                targetAlpha = (isExternallyToggled_ && isLeftTriggerPressed) ? 1.0f : 0.0f;
+                break;
+        }
+    }
+    
+    alpha += (targetAlpha - alpha) * ANIM_SPEED;
+    alpha = std::min(1.0f, std::max(0.0f, alpha));
+    // --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
+    // --- Animation Logic ---
     float targetT = minimizeTargetState_ ? 1.0f : 0.0f;
     minimizeT_ += (targetT - minimizeT_) * ANIM_SPEED;
 
@@ -239,7 +262,7 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
     }
 }
 
-void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection) {
+void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection) const {
     if (!isVisible_ || alpha < 0.01f) return;
 
     // --- Animation & Layout Constants ---
@@ -299,25 +322,53 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
                               * glm::translate(glm::mat4(1.0f), positionOffset)
                               * glm::scale(glm::mat4(1.0f), glm::vec3(currentSize.x, currentSize.y, 1.0f));
     renderer.RenderVRPanel(view, projection, backgroundModel, glm::vec3(0.43f, 0.65f, 0.82f), currentRadius, 0.25f * alpha);
-        
-    // --- 4. Render Handles ---
-        grabHandle_->Render(renderer, textRenderer, transform, view, projection, alpha, std::nullopt);
-        minimizeHandle_->Render(renderer, textRenderer, transform, view, projection, alpha, std::nullopt);
-        closeHandle_->Render(renderer, textRenderer, transform, view, projection, alpha, std::nullopt);
-    resizeHandle_->Render(renderer, textRenderer, transform, view, projection, widgetsAlpha, std::nullopt);
-
-    // --- 5. Render Widgets or Minimized Title ---
-        textRenderer.SetPanelModelMatrix(transform);
+    
+    // --- 4. Собираем ВСЕ виджеты (основные и служебные) для сортировки ---
+    std::vector<IVRWidget*> allWidgetsToRender;
+    // Добавляем служебные виджеты
+    allWidgetsToRender.push_back(grabHandle_.get());
+    allWidgetsToRender.push_back(minimizeHandle_.get());
+    allWidgetsToRender.push_back(closeHandle_.get());
+    // Виджет изменения размера рендерится только в развёрнутом состоянии
     if (widgetsAlpha > 0.01f) {
-        for (auto& widget : widgets_) {
-            widget->Render(renderer, textRenderer, transform, view, projection, widgetsAlpha, std::nullopt);
+        allWidgetsToRender.push_back(resizeHandle_.get());
+    }
+    // Добавляем основные виджеты, если панель не свёрнута
+    if (widgetsAlpha > 0.01f) {
+        for (const auto& widget : widgets_) {
+            allWidgetsToRender.push_back(widget.get());
         }
     }
+
+    // --- 5. Сортируем все виджеты по глубине ---
+    std::vector<std::pair<float, IVRWidget*>> order;
+    order.reserve(allWidgetsToRender.size());
+    for (IVRWidget* widget : allWidgetsToRender) {
+        const glm::vec3 local = widget->GetLocalPosition();
+        const glm::vec3 world = glm::vec3(transform * glm::vec4(local, 1.0f)); 
+        const float viewZ = (view * glm::vec4(world, 1.0f)).z;
+        order.emplace_back(viewZ, widget);
+    }
+
+    std::sort(order.begin(), order.end(), [](const auto& a, const auto& b){ 
+        return a.first < b.first; 
+    });
+
+    // --- 6. Рендерим все виджеты в отсортированном порядке ---
+    textRenderer.SetPanelModelMatrix(transform);
+    for (const auto& [viewZ, widget] : order) {
+        // Определяем альфу для виджета. resizeHandle_ и основные виджеты исчезают при сворачивании.
+        float currentWidgetAlpha = (widget == resizeHandle_.get() || std::find_if(widgets_.begin(), widgets_.end(), [widget](const auto& p){ return p.get() == widget; }) != widgets_.end())
+                                 ? widgetsAlpha
+                                 : alpha;
+        
+        widget->Render(renderer, textRenderer, transform, view, projection, currentWidgetAlpha, std::nullopt);
+    }
     
+    // --- 7. Рендерим свёрнутый заголовок, если нужно ---
     if (minimizedTitleAlpha > 0.01f) {
-        // We use the 'grabPos' as an anchor for the title text's position
         glm::vec3 titlePos = grabPos - glm::vec3(0, handleSpacing, 0);
-        textRenderer.AddTextOnPanel(displayName_, titlePos, glm::vec4(1.0f, 1.0f, 1.0f, minimizedTitleAlpha), 0.01f);
+        textRenderer.AddTextOnPanel(displayName_, titlePos, glm::vec4(1.0f, 1.0f, 1.0f, minimizedTitleAlpha), 0.01f, Urbaxio::TextAlign::CENTER, std::nullopt);
     }
 
     textRenderer.Render(view, projection);
@@ -377,11 +428,22 @@ HitResult VRPanel::CheckIntersection(const Ray& worldRay, const glm::mat4& paren
 }
 
 void VRPanel::SetVisible(bool visible) {
+    if (visibilityMode_ == VisibilityMode::TOGGLE_VIA_FLAG) {
+        isExternallyToggled_ = visible;
+    }
     isVisible_ = visible;
 }
 
 bool VRPanel::IsVisible() const {
     return isVisible_;
+}
+
+void VRPanel::SetVisibilityMode(VisibilityMode mode) {
+    visibilityMode_ = mode;
+}
+
+VisibilityMode VRPanel::GetVisibilityMode() const {
+    return visibilityMode_;
 }
 
 const std::string& VRPanel::GetName() const {

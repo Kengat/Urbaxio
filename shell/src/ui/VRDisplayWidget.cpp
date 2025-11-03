@@ -12,7 +12,7 @@ void VRDisplayWidget::Update(const Ray& localRay, bool isClicked, bool isClickRe
     // Display is not interactive
 }
 
-void VRDisplayWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) {
+void VRDisplayWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) const {
     float panelLocalScale = glm::length(glm::vec3(panelTransform[0]));
 
     glm::mat4 displayModel = panelTransform * 

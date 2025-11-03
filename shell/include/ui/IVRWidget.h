@@ -36,7 +36,7 @@ public:
 
     virtual void Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) = 0;
     // Unified Render signature with optional mask data
-    virtual void Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask = std::nullopt) = 0;
+    virtual void Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask = std::nullopt) const = 0;
     virtual HitResult CheckIntersection(const Ray& localRay) = 0;
     virtual void HandleClick() = 0;
     

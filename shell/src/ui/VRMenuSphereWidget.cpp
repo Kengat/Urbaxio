@@ -25,7 +25,7 @@ void VRMenuSphereWidget::HandleClick() {
     }
 }
 
-void VRMenuSphereWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) {
+void VRMenuSphereWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) const {
     float panelLocalScale = glm::length(glm::vec3(panelTransform[0]));
     float scaledDiameter = diameter_ * panelLocalScale;
 

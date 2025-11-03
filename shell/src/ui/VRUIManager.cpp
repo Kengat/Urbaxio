@@ -28,7 +28,7 @@ VRPanel* VRUIManager::GetHoveredPanel() {
     return nullptr;
 }
 
-void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& rightControllerTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed, float leftStickY) {
+void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& rightControllerTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed, float leftStickY, bool isLeftTriggerPressed) {
     const glm::mat4& parentTransform = leftControllerTransform;
     const glm::mat4& interactionTransform = rightControllerTransform;
 
@@ -36,7 +36,8 @@ void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTra
     float closestHitDist = std::numeric_limits<float>::max();
 
     for (auto& [name, panel] : panels_) {
-        if (panel.IsVisible() && panel.alpha > 0.01f) {
+        // Проверяем пересечение, даже если альфа 0, чтобы панель могла "поймать" ховер и начать появляться
+        if (panel.IsVisible()) {
             HitResult hit = panel.CheckIntersection(worldRay, parentTransform);
             if (hit.didHit && hit.distance < closestHitDist) {
                 closestHitDist = hit.distance;
@@ -47,12 +48,10 @@ void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTra
     activeInteractionPanel_ = newActivePanel;
     
     for (auto& [name, panel] : panels_) {
-        if (panel.IsVisible()) {
-            // Update all panels, but only the active one gets click events
-            bool panelIsClicked = (name == activeInteractionPanel_) && isClicked;
-            float stickForPanel = (name == activeInteractionPanel_) ? leftStickY : 0.0f;
-            panel.Update(worldRay, parentTransform, interactionTransform, panelIsClicked, isClickReleased, aButtonIsPressed, bButtonIsPressed, stickForPanel);
-        }
+        // Обновляем все панели, передавая им состояние курка
+        bool panelIsClicked = (name == activeInteractionPanel_) && isClicked;
+        float stickForPanel = (name == activeInteractionPanel_) ? leftStickY : 0.0f;
+        panel.Update(worldRay, parentTransform, interactionTransform, panelIsClicked, isClickReleased, aButtonIsPressed, bButtonIsPressed, stickForPanel, isLeftTriggerPressed);
     }
 }
 
@@ -79,6 +78,10 @@ bool VRUIManager::IsInteracting() const {
         }
     }
     return false;
+}
+
+const std::map<std::string, VRPanel>& VRUIManager::GetPanels() const {
+    return panels_;
 }
 
 }

@@ -45,6 +45,7 @@ extern "C" {
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <functional>
 #include <set>
 #include <map>
 #include <cstdint>
@@ -735,7 +736,6 @@ int main(int argc, char* argv[]) {
     glm::mat4 grabbedInitialSphereWorldTransform; // Правильная переменная для хранения состояния захвата
     glm::mat4 grabbedControllerInitialTransform;
     const float menuSphereDiameter = 0.025f; // Уменьшенный в два раза диаметр
-    bool isPanelManagerEnabled = false; // По умолчанию панель панелей выключена
     
     // --- Tool Manager Setup ---
     int display_w, display_h;
@@ -817,14 +817,21 @@ int main(int argc, char* argv[]) {
     SetupToolMenuPanel(vruiManager, toolManager, dragIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture, closeIconTexture, minimizeIconTexture);
     // ДОБАВЬТЕ ЭТУ СТРОКУ:
     SetupPanelManagerPanel(vruiManager, dragIconTexture, closeIconTexture, minimizeIconTexture);
+    
+    if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
+        panelMgr->SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
+        panelMgr->SetVisible(false); // Изначально она выключена
+    }
 
     // --- NEW: Create the menu sphere WIDGET ---
     menuSphereWidget = std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
         glm::vec3(0.0f), // Локальная позиция (центр)
         menuSphereDiameter,
         panelManagerIconTexture, // Передаём ID иконки
-        [&isPanelManagerEnabled](){
-            isPanelManagerEnabled = !isPanelManagerEnabled;
+        [&vruiManager](){
+            if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
+                panelMgr->SetVisible(!panelMgr->IsVisible());
+            }
         },
         glm::vec3(1.0f) // Базовый цвет (белый)
     );
@@ -1284,7 +1291,8 @@ int main(int argc, char* argv[]) {
                     }
 
                     // Check intersection with the menu sphere widget if it's visible
-                    if (menuSphereWidget && isTriggerPressed) {
+                    bool isLeftTriggerPressed = vrManager->leftTriggerValue > 0.5f;
+                    if (menuSphereWidget && isLeftTriggerPressed) {
                         glm::mat4 sphereWorldTransform = leftControllerUnscaledTransform * menuSphereOffset;
                         glm::vec3 sphereWorldCenter = glm::vec3(sphereWorldTransform[3]);
                         float sphereWorldRadius = (menuSphereDiameter * 0.5f) * glm::length(glm::vec3(sphereWorldTransform[0]));
@@ -1304,13 +1312,14 @@ int main(int argc, char* argv[]) {
                     // --- NEW: Update and Render VR UI Manager ---
                     Urbaxio::UI::Ray worldRay = {vrRayOrigin, vrRayDirection};
                     
-                    vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, vrManager->rightAButtonIsPressed, vrManager->rightBButtonIsPressed, vrManager->leftJoystick.y);
+                    bool isLeftTriggerPressed = vrManager->leftTriggerValue > 0.5f;
+                    vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, vrManager->rightAButtonIsPressed, vrManager->rightBButtonIsPressed, vrManager->leftJoystick.y, isLeftTriggerPressed);
 
                     // --- NEW: Menu Sphere WIDGET logic ---
                     bool sphereConsumedClick = false;
                     if (menuSphereWidget) {
                         // Шар-виджет существует и обновляется, только когда зажат левый курок
-                        if (isTriggerPressed) {
+                        if (isLeftTriggerPressed) {
                             // 1. Рассчитываем мировую трансформацию виджета
                             glm::mat4 sphereWorldTransform = leftControllerUnscaledTransform * menuSphereOffset;
                             
@@ -1419,29 +1428,8 @@ int main(int argc, char* argv[]) {
                     toolManager.GetActiveTool()->OnUpdate(vrSnap, vrRayOrigin, vrRayDirection);
                 }
 
-                // --- Unified UI State Update (Menus, Numpad Visibility & Display Text) ---
-                const float MENU_FADE_SPEED = 0.1f;
-
-                // Update tool menu alpha
-                if (auto* toolMenuPanel = vruiManager.GetPanel("ToolMenu")) {
-                    if (isTriggerPressed) {
-                        toolMenuPanel->alpha = std::min(1.0f, toolMenuPanel->alpha + MENU_FADE_SPEED);
-                    } else {
-                        toolMenuPanel->alpha = std::max(0.0f, toolMenuPanel->alpha - MENU_FADE_SPEED);
-                    }
-                    toolMenuPanel->SetVisible(toolMenuPanel->alpha > 0.01f);
-                }
-
-                // Update numpad alpha, visibility, and display text
+                // Update numpad display text
                 if (auto* numpadPanel = vruiManager.GetPanel("NewNumpad")) {
-                    // The numpad is visible ONLY when the trigger is held. No other conditions.
-                    if (isTriggerPressed) {
-                        numpadPanel->alpha = std::min(1.0f, numpadPanel->alpha + MENU_FADE_SPEED);
-                    } else {
-                        numpadPanel->alpha = std::max(0.0f, numpadPanel->alpha - MENU_FADE_SPEED);
-                    }
-                    numpadPanel->SetVisible(numpadPanel->alpha > 0.01f);
-
                     // Only update the display automatically if the user is NOT typing
                     if (!numpadInputActive) {
                         bool displayUpdated = false;
@@ -1463,15 +1451,6 @@ int main(int argc, char* argv[]) {
                             g_newNumpadInput = "0";
                         }
                     }
-                }
-
-                // Update Panel Manager alpha based on its visibility state AND left trigger
-                if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
-                    // Панель появляется, только если она включена (isPanelManagerEnabled) И зажат курок
-                    float targetAlpha = (isPanelManagerEnabled && isTriggerPressed) ? 1.0f : 0.0f;
-                    panelMgr->alpha += (targetAlpha - panelMgr->alpha) * MENU_FADE_SPEED;
-                    panelMgr->alpha = std::min(1.0f, std::max(0.0f, panelMgr->alpha));
-                    panelMgr->SetVisible(panelMgr->alpha > 0.01f);
                 }
                 
                 if (vrManager->leftAButtonDoubleClicked) {
@@ -1588,15 +1567,53 @@ int main(int argc, char* argv[]) {
                         renderer.RenderSnapMarker(vrSnap, view, projection, swapchain.width, swapchain.height);
                     }
                     
-                    // --- NEW: Render VR UI Manager ---
-                    vruiManager.Render(renderer, textRenderer, view, projection);
+                    // --- NEW: Back-to-Front Sorted Rendering for Transparent UI (Final Fix) ---
+                    std::vector<std::pair<float, std::function<void()>>> transparentQueue;
                     
-                    // --- NEW: Render the menu sphere widget (only if left trigger is pressed) ---
-                    if (menuSphereWidget && isTriggerPressed) {
-                        glm::mat4 sphereWorldTransform = leftControllerUnscaledTransform * menuSphereOffset;
-                        // Альфа шара теперь тоже зависит от курка, как у панелей
-                        float sphereAlpha = std::min(1.0f, vruiManager.GetPanel("ToolMenu") ? vruiManager.GetPanel("ToolMenu")->alpha : 0.0f);
-                        menuSphereWidget->Render(renderer, textRenderer, sphereWorldTransform, view, projection, sphereAlpha, std::nullopt);
+                    glm::vec3 cameraPos = glm::inverse(view)[3];
+
+                    // 1. Собираем все видимые панели из UI Manager
+                    for (const auto& [name, panel] : vruiManager.GetPanels()) {
+                        if (panel.alpha > 0.01f) {
+                            glm::vec3 panelPos = glm::vec3(panel.transform[3]);
+                            float viewSpaceZ = (view * glm::vec4(panelPos, 1.0f)).z;
+                            
+                            // ПРАВИЛЬНЫЙ ЗАХВАТ: Захватываем указатель 'p' по значению.
+                            transparentQueue.push_back({viewSpaceZ, [p = &panel, &renderer, &textRenderer, &view, &projection] {
+                                p->Render(renderer, textRenderer, view, projection);
+                            }});
+                        }
+                    }
+
+                    // 2. Собираем виджет-шар
+                    if (menuSphereWidget) {
+                        float sphereAlpha = 0.0f;
+                        if (auto* toolMenu = vruiManager.GetPanel("ToolMenu")) {
+                            sphereAlpha = toolMenu->alpha;
+                        }
+
+                        if (sphereAlpha > 0.01f) {
+                            glm::mat4 sphereWorldTransform = leftControllerUnscaledTransform * menuSphereOffset;
+                            glm::vec3 spherePos = glm::vec3(sphereWorldTransform[3]);
+                            float viewSpaceZ = (view * glm::vec4(spherePos, 1.0f)).z;
+                            
+                            // ПРАВИЛЬНЫЙ ЗАХВАТ: Явно указываем, что захватывать по ссылке, а что по значению.
+                            transparentQueue.push_back({viewSpaceZ, 
+                                [&renderer, &textRenderer, &view, &projection, widget = menuSphereWidget.get(), sphereWorldTransform, sphereAlpha] 
+                                {
+                                    widget->Render(renderer, textRenderer, sphereWorldTransform, view, projection, sphereAlpha, std::nullopt);
+                                }});
+                        }
+                    }
+
+                    // 3. Сортируем список от дальних к ближним (по возрастанию Z в пространстве камеры)
+                    std::sort(transparentQueue.begin(), transparentQueue.end(), [](const auto& a, const auto& b) {
+                        return a.first < b.first;
+                    });
+
+                    // 4. Отрисовываем все элементы в правильном, отсортированном порядке
+                    for (const auto& item : transparentQueue) {
+                        item.second(); // Вызываем сохранённую лямбда-функцию рендера
                     }
 
                     

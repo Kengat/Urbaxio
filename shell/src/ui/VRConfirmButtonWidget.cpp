@@ -25,7 +25,7 @@ void VRConfirmButtonWidget::HandleClick() {
     }
 }
 
-void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) {
+void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) const {
     const glm::vec3 whiteColor(1.0f, 1.0f, 1.0f);
     const glm::vec3 closeButtonColor(1.00f, 0.20f, 0.32f);
     bool isResizeHandle = (textureId_ == 0 && glm::distance2(color_, whiteColor) < 0.01f);

@@ -25,7 +25,7 @@ public:
                        std::function<void()> onClick);
 
     void Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) override;
-    void Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask = std::nullopt) override;
+    void Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask = std::nullopt) const override;
     HitResult CheckIntersection(const Ray& localRay) override;
     void HandleClick() override;
 
