@@ -269,6 +269,10 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
                 uint64_t hitObjectId = vrClickSnapResult.snappedEntityId;
                 Urbaxio::Engine::SceneObject* hitObject = context.scene->get_object_by_id(hitObjectId);
                 if (hitObject) {
+                    const auto& name = hitObject->get_name();
+                    if (name == "LeftControllerVisual" || name == "RightControllerVisual") {
+                        return; // Ignore controller visuals
+                    }
                     std::vector<size_t> newFace = FindCoplanarAdjacentTriangles(*hitObject, vrClickSnapResult.snappedTriangleIndex);
                     if (shift) {
                         if (*context.selectedObjId == hitObjectId || *context.selectedObjId == 0) {
@@ -329,7 +333,7 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
         for (auto* obj : context.scene->get_all_objects()) {
             if (!obj || !obj->has_mesh()) continue;
             const auto& name = obj->get_name();
-            if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") continue;
+            if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
             
             std::set<size_t> processedTrianglesInObject;
             const auto& mesh = obj->get_mesh_buffers();
@@ -432,7 +436,7 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
         } else {
              for (Urbaxio::Engine::SceneObject* obj_ptr : context.scene->get_all_objects()) {
                 const auto& name = obj_ptr->get_name();
-                if (obj_ptr && obj_ptr->has_mesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
+                if (obj_ptr && obj_ptr->has_mesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m" && name != "LeftControllerVisual" && name != "RightControllerVisual") {
                     const auto& mesh = obj_ptr->get_mesh_buffers();
                     for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                         glm::vec3 v0(mesh.vertices[mesh.indices[i] * 3], mesh.vertices[mesh.indices[i] * 3 + 1], mesh.vertices[mesh.indices[i] * 3 + 2]);
@@ -493,7 +497,7 @@ void SelectTool::FinalizeVrDragSelection(const glm::mat4& centerEyeViewMatrix, b
     for (auto* obj : context.scene->get_all_objects()) {
         if (!obj || !obj->has_mesh()) continue;
         const auto& name = obj->get_name();
-        if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") continue;
+        if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
         job.objectMeshes[obj->get_id()] = obj->get_mesh_buffers();
         job.objectLineIDs[obj->get_id()] = obj->boundaryLineIDs;
     }
@@ -628,6 +632,10 @@ void SelectTool::RenderPreview(Renderer& renderer, const SnapResult& snap) {
 
 bool SelectTool::IsVrDragging() const {
     return isVrDragging;
+}
+
+bool SelectTool::IsVrTriggerDown() const {
+    return isVrTriggerDown;
 }
 
 void SelectTool::GetVrDragBoxCorners(glm::vec3& outStart, glm::vec3& outEnd) const {

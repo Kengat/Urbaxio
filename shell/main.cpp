@@ -1113,19 +1113,14 @@ int main(int argc, char* argv[]) {
                 glm::vec3 rayEnd = vrRayOrigin;
                 bool pointerVisible = rightHand.isValid;
 
-                if (selectTool && (isDraggingBox || isJoystickActive)) {
+                if (selectTool && (isDraggingBox || isJoystickActive || selectTool->IsVrTriggerDown())) {
+                    // If we are actively interacting with the SelectTool, truncate the ray at the ghost point.
                     const float VISUAL_DISTANCE = 0.2f;
                     float worldScale = glm::length(glm::vec3(worldTransform[0]));
                     float offset = selectTool->GetVrDragDistanceOffset();
                     float worldDistance = (VISUAL_DISTANCE + offset) * worldScale;
                     
-                    if (isDraggingBox) {
-                        glm::vec3 start_p, end_p;
-                        selectTool->GetVrDragBoxCorners(start_p, end_p);
-                        rayEnd = end_p;
-                    } else {
-                        rayEnd = vrRayOrigin + vrRayDirection * worldDistance;
-                    }
+                    rayEnd = vrRayOrigin + vrRayDirection * worldDistance;
                 } else {
                     float rayLength = 100.0f;
                     rayEnd = (vrSnap.snapped && vrSnap.type != Urbaxio::SnapType::GRID) 

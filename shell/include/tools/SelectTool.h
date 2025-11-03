@@ -58,6 +58,7 @@ public:
     
     // NEW: Public methods for VR 3D drag box
     bool IsVrDragging() const;
+    bool IsVrTriggerDown() const;
     void GetVrDragBoxCorners(glm::vec3& outStart, glm::vec3& outEnd) const;
     float GetVrDragDistanceOffset() const;
     void GetVrGhostPoint(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, glm::vec3& outPoint) const;
