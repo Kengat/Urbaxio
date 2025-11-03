@@ -14,7 +14,7 @@ namespace Urbaxio::UI {
 class VRConfirmButtonWidget : public IVRWidget {
 public:
     VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, glm::vec3 color, std::function<void()> onClick);
-    VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, unsigned int textureId, std::function<void()> onClick);
+    VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, unsigned int textureId, std::function<void()> onClick, glm::vec3 color = glm::vec3(1.0f));
 
     void Update(const Ray& localRay, bool isClicked) override;
     void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha) override;

@@ -8,8 +8,8 @@ namespace Urbaxio::UI {
 
 VRUIManager::VRUIManager() {}
 
-VRPanel& VRUIManager::AddPanel(const std::string& name, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius) {
-    auto [it, success] = panels_.try_emplace(name, name, size, offsetTransform, cornerRadius);
+VRPanel& VRUIManager::AddPanel(const std::string& name, const std::string& displayName, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius, unsigned int grabIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
+    auto [it, success] = panels_.try_emplace(name, name, displayName, size, offsetTransform, cornerRadius, grabIcon, closeIcon, minimizeIcon);
     return it->second;
 }
 
@@ -28,8 +28,9 @@ VRPanel* VRUIManager::GetHoveredPanel() {
     return nullptr;
 }
 
-void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& rightControllerTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed) {
+void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& rightControllerTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed) {
     const glm::mat4& parentTransform = leftControllerTransform;
+    const glm::mat4& interactionTransform = rightControllerTransform;
 
     std::string newActivePanel;
     float closestHitDist = std::numeric_limits<float>::max();
@@ -49,7 +50,7 @@ void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTra
         if (panel.IsVisible()) {
             // Update all panels, but only the active one gets click events
             bool panelIsClicked = (name == activeInteractionPanel_) && isClicked;
-            panel.Update(worldRay, parentTransform, panelIsClicked, isClickReleased, aButtonIsPressed);
+            panel.Update(worldRay, parentTransform, interactionTransform, panelIsClicked, isClickReleased, aButtonIsPressed, bButtonIsPressed);
         }
     }
 }

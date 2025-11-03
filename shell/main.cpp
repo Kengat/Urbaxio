@@ -474,7 +474,7 @@ namespace { // Anonymous namespace for helpers
     }
 
     // --- NEW: Factory function to create our VR panels ---
-    void SetupVRPanels(Urbaxio::UI::VRUIManager& vruiManager, std::string& numpadInputTarget, Urbaxio::Tools::ToolManager& toolManager, bool& isNumpadActiveFlag, const Urbaxio::Tools::ToolContext& toolContext, unsigned int dragIconTexture) {
+    void SetupVRPanels(Urbaxio::UI::VRUIManager& vruiManager, std::string& numpadInputTarget, Urbaxio::Tools::ToolManager& toolManager, bool& isNumpadActiveFlag, const Urbaxio::Tools::ToolContext& toolContext, unsigned int dragIconTexture, unsigned int closeIconTexture, unsigned int minimizeIconTexture) {
         {
             // --- Numpad Panel ---
             float panelScale = 0.392f;
@@ -484,16 +484,10 @@ namespace { // Anonymous namespace for helpers
                                glm::mat4_cast(glm::quat(eulerAnglesRad)) *
                                glm::scale(glm::mat4(1.0f), glm::vec3(panelScale));
             
-            // Создаем панель, пока без макета
-            auto& numpad = vruiManager.AddPanel("NewNumpad", glm::vec2(0.2f, 0.4f), offset);
-            // Добавляем виджеты. Позиция теперь не важна, передаем vec3(0).
-            // Важен размер, он используется для расчета макета.
+            auto& numpad = vruiManager.AddPanel("NewNumpad", "Numpad", glm::vec2(0.2f, 0.4f), offset, 0.1f, dragIconTexture, closeIconTexture, minimizeIconTexture);
+
             glm::vec2 displaySize(0.18f, 0.05f); 
             numpad.AddWidget(std::make_unique<Urbaxio::UI::VRDisplayWidget>(glm::vec3(0), displaySize, numpadInputTarget));
-            
-            float topButtonSize = 0.025f;
-            numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(glm::vec3(0), topButtonSize, dragIconTexture, [] {}));
-            numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(glm::vec3(0), topButtonSize, glm::vec3(1.0f), []{}));
             
             auto confirmCallback = [&toolManager, &isNumpadActiveFlag, &numpadInputTarget, &toolContext]() {
                 float length_mm;
@@ -521,6 +515,7 @@ namespace { // Anonymous namespace for helpers
                 numpadInputTarget = "0";
                 isNumpadActiveFlag = false;
             };
+            float topButtonSize = 0.025f;
             numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(glm::vec3(0), topButtonSize, glm::vec3(0.1f, 0.8f, 0.2f), confirmCallback));
             float keyTextHeight = 0.03f;
             const char* keys[] = {"1","2","3", "4","5","6", "7","8","9", ".","0","<-"};
@@ -545,12 +540,7 @@ namespace { // Anonymous namespace for helpers
             // Это показывает, что ручное управление все еще возможно.
             // Если бы это была чистая сетка, мы бы использовали GridLayout.
             numpad.GetWidget(0)->SetLocalPosition({0, 0.17f, 0.01f}); // Display
-            
-            float topButtonY = 0.12f;
-            float topButtonSpacing = 0.045f;
-            numpad.GetWidget(1)->SetLocalPosition({-1.5f * topButtonSpacing, topButtonY, 0.01f}); // Drag
-            numpad.GetWidget(2)->SetLocalPosition({-0.5f * topButtonSpacing, topButtonY, 0.01f}); // Placeholder
-            numpad.GetWidget(3)->SetLocalPosition({1.5f * topButtonSpacing, topButtonY, 0.01f}); // Confirm
+            numpad.GetWidget(1)->SetLocalPosition({1.5f * 0.045f, 0.12f, 0.01f}); // Confirm
             float keySpacing = 0.06f;
             for (int i = 0; i < 12; ++i) {
                 glm::vec3 keyCenter(0);
@@ -558,30 +548,38 @@ namespace { // Anonymous namespace for helpers
                 else if (i == 9) keyCenter = glm::vec3(-1.0f * keySpacing, 0.05f - 3.0f * keySpacing, 0.01f);
                 else if (i == 10) keyCenter = glm::vec3(0.0f, 0.05f - 3.0f * keySpacing, 0.01f);
                 else if (i == 11) keyCenter = glm::vec3(1.0f * keySpacing, 0.05f - 3.0f * keySpacing, 0.01f);
-                numpad.GetWidget(i + 4)->SetLocalPosition(keyCenter);
+                numpad.GetWidget(i + 2)->SetLocalPosition(keyCenter);
             }
         }
     }
 
     // --- NEW: Factory function to create the tool menu panel ---
-    void SetupToolMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, unsigned int dragIconTexture, unsigned int selectIcon, unsigned int lineIcon, unsigned int pushpullIcon, unsigned int moveIcon) {
-        glm::mat4 panelOffset = 
-            glm::translate(glm::mat4(1.0f), glm::vec3(0.1f, 0.0f, 0.0f)) * 
-            glm::rotate(glm::mat4(1.0f), glm::radians(-70.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-        float buttonHeight = 0.025f;
-        float buttonSpacing = 0.04f;
-        float panelWidth = buttonHeight * 1.2f;
-        float panelHeight = (5 * buttonSpacing);
-        auto& toolMenu = vruiManager.AddPanel("ToolMenu", glm::vec2(panelWidth, panelHeight), panelOffset, 0.5f);
-        // Устанавливаем ВЕРТИКАЛЬНЫЙ макет с отступом
+    void SetupToolMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, unsigned int dragIconTexture, unsigned int selectIcon, unsigned int lineIcon, unsigned int pushpullIcon, unsigned int moveIcon, unsigned int closeIconTexture, unsigned int minimizeIconTexture) {
+        // --- NEW: Default transform values from your tuning ---
+        glm::vec3 translation = glm::vec3(0.062f, -0.035f, -0.069f);
+        glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-110.225f, 3.549f, 0.374f));
+        glm::vec3 scale = glm::vec3(1.000f, 1.000f, 1.000f);
+        glm::mat4 panelOffset = glm::translate(glm::mat4(1.0f), translation) *
+                               glm::mat4_cast(glm::quat(eulerAnglesRad)) *
+                               glm::scale(glm::mat4(1.0f), scale);
+        
+        // --- NEW: Default constructor parameters from your tuning ---
+        float panelWidth = 0.030f;
+        float panelHeight = 0.160f;
+        float cornerRadius = 0.5f;
+        // --- NEW: Calculate spacing dynamically based on new panel height ---
+        const int numButtons = 4; // Select, Line, Push/Pull, Move
+        float buttonHeight = panelHeight / (numButtons + 1); // +1 to create some padding
+        float buttonSpacing = buttonHeight * 1.6f;
+        auto& toolMenu = vruiManager.AddPanel("ToolMenu", "Tools", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIconTexture, closeIconTexture, minimizeIconTexture);
+        
+        // Layout spacing now adapts to the new button size
         toolMenu.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(buttonSpacing - buttonHeight));
-        // Добавляем виджеты БЕЗ указания позиции. Размер важен.
-        toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(glm::vec3(0), buttonHeight, dragIconTexture, [] {}));
+        // Widgets are added with the new dynamic size
         toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Select", glm::vec3(0), glm::vec2(panelWidth, buttonHeight), selectIcon, Urbaxio::Tools::ToolType::Select, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Select); }));
         toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Line", glm::vec3(0), glm::vec2(panelWidth, buttonHeight), lineIcon, Urbaxio::Tools::ToolType::Line, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Line); }));
         toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Push/Pull", glm::vec3(0), glm::vec2(panelWidth, buttonHeight), pushpullIcon, Urbaxio::Tools::ToolType::PushPull, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull); }));
         toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Move", glm::vec3(0), glm::vec2(panelWidth, buttonHeight), moveIcon, Urbaxio::Tools::ToolType::Move, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Move); }));
-        // Вызываем пересчет макета ПОСЛЕ добавления всех виджетов
         toolMenu.RecalculateLayout();
     }
 
@@ -754,10 +752,12 @@ int main(int argc, char* argv[]) {
     unsigned int lineIconTexture = load_icon("line_icon.png");
     unsigned int pushpullIconTexture = load_icon("pushpull_icon.png");
     unsigned int moveIconTexture = load_icon("move_icon.png");
+    unsigned int closeIconTexture = load_icon("close_icon.png");
+    unsigned int minimizeIconTexture = load_icon("minimize_icon.png");
 
     // --- NEW: Setup our VR panels using the new system ---
-    SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture);
-    SetupToolMenuPanel(vruiManager, toolManager, dragIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture);
+    SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture, closeIconTexture, minimizeIconTexture);
+    SetupToolMenuPanel(vruiManager, toolManager, dragIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture, closeIconTexture, minimizeIconTexture);
 
     // --- NEW: State for the import options dialog ---
     bool g_showImportOptionsPopup = false;
@@ -1212,23 +1212,21 @@ int main(int argc, char* argv[]) {
                     // --- NEW: Update and Render VR UI Manager ---
                     Urbaxio::UI::Ray worldRay = {vrRayOrigin, vrRayDirection};
                     
-                    vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, vrManager->rightAButtonIsPressed);
+                    vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, vrManager->rightAButtonIsPressed, vrManager->rightBButtonIsPressed);
                     
                     // --- НОВЫЙ БЛОК: Проверяем, занят ли UI, и блокируем инструменты ---
                     bool isInteractingWithPanelSystem = vruiManager.IsInteracting();
 
-                    // --- NEW: Handle grabbing for the tool menu panel ---
+                    // --- Handle grabbing for panels (grab initialization is now done in VRPanel::Update) ---
+                    static bool toolMenuGrabbedLastFrame = false;
+                    static bool numpadGrabbedLastFrame = false;
+                    
                     if (auto* toolMenuPanel = vruiManager.GetPanel("ToolMenu")) {
-                        // Check hover on the specific widget (grab handle is the first widget)
-                        bool isHoveringGrabHandle = toolMenuPanel->IsVisible() && toolMenuPanel->alpha > 0.01f && 
-                                                    vruiManager.GetHoveredPanel() == toolMenuPanel && 
-                                                    toolMenuPanel->GetHoveredWidget() == toolMenuPanel->GetWidget(0);
-
-                        if (rightHand.triggerClicked && isHoveringGrabHandle) {
-                            toolMenuPanel->isGrabbing = true;
-                            toolMenuPanel->grabbedInitialTransform = toolMenuPanel->transform;
+                        if (!toolMenuGrabbedLastFrame && toolMenuPanel->isGrabbing && rightHand.isValid) {
                             toolMenuPanel->grabbedControllerInitialTransform = rightControllerUnscaledTransform;
                         }
+                        toolMenuGrabbedLastFrame = toolMenuPanel->isGrabbing;
+                        
                         if (rightHand.triggerReleased && toolMenuPanel->isGrabbing) {
                             toolMenuPanel->isGrabbing = false;
                             toolMenuPanel->GetOffsetTransform() = glm::inverse(leftControllerUnscaledTransform) * toolMenuPanel->transform;
@@ -1240,19 +1238,12 @@ int main(int argc, char* argv[]) {
                         }
                     }
 
-                    // Handle grabbing for the new panel
                     if (auto* numpadPanel = vruiManager.GetPanel("NewNumpad")) {
-                        // MODIFIED: Use the same robust hover check as the tool menu
-                        // FIX: The grab handle on the numpad is the SECOND widget (index 1), not the first.
-                        bool isHoveringNumpadGrabHandle = numpadPanel->IsVisible() && numpadPanel->alpha > 0.01f && 
-                                                          vruiManager.GetHoveredPanel() == numpadPanel && 
-                                                          numpadPanel->GetHoveredWidget() == numpadPanel->GetWidget(1);
-
-                        if (rightHand.triggerClicked && isHoveringNumpadGrabHandle) {
-                             numpadPanel->isGrabbing = true;
-                             numpadPanel->grabbedInitialTransform = numpadPanel->transform;
-                             numpadPanel->grabbedControllerInitialTransform = rightControllerUnscaledTransform;
+                        if (!numpadGrabbedLastFrame && numpadPanel->isGrabbing && rightHand.isValid) {
+                            numpadPanel->grabbedControllerInitialTransform = rightControllerUnscaledTransform;
                         }
+                        numpadGrabbedLastFrame = numpadPanel->isGrabbing;
+                        
                         if (rightHand.triggerReleased && numpadPanel->isGrabbing) {
                             numpadPanel->isGrabbing = false;
                             numpadPanel->GetOffsetTransform() = glm::inverse(leftControllerUnscaledTransform) * numpadPanel->transform;

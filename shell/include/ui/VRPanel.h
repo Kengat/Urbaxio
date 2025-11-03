@@ -19,12 +19,12 @@ namespace Urbaxio::UI {
 
 class VRPanel {
 public:
-    VRPanel(const std::string& name, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius = 0.1f);
+    VRPanel(const std::string& name, const std::string& displayName, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius, unsigned int grabIcon, unsigned int closeIcon, unsigned int minimizeIcon);
 
     void AddWidget(std::unique_ptr<IVRWidget> widget);
     void SetLayout(std::unique_ptr<ILayout> layout);
     void RecalculateLayout();
-    void Update(const Ray& worldRay, const glm::mat4& parentTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed);
+    void Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed);
     void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection);
     HitResult CheckIntersection(const Ray& worldRay, const glm::mat4& parentTransform);
     bool HandleClick();
@@ -51,20 +51,28 @@ public:
 
 private:
     std::string name_;
+    std::string displayName_;
     glm::vec2 size_;
     glm::mat4 offsetTransform_;
     bool isVisible_ = true;
     float cornerRadius_;
     std::unique_ptr<ILayout> layout_;
     
+    std::unique_ptr<VRConfirmButtonWidget> grabHandle_;
     std::unique_ptr<VRConfirmButtonWidget> resizeHandle_;
+    std::unique_ptr<VRConfirmButtonWidget> minimizeHandle_;
+    std::unique_ptr<VRConfirmButtonWidget> closeHandle_;
+
     bool isResizing_ = false;
     bool isChangingProportions_ = false;
+    bool minimizeTargetState_ = false;
+    float minimizeT_ = 0.0f;
     glm::vec3 initialPanelXDir_{1.0f, 0.0f, 0.0f};
     glm::vec3 initialPanelYDir_{0.0f, 1.0f, 0.0f};
     glm::vec3 resizeStartControllerPos_{0.0f};
     glm::vec3 resizeStartScale_{1.0f};
     glm::vec3 panelCenterAtResizeStart_{0.0f};
+    glm::vec2 resizeStartSize_{1.0f};
     
     IVRWidget* hoveredWidget_ = nullptr;
     std::vector<std::unique_ptr<IVRWidget>> widgets_;

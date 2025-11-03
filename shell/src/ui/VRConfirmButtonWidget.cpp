@@ -10,8 +10,8 @@ namespace Urbaxio::UI {
 VRConfirmButtonWidget::VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, glm::vec3 color, std::function<void()> onClick)
     : localPosition_(localPos), diameter_(diameter), color_(color), textureId_(0), onClick_(onClick) {}
 
-VRConfirmButtonWidget::VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, unsigned int textureId, std::function<void()> onClick)
-    : localPosition_(localPos), diameter_(diameter), color_(1.0f), textureId_(textureId), onClick_(onClick) {}
+VRConfirmButtonWidget::VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, unsigned int textureId, std::function<void()> onClick, glm::vec3 color)
+    : localPosition_(localPos), diameter_(diameter), color_(color), textureId_(textureId), onClick_(onClick) {}
 
 void VRConfirmButtonWidget::Update(const Ray& localRay, bool isClicked) {
     const float FADE_SPEED = 0.15f;
@@ -27,16 +27,16 @@ void VRConfirmButtonWidget::HandleClick() {
 
 void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha) {
     const glm::vec3 whiteColor(1.0f, 1.0f, 1.0f);
-
+    const glm::vec3 closeButtonColor(1.00f, 0.20f, 0.32f);
     bool isResizeHandle = (textureId_ == 0 && glm::distance2(color_, whiteColor) < 0.01f);
+    bool isCloseHandle = (glm::distance2(color_, closeButtonColor) < 0.01f);
 
     float finalAlpha;
-
     if (isResizeHandle) {
         // Resize handle is only visible on hover
         finalAlpha = hoverAlpha_ * alpha;
     } else {
-        // All other buttons are always visible (respecting panel's alpha)
+        // All other buttons (grab, minimize, close) are always visible
         finalAlpha = alpha;
     }
 
@@ -60,7 +60,11 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
     glm::vec3 abColor2 = color_;
 
     const glm::vec3 greenColor(0.1f, 0.8f, 0.2f);
-    if (glm::distance2(color_, greenColor) < 0.01f) {
+
+    if (isCloseHandle) {
+        abColor1 = glm::vec3(0.99f, 0.65f, 0.90f);
+        abColor2 = glm::vec3(0.99f, 0.73f, 0.65f);
+    } else if (glm::distance2(color_, greenColor) < 0.01f) {
         abColor1 = glm::vec3(0.55f, 1.00f, 0.18f);
         abColor2 = glm::vec3(0.00f, 1.00f, 0.75f);
     } else if (glm::distance2(color_, whiteColor) < 0.01f) {
