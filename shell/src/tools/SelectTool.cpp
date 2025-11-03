@@ -160,6 +160,34 @@ bool RayLineSegmentIntersection(
     return false;
 }
 
+// --- NEW: Helper for Axis-Aligned Bounding Box vs Line Segment intersection ---
+bool AABBLineSegmentIntersect(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& box_min, const glm::vec3& box_max) {
+    glm::vec3 dir = p2 - p1;
+    float tmin = 0.0f;
+    float tmax = 1.0f;
+
+    for (int i = 0; i < 3; ++i) {
+        if (std::abs(dir[i]) < 1e-6) { // Parallel to the slab
+            if (p1[i] < box_min[i] || p1[i] > box_max[i]) {
+                return false; // Outside the slab, no intersection
+            }
+        } else {
+            float ood = 1.0f / dir[i];
+            float t1 = (box_min[i] - p1[i]) * ood;
+            float t2 = (box_max[i] - p1[i]) * ood;
+            if (t1 > t2) std::swap(t1, t2);
+
+            tmin = std::max(tmin, t1);
+            tmax = std::min(tmax, t2);
+
+            if (tmin > tmax) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 } // end anonymous namespace
 
 namespace Urbaxio::Tools {
@@ -666,9 +694,8 @@ void SelectTool::worker_thread_main() {
             std::unique_lock<std::mutex> lock(jobMutex_);
             jobCondition_.wait(lock, [this] { return !jobQueue_.empty() || stopWorker_; });
 
-            if (stopWorker_) {
-                return;
-            }
+            if (stopWorker_) return;
+
             job = std::move(jobQueue_.front());
             jobQueue_.pop();
         }
@@ -681,23 +708,29 @@ void SelectTool::worker_thread_main() {
                    (p.z >= job.box_min.z && p.z <= job.box_max.z);
         };
 
+        // Select Lines
         for (const auto& [id, line] : job.allLines) {
             bool start_in = is_point_in_box(line.start);
             bool end_in = is_point_in_box(line.end);
-            if (job.isWindowSelection) { if (start_in && end_in) result.lineIDs.insert(id); }
-            else { if (start_in || end_in) result.lineIDs.insert(id); }
+            if (job.isWindowSelection) {
+                if (start_in && end_in) result.lineIDs.insert(id);
+            } else {
+                if (start_in || end_in || AABBLineSegmentIntersect(line.start, line.end, job.box_min, job.box_max)) {
+                    result.lineIDs.insert(id);
+                }
+            }
         }
 
+        // Select Faces
         for (const auto& [objId, mesh] : job.objectMeshes) {
             if (result.objectId != 0) break;
-
-            Engine::SceneObject tempObj(objId, "");
-            tempObj.set_mesh_buffers(mesh);
 
             std::set<size_t> processedTriangles;
             for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                 if (processedTriangles.count(i)) continue;
 
+                Engine::SceneObject tempObj(objId, "");
+                tempObj.set_mesh_buffers(mesh);
                 std::vector<size_t> currentFace = FindCoplanarAdjacentTriangles(tempObj, i);
                 for (size_t tri_idx : currentFace) processedTriangles.insert(tri_idx);
 
@@ -715,7 +748,30 @@ void SelectTool::worker_thread_main() {
                     else all_in = false;
                 }
 
-                if (job.isWindowSelection ? all_in : any_in) {
+                bool shouldSelectFace = false;
+                if (job.isWindowSelection) {
+                    shouldSelectFace = all_in;
+                } else {
+                    if (any_in) {
+                        shouldSelectFace = true;
+                    } else {
+                        // If no vertices are inside, check for edge intersections
+                        for(size_t tri_idx : currentFace) {
+                            unsigned int i0 = mesh.indices[tri_idx], i1 = mesh.indices[tri_idx+1], i2 = mesh.indices[tri_idx+2];
+                            glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+                            glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+                            glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+                            if (AABBLineSegmentIntersect(v0, v1, job.box_min, job.box_max) ||
+                                AABBLineSegmentIntersect(v1, v2, job.box_min, job.box_max) ||
+                                AABBLineSegmentIntersect(v2, v0, job.box_min, job.box_max)) {
+                                shouldSelectFace = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (shouldSelectFace) {
                     if (result.objectId == 0) result.objectId = objId;
                     result.triangleIndices.insert(result.triangleIndices.end(), currentFace.begin(), currentFace.end());
                 }
