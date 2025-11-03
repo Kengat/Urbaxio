@@ -68,6 +68,8 @@ extern "C" {
 
 #include <fstream>
 #include <charconv>
+// --- ДОБАВЬ ЭТУ СТРОКУ ---
+#include <SDL2/SDL_keycode.h>
 // --- NEW: For File Dialogs on Windows ---
 #if defined(_WIN32)
 #include <windows.h>
@@ -476,7 +478,7 @@ namespace { // Anonymous namespace for helpers
     // --- NEW: Factory function to create our VR panels ---
     void SetupVRPanels(Urbaxio::UI::VRUIManager& vruiManager, std::string& numpadInputTarget, Urbaxio::Tools::ToolManager& toolManager, bool& isNumpadActiveFlag, const Urbaxio::Tools::ToolContext& toolContext, unsigned int dragIconTexture, unsigned int closeIconTexture, unsigned int minimizeIconTexture) {
         {
-            // --- FINAL: Default transform values from your tuning ---
+            // --- Transform values from your tuning ---
             glm::vec3 translation = glm::vec3(-0.012f, -0.063f, -0.127f);
             glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-109.914f, 3.989f, -3.402f));
             glm::vec3 scale = glm::vec3(0.297f, 0.297f, 0.297f);
@@ -485,38 +487,77 @@ namespace { // Anonymous namespace for helpers
                                glm::mat4_cast(glm::quat(eulerAnglesRad)) *
                                glm::scale(glm::mat4(1.0f), scale);
             
-            // --- FINAL: Default constructor parameters from your tuning ---
-            auto& numpad = vruiManager.AddPanel("NewNumpad", "Numpad", glm::vec2(0.238f, 0.424f), offset, 0.1f, dragIconTexture, closeIconTexture, minimizeIconTexture);
+            // --- Constructor parameters from your tuning ---
+            auto& numpad = vruiManager.AddPanel("NewNumpad", "Numpad", glm::vec2(0.226f, 0.427f), offset, 0.1f, dragIconTexture, closeIconTexture, minimizeIconTexture);
 
-            // --- NEW LAYOUT: Display and Confirm on the same line ---
-            glm::vec2 displaySize(0.14f, 0.05f); // Display is shorter now
-            float confirmButtonSize = 0.05f;     // Confirm button is as tall as the display
-
+            glm::vec2 displaySize(0.14f, 0.05f); 
             numpad.AddWidget(std::make_unique<Urbaxio::UI::VRDisplayWidget>(glm::vec3(0), displaySize, numpadInputTarget));
             
-            auto confirmCallback = [&]() { /* ... (твой существующий код колбэка без изменений) ... */ };
-            numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(glm::vec3(0), confirmButtonSize, glm::vec3(0.1f, 0.8f, 0.2f), confirmCallback));
+            // --- FIX: Implement Confirm Callback ---
+            auto confirmCallback = [&]() {
+                if (numpadInputTarget.empty() || numpadInputTarget == ".") return;
+
+                using Urbaxio::Tools::ToolType;
+                auto* tool = toolManager.GetActiveTool();
+                if (!tool) return;
+
+                if (toolManager.GetActiveToolType() == ToolType::Line) {
+                    auto* line = static_cast<Urbaxio::Tools::LineTool*>(tool);
+                    line->SetLengthInput(numpadInputTarget);
+                    tool->OnKeyDown(SDLK_RETURN, false, false);
+                } else if (toolManager.GetActiveToolType() == ToolType::PushPull) {
+                    auto* pp = static_cast<Urbaxio::Tools::PushPullTool*>(tool);
+                    pp->SetLengthInput(numpadInputTarget);
+                    tool->OnKeyDown(SDLK_RETURN, false, false);
+                }
+                
+                isNumpadActiveFlag = false;
+            };
+            float topButtonSize = 0.05f;
+            numpad.AddWidget(std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(glm::vec3(0), topButtonSize, glm::vec3(0.1f, 0.8f, 0.2f), confirmCallback));
 
             float keyTextHeight = 0.03f;
             const char* keys[] = {"1","2","3", "4","5","6", "7","8","9", ".","0","<-"};
             for (int i = 0; i < 12; ++i) {
                 std::string keyStr = keys[i];
-                auto callback = [keyStr, &numpadInputTarget]() { /* ... (твой существующий код колбэка без изменений) ... */ };
+                
+                // --- FIX: Implement Key Callback ---
+                auto callback = [keyStr, &numpadInputTarget, &isNumpadActiveFlag]() {
+                    if (!isNumpadActiveFlag) {
+                        numpadInputTarget = "0";
+                        isNumpadActiveFlag = true;
+                    }
+
+                    if (keyStr == "<-") {
+                        if (!numpadInputTarget.empty()) numpadInputTarget.pop_back();
+                        if (numpadInputTarget.empty()) numpadInputTarget = "0";
+                        return;
+                    }
+
+                    if (keyStr == ".") {
+                        if (numpadInputTarget.find('.') == std::string::npos) {
+                            if (numpadInputTarget.empty()) numpadInputTarget = "0";
+                            numpadInputTarget.push_back('.');
+                        }
+                        return;
+                    }
+                    
+                    if (numpadInputTarget == "0") numpadInputTarget.clear();
+                    numpadInputTarget.push_back(keyStr[0]);
+                };
                 numpad.AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>(keyStr, glm::vec3(0), glm::vec2(keyTextHeight), callback));
             }
             
-            // --- NEW LAYOUT: Position all widgets ---
-            const float contentOffsetY = -0.02f; // Offset to move everything down
+            // --- Position all widgets ---
+            const float contentOffsetY = -0.02f;
             const float topRowY = 0.17f + contentOffsetY;
             
-            // Position Display and Confirm button on the same row
             numpad.GetWidget(0)->SetLocalPosition({-0.035f, topRowY, 0.01f}); // Display
             numpad.GetWidget(1)->SetLocalPosition({0.07f, topRowY, 0.01f});   // Confirm button
             
             float keySpacing = 0.065f;
             for (int i = 0; i < 12; ++i) {
                 glm::vec3 keyCenter(0);
-                // Keys start lower now
                 if (i < 9) keyCenter = glm::vec3(((float)(i % 3) - 1.0f) * keySpacing, 0.09f - (float)(i / 3) * keySpacing + contentOffsetY, 0.01f);
                 else if (i == 9) keyCenter = glm::vec3(-1.0f * keySpacing, 0.09f - 3.0f * keySpacing + contentOffsetY, 0.01f);
                 else if (i == 10) keyCenter = glm::vec3(0.0f, 0.09f - 3.0f * keySpacing + contentOffsetY, 0.01f);

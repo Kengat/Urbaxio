@@ -242,49 +242,12 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
 void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection) {
     if (!isVisible_ || alpha < 0.01f) return;
 
-    // --- Animation & Layout Calculations ---
+    // --- Animation & Layout Constants ---
     const float handleDiameter = 0.02f;
     const float handleSpacing = 0.025f;
-
-    // 1. Determine handle positions based on panel state (minimized, narrow, or normal)
-    glm::vec3 grabPos, minimizePos, closePos, resizePos;
-    
-    if (minimizeT_ > 0.99f) { // --- Minimized State ---
-        const glm::vec2 minimizedSize(0.1f, 0.03f);
-        // Place handles horizontally on top of the minimized stub
-        closePos    = { minimizedSize.x * 0.5f - handleDiameter * 0.5f, minimizedSize.y * 0.5f + handleSpacing, 0.01f };
-        minimizePos = closePos - glm::vec3(handleSpacing, 0, 0);
-        grabPos     = minimizePos - glm::vec3(handleSpacing, 0, 0);
-        resizePos   = { minimizedSize.x * 0.5f - handleDiameter * 0.5f, -minimizedSize.y * 0.5f + handleDiameter * 0.5f, 0.01f };
-    } else { // --- Maximized or Animating State ---
-        // Calculate the default horizontal positions first
-        closePos    = { size_.x * 0.5f - handleDiameter * 0.5f, size_.y * 0.5f - handleDiameter * 0.5f, 0.01f };
-        minimizePos = closePos - glm::vec3(handleSpacing, 0, 0);
-        grabPos     = minimizePos - glm::vec3(handleSpacing, 0, 0);
-        resizePos   = { size_.x * 0.5f - handleDiameter * 0.5f, -size_.y * 0.5f + handleDiameter * 0.5f, 0.01f };
-        
-        // Check if the grab handle would spill out
-        bool useVerticalLayout = (grabPos.x - handleDiameter * 0.5f) < (-size_.x * 0.5f);
-
-        if (useVerticalLayout) {
-            // Switch to vertical layout, outside the top-left corner
-            const float verticalOffset = 0.01f;
-            closePos    = { -size_.x * 0.5f - verticalOffset, size_.y * 0.5f - handleDiameter * 0.5f, 0.01f };
-            minimizePos = closePos - glm::vec3(0, handleSpacing, 0);
-            grabPos     = minimizePos - glm::vec3(0, handleSpacing, 0);
-            // keep resize in its default bottom-right corner for the current size
-            resizePos   = { size_.x * 0.5f - handleDiameter * 0.5f, -size_.y * 0.5f + handleDiameter * 0.5f, 0.01f };
-        }
-    }
-
-    // Apply the calculated positions to the handle widgets
-    closeHandle_->SetLocalPosition(closePos);
-    minimizeHandle_->SetLocalPosition(minimizePos);
-    grabHandle_->SetLocalPosition(grabPos);
-    resizeHandle_->SetLocalPosition(resizePos);
-
-    // 2. Animate panel size and position for smooth minimizing
     const glm::vec2 minimizedSize(0.1f, 0.03f);
+
+    // --- 1. Calculate Animated Panel Geometry ---
     glm::vec2 currentSize = glm::mix(size_, minimizedSize, minimizeT_);
     glm::vec3 positionOffset = glm::mix(
         glm::vec3(0.0f), 
@@ -295,19 +258,55 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     float widgetsAlpha = alpha * (1.0f - minimizeT_);
     float minimizedTitleAlpha = alpha * minimizeT_;
 
-    // 3. Render Background
+    // --- 2. Calculate Handle Positions with Smooth Interpolation ---
+    glm::vec3 grabPos, minimizePos, closePos;
+
+    // Define the two possible layouts for the MAXIMIZED state
+    glm::vec3 h_closePos    = { size_.x * 0.5f - handleDiameter * 0.5f, size_.y * 0.5f - handleDiameter * 0.5f, 0.01f };
+    glm::vec3 h_minimizePos = h_closePos - glm::vec3(handleSpacing, 0, 0);
+    glm::vec3 h_grabPos     = h_minimizePos - glm::vec3(handleSpacing, 0, 0);
+
+    const float verticalOffset = 0.01f;
+    glm::vec3 v_closePos    = { -size_.x * 0.5f - verticalOffset, size_.y * 0.5f - handleDiameter * 0.5f, 0.01f };
+    glm::vec3 v_minimizePos = v_closePos - glm::vec3(0, handleSpacing, 0);
+    glm::vec3 v_grabPos     = v_minimizePos - glm::vec3(0, handleSpacing, 0);
+
+    // Define the single layout for the MINIMIZED state
+    glm::vec3 m_closePos    = { minimizedSize.x * 0.5f - handleDiameter * 0.5f, minimizedSize.y * 0.5f, 0.01f };
+    m_closePos += positionOffset; // Adjust to the corner of the moved stub
+    glm::vec3 m_minimizePos = m_closePos - glm::vec3(handleSpacing, 0, 0);
+    glm::vec3 m_grabPos     = m_minimizePos - glm::vec3(handleSpacing, 0, 0);
+    
+    // Decide which layout to use for the maximized state
+    bool useVerticalLayout = (h_grabPos.x - handleDiameter * 0.5f) < (-size_.x * 0.5f);
+    
+    // Interpolate positions from the chosen maximized layout to the minimized layout
+    closePos    = glm::mix(useVerticalLayout ? v_closePos    : h_closePos,    m_closePos,    minimizeT_);
+    minimizePos = glm::mix(useVerticalLayout ? v_minimizePos : h_minimizePos, m_minimizePos, minimizeT_);
+    grabPos     = glm::mix(useVerticalLayout ? v_grabPos     : h_grabPos,     m_grabPos,     minimizeT_);
+    
+    // The resize handle just moves with the corner and fades out
+    glm::vec3 resizePos = { size_.x * 0.5f - handleDiameter * 0.5f, -size_.y * 0.5f + handleDiameter * 0.5f, 0.01f };
+
+    // Apply final positions
+    closeHandle_->SetLocalPosition(closePos);
+    minimizeHandle_->SetLocalPosition(minimizePos);
+    grabHandle_->SetLocalPosition(grabPos);
+    resizeHandle_->SetLocalPosition(resizePos);
+
+    // --- 3. Render Background ---
     glm::mat4 backgroundModel = transform 
                               * glm::translate(glm::mat4(1.0f), positionOffset)
                               * glm::scale(glm::mat4(1.0f), glm::vec3(currentSize.x, currentSize.y, 1.0f));
     renderer.RenderVRPanel(view, projection, backgroundModel, glm::vec3(0.43f, 0.65f, 0.82f), currentRadius, 0.25f * alpha);
         
-    // 4. Render Handles (they are now at their correct, dynamically calculated positions)
+    // --- 4. Render Handles ---
         grabHandle_->Render(renderer, textRenderer, transform, view, projection, alpha);
         minimizeHandle_->Render(renderer, textRenderer, transform, view, projection, alpha);
         closeHandle_->Render(renderer, textRenderer, transform, view, projection, alpha);
     resizeHandle_->Render(renderer, textRenderer, transform, view, projection, widgetsAlpha);
 
-    // 5. Render Widgets or Minimized Title
+    // --- 5. Render Widgets or Minimized Title ---
         textRenderer.SetPanelModelMatrix(transform);
     if (widgetsAlpha > 0.01f) {
         for (auto& widget : widgets_) {
