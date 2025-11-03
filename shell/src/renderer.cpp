@@ -1482,7 +1482,7 @@ namespace Urbaxio {
         bool isMainPanel = color.g > 0.5f;
         if (isMainPanel && simpleLineShaderProgram != 0 && panelOutlineVAO_ != 0) {
             std::vector<float> vertices;
-            glm::vec4 outlineColor(1.0f, 1.0f, 1.0f, 0.5f);
+            glm::vec4 outlineColor(1.0f, 1.0f, 1.0f, 0.5f * alpha);
             const int corner_segments = 8;
             
             // --- START FIX ---

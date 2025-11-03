@@ -728,6 +728,15 @@ int main(int argc, char* argv[]) {
     std::vector<size_t> hoveredFaceTriangleIndices;
     glm::vec3 hoverHighlightColor = glm::vec3(0.4f, 0.9f, 1.0f); // Light cyan
     
+    // --- NEW: State for the menu sphere WIDGET ---
+    std::unique_ptr<Urbaxio::UI::VRConfirmButtonWidget> menuSphereWidget = nullptr; // Меняем тип на кнопку с иконкой
+    glm::mat4 menuSphereOffset = glm::translate(glm::mat4(1.0f), glm::vec3(-0.00645685f, -0.0384107f, -0.0818305f)); // Новое смещение
+    bool isGrabbingMenuSphere = false;
+    glm::mat4 grabbedInitialSphereWorldTransform; // Правильная переменная для хранения состояния захвата
+    glm::mat4 grabbedControllerInitialTransform;
+    const float menuSphereDiameter = 0.025f; // Уменьшенный в два раза диаметр
+    bool isPanelManagerEnabled = false; // По умолчанию панель панелей выключена
+    
     // --- Tool Manager Setup ---
     int display_w, display_h;
     SDL_GetWindowSize(window, &display_w, &display_h);
@@ -766,6 +775,8 @@ int main(int argc, char* argv[]) {
     // --- Create all essential markers ---
     RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
 
+    
+
     // --- NEW: Create VR Controller Visuals ---
     ControllerVisuals leftController;
     ControllerVisuals rightController;
@@ -779,8 +790,6 @@ int main(int argc, char* argv[]) {
     static glm::vec3 g_controllerOffsetEuler(273.000f, 166.500f, 81.000f);
     static float g_controllerModelScale = 0.7814f;
     
-    // ДОБАВЬТЕ ЭТУ СТРОКУ:
-    static bool yButtonWasPressed = false;
 
     // --- NEW: VR UI Manager ---
     Urbaxio::UI::VRUIManager vruiManager;
@@ -801,12 +810,27 @@ int main(int argc, char* argv[]) {
     unsigned int moveIconTexture = load_icon("move_icon.png");
     unsigned int closeIconTexture = load_icon("close_icon.png");
     unsigned int minimizeIconTexture = load_icon("minimize_icon.png");
+    unsigned int panelManagerIconTexture = load_icon("panel_manager.png");
 
     // --- NEW: Setup our VR panels using the new system ---
     SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture, closeIconTexture, minimizeIconTexture);
     SetupToolMenuPanel(vruiManager, toolManager, dragIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture, closeIconTexture, minimizeIconTexture);
     // ДОБАВЬТЕ ЭТУ СТРОКУ:
     SetupPanelManagerPanel(vruiManager, dragIconTexture, closeIconTexture, minimizeIconTexture);
+
+    // --- NEW: Create the menu sphere WIDGET ---
+    menuSphereWidget = std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
+        glm::vec3(0.0f), // Локальная позиция (центр)
+        menuSphereDiameter,
+        panelManagerIconTexture, // Передаём ID иконки
+        [&isPanelManagerEnabled](){
+            isPanelManagerEnabled = !isPanelManagerEnabled;
+        },
+        glm::vec3(1.0f) // Базовый цвет (белый)
+    );
+    if (menuSphereWidget) {
+        menuSphereWidget->SetIconOffsetUseCameraForward(true);
+    }
 
     // --- NEW: State for the import options dialog ---
     bool g_showImportOptionsPopup = false;
@@ -1081,13 +1105,8 @@ int main(int argc, char* argv[]) {
                 vrManager->PollActions();
                 const auto& leftHand = vrManager->GetLeftHandVisual();
 
-                // --- NEW: Toggle Panel Manager visibility on Y button click ---
-                if (vrManager->leftYButtonIsPressed && !yButtonWasPressed) {
-                    if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
-                        panelMgr->SetVisible(!panelMgr->IsVisible());
-                    }
-                }
-                yButtonWasPressed = vrManager->leftYButtonIsPressed;
+                
+                
                 // Update modifier state for VR after polling actions
 
                 // --- NEW: Handle Undo/Redo gesture actions ---
@@ -1238,6 +1257,9 @@ int main(int argc, char* argv[]) {
                            : vrRayOrigin + vrRayDirection * rayLength;
                 }
 
+                // Left trigger state used for sphere visibility and panel gating
+                bool isTriggerPressed = vrManager->leftTriggerValue > 0.5f;
+
                 if (pointerVisible) {
                     // NEW: Check intersection with ToolMenu panel
                     if (auto* toolMenuPanel = vruiManager.GetPanel("ToolMenu")) {
@@ -1260,6 +1282,19 @@ int main(int argc, char* argv[]) {
                             }
                         }
                     }
+
+                    // Check intersection with the menu sphere widget if it's visible
+                    if (menuSphereWidget && isTriggerPressed) {
+                        glm::mat4 sphereWorldTransform = leftControllerUnscaledTransform * menuSphereOffset;
+                        glm::vec3 sphereWorldCenter = glm::vec3(sphereWorldTransform[3]);
+                        float sphereWorldRadius = (menuSphereDiameter * 0.5f) * glm::length(glm::vec3(sphereWorldTransform[0]));
+                        float intersectionDistance;
+                        if (glm::intersectRaySphere(vrRayOrigin, vrRayDirection, sphereWorldCenter, sphereWorldRadius * sphereWorldRadius, intersectionDistance)
+                            && intersectionDistance > 0.0f
+                            && intersectionDistance < glm::distance(vrRayOrigin, rayEnd)) {
+                            rayEnd = vrRayOrigin + vrRayDirection * intersectionDistance;
+                        }
+                    }
                     
                     renderer.UpdateVRPointer(vrRayOrigin, rayEnd, true);
                 } else {
@@ -1270,6 +1305,62 @@ int main(int argc, char* argv[]) {
                     Urbaxio::UI::Ray worldRay = {vrRayOrigin, vrRayDirection};
                     
                     vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, vrManager->rightAButtonIsPressed, vrManager->rightBButtonIsPressed, vrManager->leftJoystick.y);
+
+                    // --- NEW: Menu Sphere WIDGET logic ---
+                    bool sphereConsumedClick = false;
+                    if (menuSphereWidget) {
+                        // Шар-виджет существует и обновляется, только когда зажат левый курок
+                        if (isTriggerPressed) {
+                            // 1. Рассчитываем мировую трансформацию виджета
+                            glm::mat4 sphereWorldTransform = leftControllerUnscaledTransform * menuSphereOffset;
+                            
+                            // 2. Обновляем состояние ховера
+                            Urbaxio::UI::Ray localRay;
+                            glm::mat4 invSphereTransform = glm::inverse(sphereWorldTransform);
+                            localRay.origin = invSphereTransform * glm::vec4(vrRayOrigin, 1.0f);
+                            localRay.direction = glm::normalize(glm::vec3(invSphereTransform * glm::vec4(vrRayDirection, 0.0f)));
+                            Urbaxio::UI::HitResult hit = menuSphereWidget->CheckIntersection(localRay);
+                            menuSphereWidget->SetHover(hit.didHit);
+                            menuSphereWidget->Update(localRay, false, false, 0.0f);
+
+                            // 3. Логика клика/захвата
+                            if (rightHand.triggerClicked && hit.didHit) {
+                                sphereConsumedClick = true; // Этот клик обработан шаром
+                                if (vrManager->rightBButtonIsPressed) {
+                                    // B+курок - начинаем захват для перемещения
+                                    isGrabbingMenuSphere = true;
+                                    grabbedControllerInitialTransform = rightControllerUnscaledTransform;
+                                    grabbedInitialSphereWorldTransform = sphereWorldTransform;
+                                    
+                                    // Логирование информации при начале захвата
+                                    glm::vec3 scale, translation, skew;
+                                    glm::quat orientation;
+                                    glm::vec4 perspective;
+                                    glm::decompose(menuSphereOffset, scale, orientation, translation, skew, perspective);
+                                    std::cout << "--- Menu Sphere Widget Info ---\n"
+                                              << "Offset Translation: (" << translation.x << ", " << translation.y << ", " << translation.z << ")\n"
+                                              << "-------------------------------\n";
+                                } else {
+                                    // Обычный клик - вызываем действие (переключение панели)
+                                    menuSphereWidget->HandleClick();
+                                }
+                            }
+                        } else {
+                            // Если курок не зажат, сбрасываем состояние ховера
+                            menuSphereWidget->SetHover(false);
+                        }
+
+                        // 5. Обновляем позицию во время захвата (работает независимо от курка)
+                        if (isGrabbingMenuSphere) {
+                            glm::mat4 deltaTransform = rightControllerUnscaledTransform * glm::inverse(grabbedControllerInitialTransform);
+                            glm::mat4 newWorldTransform = deltaTransform * grabbedInitialSphereWorldTransform;
+                            menuSphereOffset = glm::inverse(leftControllerUnscaledTransform) * newWorldTransform;
+                        }
+                    }
+                    // 6. Логика отпускания
+                    if (rightHand.triggerReleased) {
+                        isGrabbingMenuSphere = false;
+                    }
                     
                     // --- НОВЫЙ БЛОК: Проверяем, занят ли UI, и блокируем инструменты ---
                     bool isInteractingWithPanelSystem = vruiManager.IsInteracting();
@@ -1330,7 +1421,6 @@ int main(int argc, char* argv[]) {
 
                 // --- Unified UI State Update (Menus, Numpad Visibility & Display Text) ---
                 const float MENU_FADE_SPEED = 0.1f;
-                bool isTriggerPressed = vrManager->leftTriggerValue > 0.5f;
 
                 // Update tool menu alpha
                 if (auto* toolMenuPanel = vruiManager.GetPanel("ToolMenu")) {
@@ -1375,11 +1465,13 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                // Update Panel Manager alpha based on its visibility state
+                // Update Panel Manager alpha based on its visibility state AND left trigger
                 if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
-                    float targetAlpha = panelMgr->IsVisible() ? 1.0f : 0.0f;
+                    // Панель появляется, только если она включена (isPanelManagerEnabled) И зажат курок
+                    float targetAlpha = (isPanelManagerEnabled && isTriggerPressed) ? 1.0f : 0.0f;
                     panelMgr->alpha += (targetAlpha - panelMgr->alpha) * MENU_FADE_SPEED;
                     panelMgr->alpha = std::min(1.0f, std::max(0.0f, panelMgr->alpha));
+                    panelMgr->SetVisible(panelMgr->alpha > 0.01f);
                 }
                 
                 if (vrManager->leftAButtonDoubleClicked) {
@@ -1405,9 +1497,12 @@ int main(int argc, char* argv[]) {
                 }
                 
                 if (rightHand.triggerClicked) {
-                    bool clickConsumed = vruiManager.HandleClick();
+                    bool clickConsumed = false;
+                    if (!sphereConsumedClick) {
+                        clickConsumed = vruiManager.HandleClick();
+                    }
                     
-                    if (!clickConsumed && !isInteractingWithPanelSystem) {
+                    if (!sphereConsumedClick && !clickConsumed && !isInteractingWithPanelSystem) {
                         // If not interacting with UI, it's a world action for the current tool
                         toolManager.OnLeftMouseDown(0, 0, shiftDown, ctrlDown, vrRayOrigin, vrRayDirection);
                     }
@@ -1495,6 +1590,14 @@ int main(int argc, char* argv[]) {
                     
                     // --- NEW: Render VR UI Manager ---
                     vruiManager.Render(renderer, textRenderer, view, projection);
+                    
+                    // --- NEW: Render the menu sphere widget (only if left trigger is pressed) ---
+                    if (menuSphereWidget && isTriggerPressed) {
+                        glm::mat4 sphereWorldTransform = leftControllerUnscaledTransform * menuSphereOffset;
+                        // Альфа шара теперь тоже зависит от курка, как у панелей
+                        float sphereAlpha = std::min(1.0f, vruiManager.GetPanel("ToolMenu") ? vruiManager.GetPanel("ToolMenu")->alpha : 0.0f);
+                        menuSphereWidget->Render(renderer, textRenderer, sphereWorldTransform, view, projection, sphereAlpha, std::nullopt);
+                    }
 
                     
                     // 3D distance text in VR

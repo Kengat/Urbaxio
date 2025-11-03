@@ -68,11 +68,12 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
     renderer.RenderVRMenuWidget(view, projection, sphereModel, baseColor, aberration, alpha, abColor1, abColor2);
 
     if (textureId_ != 0) {
-        glm::vec3 panelForward = glm::normalize(glm::vec3(panelTransform[2]));
-        glm::vec3 iconWorldPos = sphereWorldPos + panelForward * 0.001f;
+        const float ICON_FORWARD_FACTOR = 0.15f; // Пропорционально диаметру
+        float scaledSphereDiameter = sphereDiameter * panelLocalScale;
+        glm::vec3 iconWorldPos = sphereWorldPos + camFwd * (scaledSphereDiameter * ICON_FORWARD_FACTOR);
         glm::mat4 iconModel = glm::translate(glm::mat4(1.0f), iconWorldPos) *
                               glm::mat4(glm::mat3(camRight, camUp, glm::vec3(0))) *
-                              glm::scale(glm::mat4(1.0f), glm::vec3(sphereDiameter * panelLocalScale * 0.8f));
+                              glm::scale(glm::mat4(1.0f), glm::vec3(scaledSphereDiameter * 0.8f));
 
         renderer.RenderVRMenuWidget(view, projection, iconModel, glm::vec3(1.0f), 0.0f, alpha, glm::vec3(0.0f), glm::vec3(0.0f), textureId_);
     }

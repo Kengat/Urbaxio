@@ -73,8 +73,8 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
     renderer.RenderVRMenuWidget(view, projection, modelMatrix, color_, aberration, finalAlpha, abColor1, abColor2);
 
     if (textureId_ != 0) {
-        glm::vec3 panelForward = glm::normalize(glm::vec3(panelTransform[2]));
-        glm::vec3 iconWorldPos = worldPos + panelForward * 0.001f;
+        const float ICON_FORWARD_FACTOR = 0.25f; // Пропорционально диаметру
+        glm::vec3 iconWorldPos = worldPos + camFwd * (scaledDiameter * ICON_FORWARD_FACTOR);
         glm::mat4 iconModelMatrix = glm::translate(glm::mat4(1.0f), iconWorldPos) * glm::mat4(glm::mat3(camRight, camUp, camFwd)) * glm::scale(glm::mat4(1.0f), glm::vec3(scaledDiameter * 0.8f));
         renderer.RenderVRMenuWidget(view, projection, iconModelMatrix, glm::vec3(1.0f), 0.0f, finalAlpha, glm::vec3(0.0f), glm::vec3(0.0f), textureId_);
     }

@@ -25,6 +25,8 @@ public:
     const glm::vec3& GetLocalPosition() const override;
     glm::vec2 GetSize() const override;
 
+    void SetIconOffsetUseCameraForward(bool useCameraForward) { iconOffsetUseCameraForward_ = useCameraForward; }
+
 private:
     glm::vec3 localPosition_;
     float diameter_;
@@ -32,6 +34,7 @@ private:
     unsigned int textureId_ = 0;
     std::function<void()> onClick_;
     float hoverAlpha_ = 0.0f;
+    bool iconOffsetUseCameraForward_ = false;
 };
 
 } // namespace Urbaxio::UI
