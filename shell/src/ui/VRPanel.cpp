@@ -145,39 +145,39 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
     closeHandle_->Update(localRay, false);
 
     if (isClicked) {
-        if (grabHit.didHit) {
+        // Handle logging first to ensure we read final size_ from previous frame's resize
+        if (resizeHit.didHit && bButtonIsPressed) {
+            // Log panel info to console
+            std::cout << "\n--- PANEL INFO: " << displayName_ << " (" << name_ << ") ---\n";
+            std::cout << std::fixed << std::setprecision(3);
+
+            glm::vec3 scale, translation, skew;
+            glm::quat orientation;
+            glm::vec4 perspective;
+            (void)glm::decompose(offsetTransform_, scale, orientation, translation, skew, perspective);
+            
+            glm::vec3 eulerAnglesRad = glm::eulerAngles(orientation);
+            glm::vec3 eulerAnglesDeg = glm::degrees(eulerAnglesRad);
+
+            std::cout << "Offset Transform:\n";
+            std::cout << "  Translation: glm::vec3(" << translation.x << "f, " << translation.y << "f, " << translation.z << "f)\n";
+            std::cout << "  Scale:       glm::vec3(" << scale.x << "f, " << scale.y << "f, " << scale.z << "f)\n";
+            std::cout << "  Rotation (Euler Deg): glm::radians(glm::vec3(" << eulerAnglesDeg.x << "f, " << eulerAnglesDeg.y << "f, " << eulerAnglesDeg.z << "f))\n";
+
+            std::cout << "\nConstructor Parameters:\n";
+            std::cout << "  Size:          glm::vec2(" << size_.x << "f, " << size_.y << "f)\n";
+            std::cout << "  Corner Radius: " << cornerRadius_ << "f\n";
+
+            std::cout << "-------------------------------------------\n\n";
+            clickConsumed = true;
+        } else if (grabHit.didHit) {
             isGrabbing = true;
             grabbedInitialTransform = transform;
             grabbedControllerInitialTransform = interactionTransform;
             clickConsumed = true;
         } else if (resizeHit.didHit) {
             clickConsumed = true;
-            
-            if (bButtonIsPressed) {
-                // Log panel info to console
-                std::cout << "\n--- PANEL INFO: " << displayName_ << " (" << name_ << ") ---\n";
-                std::cout << std::fixed << std::setprecision(3);
-
-                glm::vec3 scale, translation, skew;
-                glm::quat orientation;
-                glm::vec4 perspective;
-                (void)glm::decompose(offsetTransform_, scale, orientation, translation, skew, perspective);
-                
-                glm::vec3 eulerAnglesRad = glm::eulerAngles(orientation);
-                glm::vec3 eulerAnglesDeg = glm::degrees(eulerAnglesRad);
-
-                std::cout << "Offset Transform:\n";
-                std::cout << "  Translation: glm::vec3(" << translation.x << "f, " << translation.y << "f, " << translation.z << "f)\n";
-                std::cout << "  Scale:       glm::vec3(" << scale.x << "f, " << scale.y << "f, " << scale.z << "f)\n";
-                std::cout << "  Rotation (Euler Deg): glm::radians(glm::vec3(" << eulerAnglesDeg.x << "f, " << eulerAnglesDeg.y << "f, " << eulerAnglesDeg.z << "f))\n";
-
-                std::cout << "\nConstructor Parameters:\n";
-                std::cout << "  Size:          glm::vec2(" << size_.x << "f, " << size_.y << "f)\n";
-                std::cout << "  Corner Radius: " << cornerRadius_ << "f\n";
-
-                std::cout << "-------------------------------------------\n\n";
-            } else {
-        // --- START RESIZE OR PROPORTION CHANGE ---
+            // --- START RESIZE OR PROPORTION CHANGE ---
         panelCenterAtResizeStart_ = glm::vec3(transform[3]);
         
         // Project start point onto panel plane
@@ -200,7 +200,6 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
         } else {
             isResizing_ = true;
             isChangingProportions_ = false;
-                }
         }
     } else if (minimizeHit.didHit) {
             minimizeTargetState_ = !minimizeTargetState_;

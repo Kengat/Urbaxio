@@ -102,5 +102,7 @@ const glm::vec3& VRToolButtonWidget::GetLocalPosition() const { return localPosi
 
 glm::vec2 VRToolButtonWidget::GetSize() const { return size_; }
 
+void VRToolButtonWidget::SetSize(const glm::vec2& size) { size_ = size; }
+
 } // namespace Urbaxio::UI
 

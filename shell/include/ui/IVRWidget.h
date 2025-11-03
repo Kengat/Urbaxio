@@ -35,6 +35,8 @@ public:
 
     virtual void SetLocalPosition(const glm::vec3& pos) = 0;
     virtual const glm::vec3& GetLocalPosition() const = 0;
+    // Optional: allow layouts to resize widgets; default is no-op
+    virtual void SetSize(const glm::vec2& size) {}
     virtual glm::vec2 GetSize() const = 0;
 
 protected:

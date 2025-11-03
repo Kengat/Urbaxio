@@ -41,15 +41,13 @@ public:
 class VerticalLayout : public ILayout {
 
 public:
-
-    VerticalLayout(float spacing = 0.01f) : spacing_(spacing) {}
+    VerticalLayout(float spacing = 0.01f, bool stretch = false) : spacing_(spacing), stretch_(stretch) {}
 
     void Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets, const glm::vec2& panelSize) override;
 
 private:
-
     float spacing_;
-
+    bool stretch_;
 };
 
 // Lays out widgets in a grid

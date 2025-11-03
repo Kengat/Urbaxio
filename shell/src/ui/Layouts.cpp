@@ -9,33 +9,35 @@ namespace Urbaxio::UI {
 // --- VerticalLayout Implementation ---
 
 void VerticalLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets, const glm::vec2& panelSize) {
-
     if (widgets.empty()) return;
 
-    float totalHeight = 0;
+    if (stretch_) {
+        float totalSpacing = (widgets.size() - 1) * spacing_;
+        float availableHeight = panelSize.y - totalSpacing;
+        float widgetHeight = (widgets.size() > 0) ? (availableHeight / widgets.size()) : 0.0f;
 
-    for (const auto& widget : widgets) {
+        float currentY = panelSize.y / 2.0f;
+        for (auto& widget : widgets) {
+            currentY -= widgetHeight / 2.0f;
+            widget->SetLocalPosition({0.0f, currentY, 0.01f});
+            widget->SetSize({panelSize.x, widgetHeight});
+            currentY -= (widgetHeight / 2.0f + spacing_);
+        }
+    } else {
+        float totalHeight = 0;
+        for (const auto& widget : widgets) {
+            totalHeight += widget->GetSize().y;
+        }
+        totalHeight += (widgets.size() - 1) * spacing_;
 
-        totalHeight += widget->GetSize().y;
-
+        float currentY = totalHeight / 2.0f;
+        for (auto& widget : widgets) {
+            const auto& widgetSize = widget->GetSize();
+            currentY -= widgetSize.y / 2.0f;
+            widget->SetLocalPosition({0.0f, currentY, 0.01f}); // Center horizontally
+            currentY -= (widgetSize.y / 2.0f + spacing_);
+        }
     }
-
-    totalHeight += (widgets.size() - 1) * spacing_;
-
-    float currentY = totalHeight / 2.0f;
-
-    for (auto& widget : widgets) {
-
-        const auto& widgetSize = widget->GetSize();
-
-        currentY -= widgetSize.y / 2.0f;
-
-        widget->SetLocalPosition({0.0f, currentY, 0.01f}); // Center horizontally
-
-        currentY -= (widgetSize.y / 2.0f + spacing_);
-
-    }
-
 }
 
 // --- GridLayout Implementation ---
