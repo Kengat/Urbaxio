@@ -24,7 +24,7 @@ public:
     void AddWidget(std::unique_ptr<IVRWidget> widget);
     void SetLayout(std::unique_ptr<ILayout> layout);
     void RecalculateLayout();
-    void Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed);
+    void Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed, float stickY);
     void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection);
     HitResult CheckIntersection(const Ray& worldRay, const glm::mat4& parentTransform);
     bool HandleClick();

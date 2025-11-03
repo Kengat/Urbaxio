@@ -44,7 +44,7 @@ void VRPanel::RecalculateLayout() {
     }
 }
 
-void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed) {
+void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed, float stickY) {
     // --- Animation Logic ---
     const float ANIM_SPEED = 0.1f;
     float targetT = minimizeTargetState_ ? 1.0f : 0.0f;
@@ -139,10 +139,10 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
     minimizeHandle_->SetHover(minimizeHit.didHit);
     closeHandle_->SetHover(closeHit.didHit);
     
-    grabHandle_->Update(localRay, false);
-    resizeHandle_->Update(localRay, false);
-    minimizeHandle_->Update(localRay, false);
-    closeHandle_->Update(localRay, false);
+    grabHandle_->Update(localRay, false, isClickReleased, 0.0f);
+    resizeHandle_->Update(localRay, false, isClickReleased, 0.0f);
+    minimizeHandle_->Update(localRay, false, isClickReleased, 0.0f);
+    closeHandle_->Update(localRay, false, isClickReleased, 0.0f);
 
     if (isClicked) {
         // Handle logging first to ensure we read final size_ from previous frame's resize
@@ -234,7 +234,7 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
     
     if (minimizeT_ < 0.99f) {
         for (auto& widget : widgets_) {
-            widget->Update(localRay, false);
+            widget->Update(localRay, isClicked && (hoveredWidget_ == widget.get()), isClickReleased, stickY);
         }
     }
 }
@@ -301,16 +301,16 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     renderer.RenderVRPanel(view, projection, backgroundModel, glm::vec3(0.43f, 0.65f, 0.82f), currentRadius, 0.25f * alpha);
         
     // --- 4. Render Handles ---
-        grabHandle_->Render(renderer, textRenderer, transform, view, projection, alpha);
-        minimizeHandle_->Render(renderer, textRenderer, transform, view, projection, alpha);
-        closeHandle_->Render(renderer, textRenderer, transform, view, projection, alpha);
-    resizeHandle_->Render(renderer, textRenderer, transform, view, projection, widgetsAlpha);
+        grabHandle_->Render(renderer, textRenderer, transform, view, projection, alpha, std::nullopt);
+        minimizeHandle_->Render(renderer, textRenderer, transform, view, projection, alpha, std::nullopt);
+        closeHandle_->Render(renderer, textRenderer, transform, view, projection, alpha, std::nullopt);
+    resizeHandle_->Render(renderer, textRenderer, transform, view, projection, widgetsAlpha, std::nullopt);
 
     // --- 5. Render Widgets or Minimized Title ---
         textRenderer.SetPanelModelMatrix(transform);
     if (widgetsAlpha > 0.01f) {
         for (auto& widget : widgets_) {
-            widget->Render(renderer, textRenderer, transform, view, projection, widgetsAlpha);
+            widget->Render(renderer, textRenderer, transform, view, projection, widgetsAlpha, std::nullopt);
         }
     }
     

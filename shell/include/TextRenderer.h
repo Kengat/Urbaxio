@@ -5,6 +5,10 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <optional>
+#include "ui/IVRWidget.h"
+
+
 
 namespace Urbaxio {
 
@@ -15,6 +19,16 @@ struct Glyph {
     float advance = 0.0f;
     glm::vec4 planeBounds{0.0f};
     glm::vec4 atlasBounds{0.0f};
+};
+
+// --- Comparator for glm::vec4 values ---
+struct Vec4Comparator {
+    bool operator()(const glm::vec4& a, const glm::vec4& b) const {
+        if (a.x != b.x) return a.x < b.x;
+        if (a.y != b.y) return a.y < b.y;
+        if (a.z != b.z) return a.z < b.z;
+        return a.w < b.w;
+    }
 };
 
 class TextRenderer {
@@ -36,11 +50,13 @@ public:
                       const glm::vec3& localPosition,
                       const glm::vec4& color,
                       float height,
-                      TextAlign alignment = TextAlign::CENTER);
+                      TextAlign alignment = TextAlign::CENTER,
+                      const std::optional<UI::MaskData>& mask = std::nullopt);
     void ClearPanelModelMatrix();
     void SetPanelModelMatrix(const glm::mat4& modelMatrix);
 
     void Render(const glm::mat4& view, const glm::mat4& projection);
+    void RenderPanelText(const glm::mat4& view, const glm::mat4& projection);
 
 private:
     struct Vertex {
@@ -50,9 +66,25 @@ private:
     };
 
     struct PanelVertex {
-        glm::vec3 pos; // Position relative to panel origin
+        glm::vec3 pos;
         glm::vec2 uv;
         glm::vec4 color;
+    };
+
+    using MaskInfo = std::optional<UI::MaskData>;
+
+    // New batching key that accounts for mask and model matrix
+    struct PanelKey {
+        MaskInfo mask;
+        glm::mat4 model;
+    };
+
+    struct PanelKeyComparator {
+        bool operator()(const PanelKey& a, const PanelKey& b) const;
+    };
+
+    struct ScissorBatch {
+        std::vector<PanelVertex> vertices;
     };
 
     bool CreateShaderProgram();
@@ -75,7 +107,7 @@ private:
 
     std::map<int, Glyph> glyphs_;
     std::vector<Vertex> vertices_;
-    std::vector<PanelVertex> panelVertices_;
+    std::map<PanelKey, ScissorBatch, PanelKeyComparator> panelBatches_;
     glm::mat4 currentPanelModelMatrix_ = glm::mat4(1.0f);
 };
 

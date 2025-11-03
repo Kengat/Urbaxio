@@ -6,10 +6,12 @@
 #include <fstream>
 #include <iostream>
 #include <cstddef>
+#include <cstring>
 
 // #define STB_IMAGE_IMPLEMENTATION // This is now defined in main.cpp to avoid linker errors
 #include "stb_image.h"
 #include "json.hpp"
+#include "ui/IVRWidget.h"
 
 using json = nlohmann::json;
 
@@ -44,6 +46,19 @@ namespace {
 }
 
 namespace Urbaxio {
+bool TextRenderer::PanelKeyComparator::operator()(const PanelKey& a, const PanelKey& b) const {
+    if (a.mask.has_value() != b.mask.has_value()) return a.mask.has_value() < b.mask.has_value();
+    if (a.mask) {
+        const auto& ma = *a.mask;
+        const auto& mb = *b.mask;
+        if (ma.cornerRadius != mb.cornerRadius) return ma.cornerRadius < mb.cornerRadius;
+        if (ma.size.x != mb.size.x) return ma.size.x < mb.size.x;
+        if (ma.size.y != mb.size.y) return ma.size.y < mb.size.y;
+        int c = std::memcmp(glm::value_ptr(ma.transform), glm::value_ptr(mb.transform), sizeof(glm::mat4));
+        if (c != 0) return c < 0;
+    }
+    return std::memcmp(glm::value_ptr(a.model), glm::value_ptr(b.model), sizeof(glm::mat4)) < 0;
+}
 
 TextRenderer::TextRenderer() {}
 TextRenderer::~TextRenderer() { Shutdown(); }
@@ -128,27 +143,72 @@ bool TextRenderer::CreateShaderProgram() {
     shaderProgram_ = Link(v, f);
     if (shaderProgram_ == 0) return false;
 
-    // --- Panel Text Shader ---
+    // --- Panel Text Shader with mask support ---
     const char* panel_vs = R"(
         #version 330 core
         layout(location=0) in vec3 aPosLocal;
         layout(location=1) in vec2 aUv;
         layout(location=2) in vec4 aColor;
+
         uniform mat4 u_panelModel;
         uniform mat4 u_view;
         uniform mat4 u_projection;
+
+        uniform bool u_enableMask;
+        uniform mat4 u_maskTransform;
+
         out vec2 vUv;
         out vec4 vColor;
+        out vec2 vMaskLocalPos;
+
         void main(){
             vUv = aUv;
             vColor = aColor;
-            gl_Position = u_projection * u_view * u_panelModel * vec4(aPosLocal, 1.0);
+            vec4 worldPos = u_panelModel * vec4(aPosLocal, 1.0);
+            if (u_enableMask) {
+                vMaskLocalPos = (inverse(u_maskTransform) * worldPos).xy;
+            }
+            gl_Position = u_projection * u_view * worldPos;
+        }
+    )";
+
+    const char* panel_fs = R"(
+        #version 330 core
+        in vec2 vUv;
+        in vec4 vColor;
+        in vec2 vMaskLocalPos;
+        out vec4 FragColor;
+        uniform sampler2D u_fontAtlas;
+        uniform float u_pxRange;
+        uniform bool u_enableMask;
+        uniform vec2 u_maskSize;
+        uniform float u_maskCornerRadius;
+        float median(float r,float g,float b){ return max(min(r,g), min(max(r,g), b)); }
+        float sdRoundedBox( in vec2 p, in vec2 b, in float r ) {
+            vec2 q = abs(p)-b+r;
+            return min(max(q.x,q.y),0.0) + length(max(q,0.0)) - r;
+        }
+        void main(){
+            vec3 msdf = texture(u_fontAtlas, vUv).rgb;
+            float sd = median(msdf.r, msdf.g, msdf.b);
+            float screenPxDistance = u_pxRange * (sd - 0.5);
+            float textOpacity = clamp(screenPxDistance + 0.5, 0.0, 1.0);
+            if(textOpacity < 0.01) discard;
+            float finalAlpha = vColor.a * textOpacity;
+            if (u_enableMask) {
+                vec2 maskHalfSize = u_maskSize * 0.5;
+                float dist = sdRoundedBox(vMaskLocalPos, maskHalfSize, u_maskCornerRadius);
+                float maskAlpha = 1.0 - smoothstep(-0.01, 0.0, dist);
+                finalAlpha *= maskAlpha;
+            }
+            if(finalAlpha < 0.01) discard;
+            FragColor = vec4(vColor.rgb, finalAlpha);
         }
     )";
 
     GLuint panel_v = CompileShader(GL_VERTEX_SHADER, panel_vs);
     if (!panel_v) return false;
-    GLuint panel_f = CompileShader(GL_FRAGMENT_SHADER, fs);
+    GLuint panel_f = CompileShader(GL_FRAGMENT_SHADER, panel_fs);
     if (!panel_f) { glDeleteShader(panel_v); return false; }
     panel_shaderProgram_ = Link(panel_v, panel_f);
     return panel_shaderProgram_ != 0;
@@ -257,7 +317,8 @@ void TextRenderer::AddTextOnPanel(const std::string& text,
                                 const glm::vec3& localPosition,
                                 const glm::vec4& color,
                                 float height,
-                                TextAlign alignment)
+                                TextAlign alignment,
+                                const std::optional<UI::MaskData>& mask)
 {
     float finalScale = height / lineHeight_;
     glm::vec3 right(1.0f, 0.0f, 0.0f); // Local X axis
@@ -276,6 +337,9 @@ void TextRenderer::AddTextOnPanel(const std::string& text,
         xCursor = -totalAdvance * 0.5f;
     }
     // For TextAlign::LEFT, xCursor starts at 0.0f
+
+    PanelKey key{ mask, currentPanelModelMatrix_ };
+    auto& batch = panelBatches_[key];
 
     for (char ch : text) {
         int uc = (int)ch;
@@ -303,12 +367,12 @@ void TextRenderer::AddTextOnPanel(const std::string& text,
         glm::vec3 p2 = localPosition + right * (x1 * finalScale) + up * (y1 * finalScale);
         glm::vec3 p3 = localPosition + right * (x0 * finalScale) + up * (y1 * finalScale);
 
-        panelVertices_.push_back({ p0, { u0, v1 }, color });
-        panelVertices_.push_back({ p1, { u1, v1 }, color });
-        panelVertices_.push_back({ p2, { u1, v0 }, color });
-        panelVertices_.push_back({ p0, { u0, v1 }, color });
-        panelVertices_.push_back({ p2, { u1, v0 }, color });
-        panelVertices_.push_back({ p3, { u0, v0 }, color });
+        batch.vertices.push_back({ p0, { u0, v1 }, color });
+        batch.vertices.push_back({ p1, { u1, v1 }, color });
+        batch.vertices.push_back({ p2, { u1, v0 }, color });
+        batch.vertices.push_back({ p0, { u0, v1 }, color });
+        batch.vertices.push_back({ p2, { u1, v0 }, color });
+        batch.vertices.push_back({ p3, { u0, v0 }, color });
 
         xCursor += g.advance;
     }
@@ -329,7 +393,6 @@ void TextRenderer::Render(const glm::mat4& view, const glm::mat4& projection) {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, fontAtlasTexture_);
 
-    // --- Render Billboard Text ---
     if (!vertices_.empty()) {
         glUseProgram(shaderProgram_);
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram_, "u_view"), 1, GL_FALSE, glm::value_ptr(view));
@@ -343,27 +406,49 @@ void TextRenderer::Render(const glm::mat4& view, const glm::mat4& projection) {
         glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices_.size());
     }
 
-    // --- Render Panel Text ---
-    if (!panelVertices_.empty()) {
-        glUseProgram(panel_shaderProgram_);
-        glUniformMatrix4fv(glGetUniformLocation(panel_shaderProgram_, "u_view"), 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(glGetUniformLocation(panel_shaderProgram_, "u_projection"), 1, GL_FALSE, glm::value_ptr(projection));
-        glUniformMatrix4fv(glGetUniformLocation(panel_shaderProgram_, "u_panelModel"), 1, GL_FALSE, glm::value_ptr(currentPanelModelMatrix_));
-        glUniform1i(glGetUniformLocation(panel_shaderProgram_, "u_fontAtlas"), 0);
-        glUniform1f(glGetUniformLocation(panel_shaderProgram_, "u_pxRange"), pxRange_);
-
-        glBindVertexArray(panel_vao_);
-        glBindBuffer(GL_ARRAY_BUFFER, panel_vbo_);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, panelVertices_.size() * sizeof(PanelVertex), panelVertices_.data());
-        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)panelVertices_.size());
-
-        panelVertices_.clear(); // MODIFIED: Clear buffer immediately after drawing panel text
-    }
+    RenderPanelText(view, projection);
 
     glEnable(GL_DEPTH_TEST);
     glBindVertexArray(0);
     vertices_.clear();
-    // panelVertices_.clear(); // Already cleared above
+}
+
+void TextRenderer::RenderPanelText(const glm::mat4& view, const glm::mat4& projection) {
+    if (panelBatches_.empty()) return;
+
+    glUseProgram(panel_shaderProgram_);
+    glUniformMatrix4fv(glGetUniformLocation(panel_shaderProgram_, "u_view"), 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(glGetUniformLocation(panel_shaderProgram_, "u_projection"), 1, GL_FALSE, glm::value_ptr(projection));
+    glUniform1i(glGetUniformLocation(panel_shaderProgram_, "u_fontAtlas"), 0);
+    glUniform1f(glGetUniformLocation(panel_shaderProgram_, "u_pxRange"), pxRange_);
+
+    glBindVertexArray(panel_vao_);
+
+    for (const auto& pair : panelBatches_) {
+        const auto& key = pair.first;
+        const auto& batch = pair.second;
+        if (batch.vertices.empty()) continue;
+
+        glUniformMatrix4fv(glGetUniformLocation(panel_shaderProgram_, "u_panelModel"), 1, GL_FALSE, glm::value_ptr(key.model));
+
+        if (key.mask.has_value()) {
+            const auto& mask = *key.mask;
+            glUniform1i(glGetUniformLocation(panel_shaderProgram_, "u_enableMask"), 1);
+            glUniformMatrix4fv(glGetUniformLocation(panel_shaderProgram_, "u_maskTransform"), 1, GL_FALSE, glm::value_ptr(mask.transform));
+            glUniform2fv(glGetUniformLocation(panel_shaderProgram_, "u_maskSize"), 1, glm::value_ptr(mask.size));
+            glUniform1f(glGetUniformLocation(panel_shaderProgram_, "u_maskCornerRadius"), mask.cornerRadius);
+        } else {
+            glUniform1i(glGetUniformLocation(panel_shaderProgram_, "u_enableMask"), 0);
+        }
+
+        glBindBuffer(GL_ARRAY_BUFFER, panel_vbo_);
+        glBufferData(GL_ARRAY_BUFFER, batch.vertices.size() * sizeof(PanelVertex), batch.vertices.data(), GL_DYNAMIC_DRAW);
+        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)batch.vertices.size());
+
+        // No scissor disable needed; masking handled in shader
+    }
+
+    panelBatches_.clear();
 }
 
 } // namespace Urbaxio

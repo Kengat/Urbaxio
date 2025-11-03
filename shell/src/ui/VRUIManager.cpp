@@ -28,7 +28,7 @@ VRPanel* VRUIManager::GetHoveredPanel() {
     return nullptr;
 }
 
-void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& rightControllerTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed) {
+void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& rightControllerTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed, float leftStickY) {
     const glm::mat4& parentTransform = leftControllerTransform;
     const glm::mat4& interactionTransform = rightControllerTransform;
 
@@ -50,7 +50,8 @@ void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTra
         if (panel.IsVisible()) {
             // Update all panels, but only the active one gets click events
             bool panelIsClicked = (name == activeInteractionPanel_) && isClicked;
-            panel.Update(worldRay, parentTransform, interactionTransform, panelIsClicked, isClickReleased, aButtonIsPressed, bButtonIsPressed);
+            float stickForPanel = (name == activeInteractionPanel_) ? leftStickY : 0.0f;
+            panel.Update(worldRay, parentTransform, interactionTransform, panelIsClicked, isClickReleased, aButtonIsPressed, bButtonIsPressed, stickForPanel);
         }
     }
 }

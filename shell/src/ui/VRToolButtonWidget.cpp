@@ -15,11 +15,11 @@ VRToolButtonWidget::VRToolButtonWidget(const std::string& text, const glm::vec3&
       textureId_(textureId),
       toolType_(toolType), toolManager_(toolManager), onClick_(onClick) {}
 
-void VRToolButtonWidget::Update(const Ray& localRay, bool isClicked) {
+void VRToolButtonWidget::Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) {
     const float FADE_SPEED = 0.15f;
     float targetAlpha = isHovered_ ? 1.0f : 0.0f;
     sphereHoverAlpha_ += (targetAlpha - sphereHoverAlpha_) * FADE_SPEED;
-    textHoverAlpha_ += (targetAlpha - textHoverAlpha_) * FADE_SPEED; // Text alpha now follows hover state
+    textHoverAlpha_ += (targetAlpha - textHoverAlpha_) * FADE_SPEED;
 }
 
 void VRToolButtonWidget::HandleClick() {
@@ -31,7 +31,6 @@ void VRToolButtonWidget::HandleClick() {
 HitResult VRToolButtonWidget::CheckIntersection(const Ray& localRay) {
     HitResult result;
     float t;
-    // Hitbox is based on the text area
     if (glm::intersectRayPlane(localRay.origin, localRay.direction, localPosition_, glm::vec3(0, 0, 1), t) && t > 0) {
         glm::vec3 hitPoint = localRay.origin + localRay.direction * t;
         if (glm::abs(hitPoint.x - localPosition_.x) <= size_.x * 0.5f &&
@@ -44,13 +43,11 @@ HitResult VRToolButtonWidget::CheckIntersection(const Ray& localRay) {
     return result;
 }
 
-void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha) {
+void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) {
     bool isSelected = toolManager_.GetActiveToolType() == toolType_;
     float panelLocalScale = glm::length(glm::vec3(panelTransform[0]));
 
-    // --- 1. Render Sphere ---
     float sphereDiameter = size_.y * 0.8f;
-    // Sphere is now centered at the widget's localPosition
     glm::vec3 sphereLocalPos = localPosition_; 
     glm::vec3 sphereWorldPos = panelTransform * glm::vec4(sphereLocalPos, 1.0f);
 
@@ -70,7 +67,6 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
 
     renderer.RenderVRMenuWidget(view, projection, sphereModel, baseColor, aberration, alpha, abColor1, abColor2);
 
-    // --- NEW: Render icon on top of the sphere ---
     if (textureId_ != 0) {
         glm::vec3 panelForward = glm::normalize(glm::vec3(panelTransform[2]));
         glm::vec3 iconWorldPos = sphereWorldPos + panelForward * 0.001f;
@@ -81,18 +77,16 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
         renderer.RenderVRMenuWidget(view, projection, iconModel, glm::vec3(1.0f), 0.0f, alpha, glm::vec3(0.0f), glm::vec3(0.0f), textureId_);
     }
 
-    // --- 2. Render Text (flat, animated, and aligned) ---
     if (textHoverAlpha_ > 0.01f) {
-        float textHeight = size_.y * 0.6f; // Height in local panel units (already 40% smaller)
+        float textHeight = size_.y * 0.6f;
         glm::vec4 textColor = glm::vec4(1.0f, 1.0f, 1.0f, alpha * textHoverAlpha_);
 
-        // Calculate position: right of the sphere
-        float slideOffset = 0.015f; // How far the text slides
+        float slideOffset = 0.015f;
         glm::vec3 textLocalPos = localPosition_;
-        textLocalPos.x += (sphereDiameter * 0.7f); // Start position right of the sphere
-        textLocalPos.x -= slideOffset * (1.0f - textHoverAlpha_); // Animate slide-in from the left
+        textLocalPos.x += (sphereDiameter * 0.7f);
+        textLocalPos.x -= slideOffset * (1.0f - textHoverAlpha_);
 
-        textRenderer.AddTextOnPanel(text_, textLocalPos, textColor, textHeight, Urbaxio::TextAlign::LEFT);
+        textRenderer.AddTextOnPanel(text_, textLocalPos, textColor, textHeight, Urbaxio::TextAlign::LEFT, mask);
     }
 }
 

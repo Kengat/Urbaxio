@@ -109,6 +109,9 @@ namespace Urbaxio {
         // Public wrapper to allow tools to draw snap-style markers
         void RenderSnapMarker(const SnapResult& snap, const glm::mat4& view, const glm::mat4& proj, int viewportWidth, int viewportHeight);
 
+        // ДОБАВЬТЕ ЭТОТ МЕТОД:
+        void GetViewport(glm::vec4& outViewport) const;
+
         GLuint vrMenuWidgetShaderProgram = 0; // For menu spheres
         glm::mat4 vrMenuWidgetShaderProgram_viewMatrix_HACK = glm::mat4(1.0f);
 

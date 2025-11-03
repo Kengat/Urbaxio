@@ -24,8 +24,8 @@ public:
                        Urbaxio::Tools::ToolType toolType, Urbaxio::Tools::ToolManager& toolManager,
                        std::function<void()> onClick);
 
-    void Update(const Ray& localRay, bool isClicked) override;
-    void Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha) override;
+    void Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) override;
+    void Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask = std::nullopt) override;
     HitResult CheckIntersection(const Ray& localRay) override;
     void HandleClick() override;
 

@@ -13,7 +13,7 @@ VRMenuSphereWidget::VRMenuSphereWidget(const glm::vec3& localPos, float diameter
       baseColor_(baseColor), aberrationColor1_(abColor1), aberrationColor2_(abColor2),
       onClick_(onClick) {}
 
-void VRMenuSphereWidget::Update(const Ray& localRay, bool isClicked) {
+void VRMenuSphereWidget::Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) {
     const float FADE_SPEED = 0.15f;
     float targetAlpha = isHovered_ ? 1.0f : 0.0f;
     hoverAlpha_ += (targetAlpha - hoverAlpha_) * FADE_SPEED;
@@ -25,13 +25,12 @@ void VRMenuSphereWidget::HandleClick() {
     }
 }
 
-void VRMenuSphereWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha) {
+void VRMenuSphereWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) {
     float panelLocalScale = glm::length(glm::vec3(panelTransform[0]));
     float scaledDiameter = diameter_ * panelLocalScale;
 
     glm::vec3 worldPos = panelTransform * glm::vec4(localPosition_, 1.0f);
 
-    // Billboarding logic
     glm::mat4 cameraWorld = glm::inverse(view);
     glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
     glm::vec3 camUp    = glm::normalize(glm::vec3(cameraWorld[1]));

@@ -13,7 +13,7 @@ VRConfirmButtonWidget::VRConfirmButtonWidget(const glm::vec3& localPos, float di
 VRConfirmButtonWidget::VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, unsigned int textureId, std::function<void()> onClick, glm::vec3 color)
     : localPosition_(localPos), diameter_(diameter), color_(color), textureId_(textureId), onClick_(onClick) {}
 
-void VRConfirmButtonWidget::Update(const Ray& localRay, bool isClicked) {
+void VRConfirmButtonWidget::Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) {
     const float FADE_SPEED = 0.15f;
     float targetAlpha = isHovered_ ? 1.0f : 0.0f;
     hoverAlpha_ += (targetAlpha - hoverAlpha_) * FADE_SPEED;
@@ -25,7 +25,7 @@ void VRConfirmButtonWidget::HandleClick() {
     }
 }
 
-void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha) {
+void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) {
     const glm::vec3 whiteColor(1.0f, 1.0f, 1.0f);
     const glm::vec3 closeButtonColor(1.00f, 0.20f, 0.32f);
     bool isResizeHandle = (textureId_ == 0 && glm::distance2(color_, whiteColor) < 0.01f);
@@ -33,15 +33,13 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
 
     float finalAlpha;
     if (isResizeHandle) {
-        // Resize handle is only visible on hover
         finalAlpha = hoverAlpha_ * alpha;
     } else {
-        // All other buttons (grab, minimize, close) are always visible
         finalAlpha = alpha;
     }
 
     if (finalAlpha < 0.01f) {
-        return; // Don't render if invisible
+        return;
     }
     
     float panelLocalScale = glm::length(glm::vec3(panelTransform[0]));

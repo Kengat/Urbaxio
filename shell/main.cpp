@@ -63,6 +63,8 @@ extern "C" {
 #include "ui/VRUIManager.h"
 #include "ui/VRPanel.h"
 #include "ui/Layouts.h"
+// ДОБАВЬТЕ ЭТУ СТРОКУ:
+#include "ui/VRScrollWidget.h"
 // --- VR menu interaction helpers ---
 #include <glm/gtx/intersect.hpp>
 
@@ -94,6 +96,32 @@ extern "C" {
 #include <BRepBuilderAPI_Transform.hxx>
 
 namespace { // Anonymous namespace for helpers
+    // ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ:
+    void SetupPanelManagerPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
+        glm::vec3 translation = glm::vec3(0.004f, 0.045f, 0.020f);
+        glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-117.219f, 2.847f, -4.021f));
+        glm::vec3 scale = glm::vec3(0.308f);
+
+        glm::mat4 panelOffset = glm::translate(glm::mat4(1.0f), translation) *
+                               glm::mat4_cast(glm::quat(eulerAnglesRad)) *
+                               glm::scale(glm::mat4(1.0f), scale);
+        
+        auto& panelMgr = vruiManager.AddPanel("PanelManager", "Panels", glm::vec2(0.217f, 0.381f), panelOffset, 0.1f, dragIcon, closeIcon, minimizeIcon);
+
+        auto scrollWidget = std::make_unique<Urbaxio::UI::VRScrollWidget>(glm::vec3(0.0f, -0.01f, 0.01f), glm::vec2(0.18f, 0.3f));
+
+        for (int i = 0; i < 20; ++i) {
+            std::string buttonText = "Test Button " + std::to_string(i + 1);
+            scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>(
+                buttonText,
+                glm::vec3(0),
+                glm::vec2(0.15f, 0.03f),
+                [buttonText](){ std::cout << "Clicked " << buttonText << std::endl; }
+            ));
+        }
+
+        panelMgr.AddWidget(std::move(scrollWidget));
+    }
 
     // Helper to create a model matrix from an OpenXR pose
     glm::mat4 XrPoseToModelMatrix(const XrPosef& pose) {
@@ -750,6 +778,9 @@ int main(int argc, char* argv[]) {
     static glm::vec3 g_controllerOffsetTranslate(0.012f, 0.002f, 0.006f);
     static glm::vec3 g_controllerOffsetEuler(273.000f, 166.500f, 81.000f);
     static float g_controllerModelScale = 0.7814f;
+    
+    // ДОБАВЬТЕ ЭТУ СТРОКУ:
+    static bool yButtonWasPressed = false;
 
     // --- NEW: VR UI Manager ---
     Urbaxio::UI::VRUIManager vruiManager;
@@ -774,6 +805,8 @@ int main(int argc, char* argv[]) {
     // --- NEW: Setup our VR panels using the new system ---
     SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture, closeIconTexture, minimizeIconTexture);
     SetupToolMenuPanel(vruiManager, toolManager, dragIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture, closeIconTexture, minimizeIconTexture);
+    // ДОБАВЬТЕ ЭТУ СТРОКУ:
+    SetupPanelManagerPanel(vruiManager, dragIconTexture, closeIconTexture, minimizeIconTexture);
 
     // --- NEW: State for the import options dialog ---
     bool g_showImportOptionsPopup = false;
@@ -1047,6 +1080,14 @@ int main(int argc, char* argv[]) {
                 // Poll controller state after syncing actions in BeginFrame
                 vrManager->PollActions();
                 const auto& leftHand = vrManager->GetLeftHandVisual();
+
+                // --- NEW: Toggle Panel Manager visibility on Y button click ---
+                if (vrManager->leftYButtonIsPressed && !yButtonWasPressed) {
+                    if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
+                        panelMgr->SetVisible(!panelMgr->IsVisible());
+                    }
+                }
+                yButtonWasPressed = vrManager->leftYButtonIsPressed;
                 // Update modifier state for VR after polling actions
 
                 // --- NEW: Handle Undo/Redo gesture actions ---
@@ -1228,7 +1269,7 @@ int main(int argc, char* argv[]) {
                     // --- NEW: Update and Render VR UI Manager ---
                     Urbaxio::UI::Ray worldRay = {vrRayOrigin, vrRayDirection};
                     
-                    vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, vrManager->rightAButtonIsPressed, vrManager->rightBButtonIsPressed);
+                    vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, vrManager->rightAButtonIsPressed, vrManager->rightBButtonIsPressed, vrManager->leftJoystick.y);
                     
                     // --- НОВЫЙ БЛОК: Проверяем, занят ли UI, и блокируем инструменты ---
                     bool isInteractingWithPanelSystem = vruiManager.IsInteracting();
@@ -1332,6 +1373,13 @@ int main(int argc, char* argv[]) {
                             g_newNumpadInput = "0";
                         }
                     }
+                }
+
+                // Update Panel Manager alpha based on its visibility state
+                if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
+                    float targetAlpha = panelMgr->IsVisible() ? 1.0f : 0.0f;
+                    panelMgr->alpha += (targetAlpha - panelMgr->alpha) * MENU_FADE_SPEED;
+                    panelMgr->alpha = std::min(1.0f, std::max(0.0f, panelMgr->alpha));
                 }
                 
                 if (vrManager->leftAButtonDoubleClicked) {

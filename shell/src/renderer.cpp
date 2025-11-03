@@ -1661,4 +1661,10 @@ namespace Urbaxio {
         glBindVertexArray(0);
     }
 
+    void Renderer::GetViewport(glm::vec4& outViewport) const {
+        GLint viewport[4];
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        outViewport = { (float)viewport[0], (float)viewport[1], (float)viewport[2], (float)viewport[3] };
+    }
+
 } // namespace Urbaxio
