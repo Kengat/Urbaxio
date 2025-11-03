@@ -1103,18 +1103,37 @@ int main(int argc, char* argv[]) {
                     unlitOverrides[rightControllerVisual->get_id()] = true;
                 }
 
-                // Update VR pointer with menu clipping
                 auto* selectTool = (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) 
                     ? static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool()) 
                     : nullptr;
+                
+                bool isJoystickActive = std::abs(vrManager->rightThumbstickY) > 0.1f;
+                bool isDraggingBox = selectTool && selectTool->IsVrDragging();
 
-                // Update VR pointer with menu clipping
-                if (rightHand.isValid && (!selectTool || !selectTool->IsVrDragging())) { // MODIFIED: Hide pointer ray while dragging
+                glm::vec3 rayEnd = vrRayOrigin;
+                bool pointerVisible = rightHand.isValid;
+
+                if (selectTool && (isDraggingBox || isJoystickActive)) {
+                    const float VISUAL_DISTANCE = 0.2f;
+                    float worldScale = glm::length(glm::vec3(worldTransform[0]));
+                    float offset = selectTool->GetVrDragDistanceOffset();
+                    float worldDistance = (VISUAL_DISTANCE + offset) * worldScale;
+                    
+                    if (isDraggingBox) {
+                        glm::vec3 start_p, end_p;
+                        selectTool->GetVrDragBoxCorners(start_p, end_p);
+                        rayEnd = end_p;
+                    } else {
+                        rayEnd = vrRayOrigin + vrRayDirection * worldDistance;
+                    }
+                } else {
                     float rayLength = 100.0f;
-                    glm::vec3 rayEnd = (vrSnap.snapped && vrSnap.type != Urbaxio::SnapType::GRID) 
-                                       ? vrSnap.worldPoint 
-                                       : vrRayOrigin + vrRayDirection * rayLength;
+                    rayEnd = (vrSnap.snapped && vrSnap.type != Urbaxio::SnapType::GRID) 
+                           ? vrSnap.worldPoint 
+                           : vrRayOrigin + vrRayDirection * rayLength;
+                }
 
+                if (pointerVisible) {
                     // NEW: Check intersection with ToolMenu panel
                     if (auto* toolMenuPanel = vruiManager.GetPanel("ToolMenu")) {
                         if (toolMenuPanel->alpha > 0.01f) {
@@ -1139,7 +1158,7 @@ int main(int argc, char* argv[]) {
                     
                     renderer.UpdateVRPointer(vrRayOrigin, rayEnd, true);
                 } else {
-                    renderer.UpdateVRPointer({}, {}, false); // Hide pointer if invalid or dragging
+                    renderer.UpdateVRPointer({}, {}, false);
                 }
 
                     // --- NEW: Update and Render VR UI Manager ---
@@ -1288,7 +1307,20 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 if (rightHand.triggerReleased) {
-                    toolManager.OnLeftMouseUp(0, 0, *toolContext.shiftDown, *toolContext.ctrlDown);
+                    // --- MODIFIED: Handle VR drag finalization separately ---
+                    auto* selectTool = (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) 
+                        ? static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool()) 
+                        : nullptr;
+                    if (selectTool && selectTool->IsVrDragging()) {
+                        const auto& vr_views = vrManager->GetViews();
+                        if (!vr_views.empty()) {
+                            // Use the left eye's view matrix as our "center eye" reference. This is reliable.
+                            selectTool->FinalizeVrDragSelection(vr_views[0].viewMatrix, shiftDown);
+                        }
+                    } else {
+                        // Handle quick clicks (for SelectTool) or mouse up for other tools
+                        toolManager.OnLeftMouseUp(0, 0, shiftDown, ctrlDown);
+                    }
                 }
 
                 const auto& vr_views = vrManager->GetViews();
@@ -1346,27 +1378,12 @@ int main(int argc, char* argv[]) {
                         unlitOverrides
                     );
                     
-                    bool isJoystickActive = std::abs(vrManager->rightThumbstickY) > 0.1f;
-                    bool isDraggingBox = selectTool && selectTool->IsVrDragging();
-
-                    if (isDraggingBox) {
-                        // While dragging, draw a yellow dot at the END point to show where you are moving it.
-                        glm::vec3 start, end;
-                        selectTool->GetVrDragBoxCorners(start, end);
-                        Urbaxio::SnapResult fakeSnap = {true, end, Urbaxio::SnapType::ENDPOINT};
-                        renderer.RenderSnapMarker(fakeSnap, view, projection, swapchain.width, swapchain.height);
-                    } else if (selectTool && isJoystickActive) {
-                        // When NOT dragging but adjusting distance, draw a yellow dot at the potential start/end point.
-                        const float VISUAL_DISTANCE = 0.2f;
-                        float worldScale = glm::length(glm::vec3(worldTransform[0]));
-                        float offset = selectTool->GetVrDragDistanceOffset();
-                        float worldDistance = (VISUAL_DISTANCE + offset) * worldScale;
-                        glm::vec3 ghostPoint = vrRayOrigin + vrRayDirection * worldDistance;
-                        
-                        Urbaxio::SnapResult fakeSnap = {true, ghostPoint, Urbaxio::SnapType::ENDPOINT};
-                        renderer.RenderSnapMarker(fakeSnap, view, projection, swapchain.width, swapchain.height);
+                    if (selectTool) {
+                        glm::vec3 ghostPoint;
+                        selectTool->GetVrGhostPoint(vrRayOrigin, vrRayDirection, ghostPoint);
+                        Urbaxio::SnapResult ghostPointSnap = {true, ghostPoint, Urbaxio::SnapType::ENDPOINT};
+                        renderer.RenderSnapMarker(ghostPointSnap, view, projection, swapchain.width, swapchain.height);
                     } else {
-                        // Default behavior: draw the regular snap marker.
                         renderer.RenderSnapMarker(vrSnap, view, projection, swapchain.width, swapchain.height);
                     }
                     

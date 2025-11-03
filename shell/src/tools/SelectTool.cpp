@@ -4,6 +4,7 @@
 #include "cad_kernel/MeshBuffers.h"
 #include "camera.h"
 #include "snapping.h"
+#include "engine/line.h"
 #include "renderer.h"
 #include <SDL2/SDL.h>
 #include <glm/glm.hpp>
@@ -15,6 +16,7 @@
 #include <map>
 #include <algorithm>
 #include <limits>
+#include <chrono>
 
 namespace { // Anonymous namespace for helpers local to this file
 
@@ -162,6 +164,22 @@ bool RayLineSegmentIntersection(
 
 namespace Urbaxio::Tools {
 
+SelectTool::SelectTool() {
+    stopWorker_ = false;
+    workerThread_ = std::thread(&SelectTool::worker_thread_main, this);
+}
+
+SelectTool::~SelectTool() {
+    {
+        std::unique_lock<std::mutex> lock(jobMutex_);
+        stopWorker_ = true;
+    }
+    jobCondition_.notify_one();
+    if (workerThread_.joinable()) {
+        workerThread_.join();
+    }
+}
+
 void SelectTool::Activate(const ToolContext& context) {
     ITool::Activate(context);
     lastClickTimestamp = 0;
@@ -173,6 +191,7 @@ void SelectTool::Activate(const ToolContext& context) {
     isVrDragging = false;
     vrTriggerDownTimestamp = 0;
     vrDragDistanceOffset = 0.0f;
+    vrGhostPointAlpha_ = 0.0f;
 }
 
 void SelectTool::Deactivate() {
@@ -213,10 +232,12 @@ void SelectTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, 
 }
 
 void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
+    // NOTE: This function no longer handles VR drag finalization. It's done in FinalizeVrDragSelection.
+    // It ONLY handles VR quick clicks and all desktop interactions.
+    
     if (isVrDragging) {
-        // TODO: Future logic for 3D box selection will go here.
-        isVrTriggerDown = false;
-        isVrDragging = false;
+        // This case is now handled by FinalizeVrDragSelection, so do nothing here.
+        // We reset the state there.
         return;
     }
 
@@ -452,6 +473,52 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
     isDragging = false;
 }
 
+void SelectTool::FinalizeVrDragSelection(const glm::mat4& centerEyeViewMatrix, bool shift) {
+    if (!isVrDragging) return;
+
+    // --- VR 3D Box Selection Logic using the CORRECT view matrix ---
+    glm::vec2 startScreen, endScreen;
+    bool startVisible = SnappingSystem::WorldToScreen(vrDragStartPoint, centerEyeViewMatrix, context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, startScreen);
+    bool endVisible = SnappingSystem::WorldToScreen(vrDragEndPoint, centerEyeViewMatrix, context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, endScreen);
+    
+    // The direction check is now reliable
+    bool isWindowSelection = (startVisible && endVisible) ? (endScreen.x > startScreen.x) : true;
+    
+    SelectionJob job;
+    job.box_min = glm::min(vrDragStartPoint, vrDragEndPoint);
+    job.box_max = glm::max(vrDragStartPoint, vrDragEndPoint);
+    job.isWindowSelection = isWindowSelection;
+    job.shift = shift;
+
+    for (auto* obj : context.scene->get_all_objects()) {
+        if (!obj || !obj->has_mesh()) continue;
+        const auto& name = obj->get_name();
+        if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") continue;
+        job.objectMeshes[obj->get_id()] = obj->get_mesh_buffers();
+        job.objectLineIDs[obj->get_id()] = obj->boundaryLineIDs;
+    }
+    job.allLines = context.scene->GetAllLines();
+
+    {
+        std::unique_lock<std::mutex> lock(jobMutex_);
+        jobQueue_.push(std::move(job));
+    }
+    jobCondition_.notify_one();
+    
+    // --- Apply Selection ---
+    if (shift) {
+        // This is now handled asynchronously
+    } else {
+        // This is now handled asynchronously, but we can clear the current selection immediately for responsiveness
+        *context.selectedLineIDs = {};
+        *context.selectedObjId = 0;
+        *context.selectedTriangleIndices = {};
+    }
+
+    isVrTriggerDown = false;
+    isVrDragging = false;
+}
+
 void SelectTool::OnMouseMove(int mouseX, int mouseY) {
     if (isMouseDown) {
         currentDragCoords = glm::vec2(mouseX, mouseY);
@@ -476,27 +543,58 @@ void SelectTool::GetDragRect(glm::vec2& outStart, glm::vec2& outCurrent) const {
 }
 
 void SelectTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
-    ITool::OnUpdate(snap); // Store lastSnapResult for quick clicks
+    ITool::OnUpdate(snap);
 
-    // --- MODIFIED: Joystick logic is now always active for this tool ---
-    if (context.rightThumbstickY) {
-        float joyY = *context.rightThumbstickY;
-        if (std::abs(joyY) > 0.1f) { // Deadzone
-            // --- NEW: Non-linear speed calculation ---
-            const float BASE_JOYSTICK_SPEED = 0.01f;   // Speed when the point is at its base distance
-            const float ACCELERATION_FACTOR = 0.05f;   // How quickly speed increases with distance
-            const float MAX_DISTANCE_OFFSET = 100.0f;  // A far-away limit (100m)
-            const float VISUAL_DISTANCE = 0.2f;
-            const float MIN_DISTANCE_OFFSET = 0.01f - VISUAL_DISTANCE; // ~ -0.19m
+    {
+        std::unique_lock<std::mutex> lock(resultMutex_, std::try_to_lock);
+        if (lock.owns_lock() && !resultQueue_.empty()) {
+            SelectionResult result = resultQueue_.front();
+            resultQueue_.pop();
 
-            // Speed is proportional to the current offset from the base distance
-            float dynamicSpeed = BASE_JOYSTICK_SPEED + std::abs(vrDragDistanceOffset) * ACCELERATION_FACTOR;
-
-            vrDragDistanceOffset += joyY * dynamicSpeed;
-
-            // Clamp the offset to prevent it from going too close or too far
-            vrDragDistanceOffset = std::clamp(vrDragDistanceOffset, MIN_DISTANCE_OFFSET, MAX_DISTANCE_OFFSET);
+            if (result.shift) {
+                for (uint64_t id : result.lineIDs) {
+                    if (context.selectedLineIDs->count(id)) context.selectedLineIDs->erase(id);
+                    else context.selectedLineIDs->insert(id);
+                }
+                if (result.objectId != 0 && (*context.selectedObjId == 0 || *context.selectedObjId == result.objectId)) {
+                    *context.selectedObjId = result.objectId;
+                    std::set<size_t> currentSelection(context.selectedTriangleIndices->begin(), context.selectedTriangleIndices->end());
+                    for(size_t tri_idx : result.triangleIndices) {
+                        if (currentSelection.count(tri_idx)) currentSelection.erase(tri_idx);
+                        else currentSelection.insert(tri_idx);
+                    }
+                    context.selectedTriangleIndices->assign(currentSelection.begin(), currentSelection.end());
+                }
+            } else {
+                *context.selectedLineIDs = result.lineIDs;
+                *context.selectedObjId = result.objectId;
+                *context.selectedTriangleIndices = result.triangleIndices;
+            }
         }
+    }
+
+    float joyY = context.rightThumbstickY ? *context.rightThumbstickY : 0.0f;
+    bool isJoystickActive = std::abs(joyY) > 0.1f;
+
+    const float FADE_SPEED = 0.1f;
+    float targetAlpha = (isJoystickActive || isVrDragging) ? 1.0f : 0.4f;
+    if (isVrTriggerDown && !isVrDragging) {
+        targetAlpha = 0.0f;
+    }
+    vrGhostPointAlpha_ += (targetAlpha - vrGhostPointAlpha_) * FADE_SPEED;
+
+    if (isJoystickActive) {
+        const float BASE_JOYSTICK_SPEED = 0.01f;
+        const float ACCELERATION_FACTOR = 0.05f;
+        const float MAX_DISTANCE_OFFSET = 100.0f;
+        const float VISUAL_DISTANCE = 0.2f;
+        const float MIN_DISTANCE_OFFSET = 0.01f - VISUAL_DISTANCE;
+
+        float dynamicSpeed = BASE_JOYSTICK_SPEED + std::abs(vrDragDistanceOffset) * ACCELERATION_FACTOR;
+
+        vrDragDistanceOffset += joyY * dynamicSpeed;
+
+        vrDragDistanceOffset = std::clamp(vrDragDistanceOffset, MIN_DISTANCE_OFFSET, MAX_DISTANCE_OFFSET);
     }
 
     if (isVrTriggerDown) {
@@ -505,22 +603,15 @@ void SelectTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, co
             const uint32_t VR_DRAG_DELAY_MS = 150;
             if (SDL_GetTicks() - vrTriggerDownTimestamp > VR_DRAG_DELAY_MS) {
                 isVrDragging = true;
-                // The start point is already correctly set from OnLeftMouseDown
             }
         }
         
-        // --- CORRECTED LOGIC: Always update only the end point while dragging or preparing to drag ---
+        // Always update the end point while the trigger is held down
         const float VISUAL_DISTANCE = 0.2f;
         float worldScale = context.worldTransform ? glm::length(glm::vec3((*context.worldTransform)[0])) : 1.0f;
         float worldDistance = (VISUAL_DISTANCE + vrDragDistanceOffset) * worldScale;
 
-        // The check for positive distance is now implicitly handled by clamping the offset above
-        
-        // If we are NOT dragging yet, the end point just follows the ghost point
-        if (!isVrDragging) {
-            vrDragStartPoint = rayOrigin + rayDirection * worldDistance;
-        }
-        // Once we ARE dragging, vrDragStartPoint is fixed, and only vrDragEndPoint moves.
+        // The start point is now fixed from MouseDown, only update the end point.
         vrDragEndPoint = rayOrigin + rayDirection * worldDistance;
     }
 }
@@ -546,6 +637,88 @@ void SelectTool::GetVrDragBoxCorners(glm::vec3& outStart, glm::vec3& outEnd) con
 
 float SelectTool::GetVrDragDistanceOffset() const {
     return vrDragDistanceOffset;
+}
+
+void SelectTool::GetVrGhostPoint(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, glm::vec3& outPoint) const {
+    const float VISUAL_DISTANCE = 0.2f;
+    float worldScale = context.worldTransform ? glm::length(glm::vec3((*context.worldTransform)[0])) : 1.0f;
+    float worldDistance = (VISUAL_DISTANCE + vrDragDistanceOffset) * worldScale;
+    outPoint = rayOrigin + rayDirection * worldDistance;
+}
+
+float SelectTool::GetVrGhostPointAlpha() const {
+    return vrGhostPointAlpha_;
+}
+
+void SelectTool::worker_thread_main() {
+    while (true) {
+        SelectionJob job;
+
+        {
+            std::unique_lock<std::mutex> lock(jobMutex_);
+            jobCondition_.wait(lock, [this] { return !jobQueue_.empty() || stopWorker_; });
+
+            if (stopWorker_) {
+                return;
+            }
+            job = std::move(jobQueue_.front());
+            jobQueue_.pop();
+        }
+
+        SelectionResult result;
+        result.shift = job.shift;
+        auto is_point_in_box = [&](const glm::vec3& p) {
+            return (p.x >= job.box_min.x && p.x <= job.box_max.x) &&
+                   (p.y >= job.box_min.y && p.y <= job.box_max.y) &&
+                   (p.z >= job.box_min.z && p.z <= job.box_max.z);
+        };
+
+        for (const auto& [id, line] : job.allLines) {
+            bool start_in = is_point_in_box(line.start);
+            bool end_in = is_point_in_box(line.end);
+            if (job.isWindowSelection) { if (start_in && end_in) result.lineIDs.insert(id); }
+            else { if (start_in || end_in) result.lineIDs.insert(id); }
+        }
+
+        for (const auto& [objId, mesh] : job.objectMeshes) {
+            if (result.objectId != 0) break;
+
+            Engine::SceneObject tempObj(objId, "");
+            tempObj.set_mesh_buffers(mesh);
+
+            std::set<size_t> processedTriangles;
+            for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                if (processedTriangles.count(i)) continue;
+
+                std::vector<size_t> currentFace = FindCoplanarAdjacentTriangles(tempObj, i);
+                for (size_t tri_idx : currentFace) processedTriangles.insert(tri_idx);
+
+                std::set<unsigned int> uniqueVertIndices;
+                for (size_t tri_idx : currentFace) {
+                    uniqueVertIndices.insert(mesh.indices[tri_idx]);
+                    uniqueVertIndices.insert(mesh.indices[tri_idx+1]);
+                    uniqueVertIndices.insert(mesh.indices[tri_idx+2]);
+                }
+
+                bool all_in = true, any_in = false;
+                for (unsigned int v_idx : uniqueVertIndices) {
+                    glm::vec3 v_pos(mesh.vertices[v_idx*3], mesh.vertices[v_idx*3+1], mesh.vertices[v_idx*3+2]);
+                    if (is_point_in_box(v_pos)) any_in = true;
+                    else all_in = false;
+                }
+
+                if (job.isWindowSelection ? all_in : any_in) {
+                    if (result.objectId == 0) result.objectId = objId;
+                    result.triangleIndices.insert(result.triangleIndices.end(), currentFace.begin(), currentFace.end());
+                }
+            }
+        }
+
+        {
+            std::unique_lock<std::mutex> lock(resultMutex_);
+            resultQueue_.push(std::move(result));
+        }
+    }
 }
 
 } // namespace Urbaxio::Tools 
