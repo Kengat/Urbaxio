@@ -42,5 +42,11 @@ void VRButtonWidget::HandleClick() {
     if (isHovered_ && onClick_) onClick_();
 }
 
+void VRButtonWidget::SetLocalPosition(const glm::vec3& pos) { localPosition_ = pos; }
+
+const glm::vec3& VRButtonWidget::GetLocalPosition() const { return localPosition_; }
+
+glm::vec2 VRButtonWidget::GetSize() const { return size_; }
+
 }
 

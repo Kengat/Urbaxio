@@ -37,5 +37,11 @@ void VRDisplayWidget::HandleClick() {
     // Display is not interactive
 }
 
+void VRDisplayWidget::SetLocalPosition(const glm::vec3& pos) { localPosition_ = pos; }
+
+const glm::vec3& VRDisplayWidget::GetLocalPosition() const { return localPosition_; }
+
+glm::vec2 VRDisplayWidget::GetSize() const { return size_; }
+
 } // namespace Urbaxio::UI
 

@@ -96,5 +96,11 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
     }
 }
 
+void VRToolButtonWidget::SetLocalPosition(const glm::vec3& pos) { localPosition_ = pos; }
+
+const glm::vec3& VRToolButtonWidget::GetLocalPosition() const { return localPosition_; }
+
+glm::vec2 VRToolButtonWidget::GetSize() const { return size_; }
+
 } // namespace Urbaxio::UI
 

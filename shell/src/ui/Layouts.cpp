@@ -1,0 +1,74 @@
+#include "ui/Layouts.h"
+
+#include "ui/IVRWidget.h"
+
+#include <numeric>
+
+namespace Urbaxio::UI {
+
+// --- VerticalLayout Implementation ---
+
+void VerticalLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets, const glm::vec2& panelSize) {
+
+    if (widgets.empty()) return;
+
+    float totalHeight = 0;
+
+    for (const auto& widget : widgets) {
+
+        totalHeight += widget->GetSize().y;
+
+    }
+
+    totalHeight += (widgets.size() - 1) * spacing_;
+
+    float currentY = totalHeight / 2.0f;
+
+    for (auto& widget : widgets) {
+
+        const auto& widgetSize = widget->GetSize();
+
+        currentY -= widgetSize.y / 2.0f;
+
+        widget->SetLocalPosition({0.0f, currentY, 0.01f}); // Center horizontally
+
+        currentY -= (widgetSize.y / 2.0f + spacing_);
+
+    }
+
+}
+
+// --- GridLayout Implementation ---
+
+void GridLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets, const glm::vec2& panelSize) {
+
+    if (widgets.empty() || columns_ <= 0) return;
+
+    int numRows = (widgets.size() + columns_ - 1) / columns_;
+
+    float cellWidth = (panelSize.x - (columns_ - 1) * spacing_.x) / columns_;
+
+    float cellHeight = (panelSize.y - (numRows - 1) * spacing_.y) / numRows;
+
+    float startX = -panelSize.x / 2.0f + cellWidth / 2.0f;
+
+    float startY = panelSize.y / 2.0f - cellHeight / 2.0f;
+
+    for (size_t i = 0; i < widgets.size(); ++i) {
+
+        int row = i / columns_;
+
+        int col = i % columns_;
+
+        float x = startX + col * (cellWidth + spacing_.x);
+
+        float y = startY - row * (cellHeight + spacing_.y);
+
+        widgets[i]->SetLocalPosition({x, y, 0.01f});
+
+    }
+
+}
+
+}
+

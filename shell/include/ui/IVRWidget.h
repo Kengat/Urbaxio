@@ -33,6 +33,10 @@ public:
     
     virtual void SetHover(bool hover) { isHovered_ = hover; }
 
+    virtual void SetLocalPosition(const glm::vec3& pos) = 0;
+    virtual const glm::vec3& GetLocalPosition() const = 0;
+    virtual glm::vec2 GetSize() const = 0;
+
 protected:
     bool isHovered_ = false;
 };

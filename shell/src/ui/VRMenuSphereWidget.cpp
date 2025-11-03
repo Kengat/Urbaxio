@@ -56,5 +56,11 @@ HitResult VRMenuSphereWidget::CheckIntersection(const Ray& localRay) {
     return result;
 }
 
+void VRMenuSphereWidget::SetLocalPosition(const glm::vec3& pos) { localPosition_ = pos; }
+
+const glm::vec3& VRMenuSphereWidget::GetLocalPosition() const { return localPosition_; }
+
+glm::vec2 VRMenuSphereWidget::GetSize() const { return {diameter_, diameter_}; }
+
 } // namespace Urbaxio::UI
 

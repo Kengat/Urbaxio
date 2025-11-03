@@ -19,9 +19,10 @@ public:
     VRPanel* GetPanel(const std::string& name);
     VRPanel* GetHoveredPanel();
 
-    void Update(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& rightControllerTransform, bool isClicked);
+    void Update(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& rightControllerTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed);
     void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection);
     bool HandleClick();
+    bool IsInteracting() const;
 
 private:
     std::map<std::string, VRPanel> panels_;

@@ -26,26 +26,40 @@ void VRConfirmButtonWidget::HandleClick() {
 }
 
 void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha) {
+    const glm::vec3 whiteColor(1.0f, 1.0f, 1.0f);
+
+    bool isResizeHandle = (textureId_ == 0 && glm::distance2(color_, whiteColor) < 0.01f);
+
+    float finalAlpha;
+
+    if (isResizeHandle) {
+        // Resize handle is only visible on hover
+        finalAlpha = hoverAlpha_ * alpha;
+    } else {
+        // All other buttons are always visible (respecting panel's alpha)
+        finalAlpha = alpha;
+    }
+
+    if (finalAlpha < 0.01f) {
+        return; // Don't render if invisible
+    }
+    
     float panelLocalScale = glm::length(glm::vec3(panelTransform[0]));
     float scaledDiameter = diameter_ * panelLocalScale;
-
     glm::vec3 worldPos = panelTransform * glm::vec4(localPosition_, 1.0f);
 
-    // Correct billboarding
     glm::mat4 cameraWorld = glm::inverse(view);
     glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
     glm::vec3 camUp    = glm::normalize(glm::vec3(cameraWorld[1]));
     glm::vec3 camFwd   = glm::normalize(glm::vec3(cameraWorld[2]));
     glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), worldPos) * glm::mat4(glm::mat3(camRight, camUp, camFwd)) * glm::scale(glm::mat4(1.0f), glm::vec3(scaledDiameter));
     
-    float aberration = 0.05f + hoverAlpha_ * 0.10f; // Smoothly interpolates from 0.05 to 0.15
+    float aberration = 0.05f + hoverAlpha_ * 0.10f;
 
     glm::vec3 abColor1 = color_;
     glm::vec3 abColor2 = color_;
 
     const glm::vec3 greenColor(0.1f, 0.8f, 0.2f);
-    const glm::vec3 whiteColor(1.0f, 1.0f, 1.0f);
-
     if (glm::distance2(color_, greenColor) < 0.01f) {
         abColor1 = glm::vec3(0.55f, 1.00f, 0.18f);
         abColor2 = glm::vec3(0.00f, 1.00f, 0.75f);
@@ -54,18 +68,13 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
         abColor2 = glm::vec3(0.7f, 0.9f, 1.0f);
     }
     
-    // Always render the sphere as a background
-    renderer.RenderVRMenuWidget(view, projection, modelMatrix, color_, aberration, alpha, abColor1, abColor2);
+    renderer.RenderVRMenuWidget(view, projection, modelMatrix, color_, aberration, finalAlpha, abColor1, abColor2);
 
-    // If there's a texture, render it on top
     if (textureId_ != 0) {
-        // NEW: Move the icon slightly forward from the panel's surface to prevent z-fighting
         glm::vec3 panelForward = glm::normalize(glm::vec3(panelTransform[2]));
-        glm::vec3 iconWorldPos = worldPos + panelForward * 0.001f; // A small offset
-
-        // Slightly smaller model matrix for the icon to create a border effect
+        glm::vec3 iconWorldPos = worldPos + panelForward * 0.001f;
         glm::mat4 iconModelMatrix = glm::translate(glm::mat4(1.0f), iconWorldPos) * glm::mat4(glm::mat3(camRight, camUp, camFwd)) * glm::scale(glm::mat4(1.0f), glm::vec3(scaledDiameter * 0.8f));
-        renderer.RenderVRMenuWidget(view, projection, iconModelMatrix, glm::vec3(1.0f), 0.0f, alpha, glm::vec3(0.0f), glm::vec3(0.0f), textureId_);
+        renderer.RenderVRMenuWidget(view, projection, iconModelMatrix, glm::vec3(1.0f), 0.0f, finalAlpha, glm::vec3(0.0f), glm::vec3(0.0f), textureId_);
     }
 }
 
@@ -81,6 +90,12 @@ HitResult VRConfirmButtonWidget::CheckIntersection(const Ray& localRay) {
     }
     return result;
 }
+
+void VRConfirmButtonWidget::SetLocalPosition(const glm::vec3& pos) { localPosition_ = pos; }
+
+const glm::vec3& VRConfirmButtonWidget::GetLocalPosition() const { return localPosition_; }
+
+glm::vec2 VRConfirmButtonWidget::GetSize() const { return {diameter_, diameter_}; }
 
 } // namespace Urbaxio::UI
 

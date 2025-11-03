@@ -28,6 +28,7 @@ add_executable(Urbaxio
     # Add UI source files
     src/ui/VRUIManager.cpp
     src/ui/VRPanel.cpp
+    src/ui/Layouts.cpp
     src/ui/VRButtonWidget.cpp
     src/ui/VRConfirmButtonWidget.cpp
     src/ui/VRMenuSphereWidget.cpp

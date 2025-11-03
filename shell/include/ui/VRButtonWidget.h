@@ -21,6 +21,10 @@ public:
     HitResult CheckIntersection(const Ray& localRay) override;
     void HandleClick() override;
 
+    void SetLocalPosition(const glm::vec3& pos) override;
+    const glm::vec3& GetLocalPosition() const override;
+    glm::vec2 GetSize() const override;
+
 private:
     std::string text_;
     glm::vec3 localPosition_;
