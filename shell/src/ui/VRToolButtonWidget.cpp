@@ -84,9 +84,9 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
     if (textureId_ != 0) {
         // -- START OF MODIFICATION --
 
-        const float ICON_FORWARD_FACTOR = 0.1f; // Small positive offset for concave effect
+        const float ICON_FORWARD_FACTOR = 0.05f; // Reduced forward offset for subtler depth
 
-        const float DISPARITY_OFFSET = 0.04f;    // Horizontal stereo offset
+        const float DISPARITY_OFFSET = 0.02f;    // Reduced stereo disparity
 
         float scaledSphereDiameter = sphereDiameter * panelLocalScale;
 

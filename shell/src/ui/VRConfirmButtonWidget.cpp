@@ -43,6 +43,11 @@ void VRConfirmButtonWidget::HandleClick() {
     }
 }
 
+void VRConfirmButtonWidget::SetDepthStrength(float forwardFactorScale, float disparityScale) {
+    forwardFactorScale_ = forwardFactorScale;
+    disparityScale_ = disparityScale;
+}
+
 void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) const {
     const glm::vec3 whiteColor(1.0f, 1.0f, 1.0f);
     const glm::vec3 closeButtonColor(1.00f, 0.20f, 0.32f);
@@ -91,6 +96,7 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
     float aberration = 0.05f + hoverAlpha_ * 0.10f;
 
     glm::vec3 abColor1;
+    
     glm::vec3 abColor2;
 
     const glm::vec3 greenColor(0.1f, 0.8f, 0.2f);
@@ -124,11 +130,11 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
     if (textureId_ != 0) {
         // -- START OF MODIFICATION --
 
-        const float ICON_FORWARD_FACTOR_CONCAVE = 0.25f;  // Positive: pushes towards camera (inside sphere)
+        const float ICON_FORWARD_FACTOR_CONCAVE = 0.12f;  // Reduced concave forward offset
 
-        const float ICON_FORWARD_FACTOR_CONVEX = -0.1f;   // Negative: pushes away from camera (through sphere)
+        const float ICON_FORWARD_FACTOR_CONVEX = -0.05f;  // Reduced convex backward offset
 
-        const float DISPARITY_OFFSET = 0.04f;
+        const float DISPARITY_OFFSET = 0.02f;             // Reduced stereo disparity
 
         glm::vec3 z_axis = glm::vec3(rotationMatrix[2]);
 
@@ -143,19 +149,19 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
         // Use base diameter (not scaled) for offsets to maintain proportional effect regardless of scale
         if (effect_ == DepthEffect::CONVEX) {
 
-            iconWorldPos = worldPos + z_axis * (diameter_ * ICON_FORWARD_FACTOR_CONVEX);
+            iconWorldPos = worldPos + z_axis * (diameter_ * ICON_FORWARD_FACTOR_CONVEX * forwardFactorScale_);
 
             // For CONVEX (popped out): left eye sees right (+), right eye sees left (-)
 
-            disparity_x_offset = (eyeIndex == 0) ? DISPARITY_OFFSET : -DISPARITY_OFFSET;
+            disparity_x_offset = ((eyeIndex == 0) ? DISPARITY_OFFSET : -DISPARITY_OFFSET) * disparityScale_;
 
         } else { // CONCAVE effect
 
-            iconWorldPos = worldPos + z_axis * (diameter_ * ICON_FORWARD_FACTOR_CONCAVE);
+            iconWorldPos = worldPos + z_axis * (diameter_ * ICON_FORWARD_FACTOR_CONCAVE * forwardFactorScale_);
 
             // For CONCAVE (pushed in): left eye sees left (-), right eye sees right (+)
 
-            disparity_x_offset = (eyeIndex == 0) ? -DISPARITY_OFFSET : DISPARITY_OFFSET;
+            disparity_x_offset = ((eyeIndex == 0) ? -DISPARITY_OFFSET : DISPARITY_OFFSET) * disparityScale_;
 
         }
 

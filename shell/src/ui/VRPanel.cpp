@@ -43,6 +43,11 @@ VRPanel::VRPanel(const std::string& name, const std::string& displayName, const 
 
     grabHandle_->setDepthEffect(DepthEffect::CONVEX);
 
+    // Сделать у мелких кнопок панели эффект глубины менее выраженным
+    closeHandle_->SetDepthStrength(0.5f, 0.5f);
+    minimizeHandle_->SetDepthStrength(0.5f, 0.5f);
+    grabHandle_->SetDepthStrength(0.5f, 0.5f);
+
     // -- END OF MODIFICATION --
 
 }

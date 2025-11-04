@@ -1032,6 +1032,8 @@ int main(int argc, char* argv[]) {
     );
     if (menuSphereWidget) {
         menuSphereWidget->SetIconOffsetUseCameraForward(true);
+        // Сделать глубину у шарика открытия менеджера панелей более выраженной
+        menuSphereWidget->SetDepthStrength(1.8f, 1.8f);
     }
 
     // --- NEW: State for the import options dialog ---

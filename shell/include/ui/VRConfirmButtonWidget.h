@@ -45,6 +45,8 @@ public:
 
     void SetColor(const glm::vec3& newColor);
 
+    void SetDepthStrength(float forwardFactorScale, float disparityScale);
+
 private:
     glm::vec3 localPosition_;
     float diameter_;
@@ -58,6 +60,9 @@ private:
     DepthEffect effect_ = DepthEffect::CONVEX; // По умолчанию эффект "выпуклый"
 
     bool fadesWhenNotHovered_ = false;
+
+    float forwardFactorScale_ = 1.0f;
+    float disparityScale_ = 1.0f;
 
 };
 
