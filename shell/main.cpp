@@ -1885,6 +1885,15 @@ int main(int argc, char* argv[]) {
                 }
                 renderer.setCyclopsEyePosition(cyclopsEyePos);
 
+                // --- MODIFIED: Move line buffer update out of the loop ---
+                uint64_t previewObjId = 0;
+                if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
+                    auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
+                    previewObjId = moveTool->GetMovingObjectId();
+                }
+                renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), *toolContext.selectedLineIDs, previewObjId, scene_ptr);
+                toolManager.RenderPreview(renderer, vrSnap);
+
                 for (uint32_t i = 0; i < vr_views.size(); ++i) {
                     // ДОБАВЬ ЭТУ СТРОКУ
 
@@ -1911,14 +1920,6 @@ int main(int argc, char* argv[]) {
                     // --- Hack to pass view matrix to UI widgets ---
                     renderer.vrMenuWidgetShaderProgram_viewMatrix_HACK = view;
                     // --- End Hack ---
-                    
-                    uint64_t previewObjId = 0;
-                    if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
-                        auto* moveTool = static_cast<Urbaxio::Tools::MoveTool*>(toolManager.GetActiveTool());
-                        previewObjId = moveTool->GetMovingObjectId();
-                    }
-                    renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), *toolContext.selectedLineIDs, previewObjId, scene_ptr);
-                    toolManager.RenderPreview(renderer, vrSnap);
                     
                     auto* selectTool = (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) 
                         ? static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool()) 

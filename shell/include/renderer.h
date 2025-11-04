@@ -124,6 +124,29 @@ namespace Urbaxio {
         glm::mat4 vrMenuWidgetShaderProgram_viewMatrix_HACK = glm::mat4(1.0f);
 
     private:
+        // --- NEW: Structs to cache uniform locations ---
+        struct ObjectShaderLocations {
+            GLuint model, view, projection, lightDir, lightColor, ambientStrength;
+            GLuint objectColor, useTexture, diffuseTexture, overrideAlpha, unlit;
+        } objectShaderLocs;
+
+        struct SimpleLineShaderLocations {
+            GLuint model, view, projection;
+        } simpleLineShaderLocs;
+
+        struct GridShaderLocations {
+            GLuint model, view, projection, gridColor, cursorWorldPos, cursorRadius, intensity, holeStart, holeEnd;
+        } gridShaderLocs;
+        
+        struct AxisShaderLocations {
+            GLuint model, view, projection, cursorWorldPos, cursorRadius, intensity;
+            GLuint fadeStart, fadeEnd, holeStart, holeEnd, positiveFadeColor, negativeFadeColor;
+        } axisShaderLocs;
+
+        struct DashedLineShaderLocations {
+            GLuint model, view, projection, color, dashSize, gapSize;
+        } dashedLineShaderLocs;
+
         GLuint objectShaderProgram = 0;
         // --- NEW SHADERS ---
         GLuint gridShaderProgram = 0;
@@ -136,6 +159,10 @@ namespace Urbaxio {
         
         GLuint splatShaderProgram = 0;
         GLuint markerShaderProgram = 0;
+
+        // --- NEW: Buffers for batched highlighting ---
+        std::vector<GLsizei> highlightCounts;
+        std::vector<const void*> highlightIndices;
 
         GLuint gridVAO = 0, gridVBO = 0; int gridVertexCount = 0;
         

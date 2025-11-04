@@ -519,15 +519,15 @@ namespace Urbaxio {
 
             Urbaxio::Engine::MaterialManager* matManager = scene->getMaterialManager();
 
-            // Set per-frame uniforms
-            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            // Set uniforms that are constant per frame
+            glUniformMatrix4fv(objectShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(objectShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
             glm::mat3 worldFromViewRot = glm::mat3(glm::inverse(view));
             glm::vec3 camForwardWS = glm::normalize(worldFromViewRot * glm::vec3(0, 0, -1));
             glm::vec3 lightDir = -camForwardWS;
-            glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir));
-            glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor));
-            glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength);
+            glUniform3fv(objectShaderLocs.lightDir, 1, glm::value_ptr(lightDir));
+            glUniform3fv(objectShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
+            glUniform1f(objectShaderLocs.ambientStrength, ambientStrength);
 
             for (const auto* obj : scene->get_all_objects()) {
                 if (!obj || obj->vao == 0 || obj->index_count == 0) continue;
@@ -546,13 +546,13 @@ namespace Urbaxio {
 
                 // --- Determine Transform ---
                 glm::mat4 modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : identityModel;
-                glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
+                glUniformMatrix4fv(objectShaderLocs.model, 1, GL_FALSE, glm::value_ptr(modelMatrix));
 
                 // Lighting flags
                 auto unlitIt = unlitOverrides.find(obj->get_id());
                 bool isUnlit = (unlitIt != unlitOverrides.end()) ? unlitIt->second : false;
-                glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), isUnlit);
-                glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+                glUniform1i(objectShaderLocs.unlit, isUnlit);
+                glUniform1f(objectShaderLocs.overrideAlpha, 1.0f);
 
                 // Draw per-mesh group with materials
                 glBindVertexArray(obj->vao);
@@ -562,12 +562,12 @@ namespace Urbaxio {
                     Urbaxio::Engine::Material* mat = matManager->GetMaterial(group.materialName);
 
                     if (mat && mat->diffuseTextureID != 0) {
-                        glUniform1i(glGetUniformLocation(objectShaderProgram, "u_useTexture"), 1);
+                        glUniform1i(objectShaderLocs.useTexture, 1);
                         glActiveTexture(GL_TEXTURE0);
                         glBindTexture(GL_TEXTURE_2D, mat->diffuseTextureID);
-                        glUniform1i(glGetUniformLocation(objectShaderProgram, "u_diffuseTexture"), 0);
+                        glUniform1i(objectShaderLocs.diffuseTexture, 0);
                     } else {
-                        glUniform1i(glGetUniformLocation(objectShaderProgram, "u_useTexture"), 0);
+                        glUniform1i(objectShaderLocs.useTexture, 0);
                         glActiveTexture(GL_TEXTURE0);
                         glBindTexture(GL_TEXTURE_2D, 0); // Explicitly unbind texture to avoid state leak
 
@@ -577,7 +577,7 @@ namespace Urbaxio {
                         if (colorIt != colorOverrides.end()) {
                             currentColor = colorIt->second;
                         }
-                        glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(currentColor));
+                        glUniform3fv(objectShaderLocs.objectColor, 1, glm::value_ptr(currentColor));
                     }
 
                     glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(group.indexCount), GL_UNSIGNED_INT, (void*)(group.startIndex * sizeof(unsigned int)));
@@ -590,17 +590,17 @@ namespace Urbaxio {
         // ЗАМЕНИТЕ ВЕСЬ СТАРЫЙ БЛОК "Render Ghost Mesh" НА ЭТОТ
         if (ghostMeshVAO != 0 && ghostMeshTriangleIndexCount > 0) {
             glUseProgram(objectShaderProgram);
-            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(objectShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(objectShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
+            glUniformMatrix4fv(objectShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
             
             // 1. Solid fill pass
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(1.0f, 1.0f); // Push the solid fill back slightly
-            glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), 0); // Lighting ON
-            glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+            glUniform1i(objectShaderLocs.unlit, 0); // Lighting ON
+            glUniform1f(objectShaderLocs.overrideAlpha, 1.0f);
             glm::vec3 defaultObjectColor = glm::vec3(0.8f, 0.85f, 0.9f);
-            glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
+            glUniform3fv(objectShaderLocs.objectColor, 1, glm::value_ptr(defaultObjectColor));
             
             glBindVertexArray(ghostMeshVAO);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO_triangles);
@@ -610,15 +610,15 @@ namespace Urbaxio {
         
             // 2. Wireframe overlay pass (if there are lines to draw)
             if (ghostMeshLineIndexCount > 0) {
-                glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), 1); // Lighting OFF for pure white
-                glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(glm::vec3(1.0f))); // White wireframe
+                glUniform1i(objectShaderLocs.unlit, 1); // Lighting OFF for pure white
+                glUniform3fv(objectShaderLocs.objectColor, 1, glm::value_ptr(glm::vec3(1.0f))); // White wireframe
                 glLineWidth(1.5f);
                 
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO_lines);
                 glDrawElements(GL_LINES, ghostMeshLineIndexCount, GL_UNSIGNED_INT, 0);
                 
                 glLineWidth(1.0f);
-                glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), 0); // Reset lighting state
+                glUniform1i(objectShaderLocs.unlit, 0); // Reset lighting state
             }
             
             glBindVertexArray(0);
@@ -631,50 +631,59 @@ namespace Urbaxio {
         
         if (objectShaderProgram != 0 && scene && scene->getMaterialManager()) {
             glUseProgram(objectShaderProgram);
-            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(objectShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
 
             Urbaxio::Engine::MaterialManager* matManager = scene->getMaterialManager();
 
-            // --- MODIFIED: Translucent Highlights ---
+            // --- MODIFIED: Translucent Highlights with Batching ---
             auto renderHighlight = [&](uint64_t objId, const std::vector<size_t>& indices, const glm::vec3& color){
                 if (objId == 0 || indices.empty()) return;
                 
                 Urbaxio::Engine::SceneObject* obj = scene->get_object_by_id(objId);
                 if (!obj || obj->vao == 0) return;
                 glEnable(GL_POLYGON_OFFSET_FILL);
-                glPolygonOffset(-1.0f, -1.0f); // Pull towards camera to avoid z-fighting
+                glPolygonOffset(-1.0f, -1.0f);
+                
                 glBindVertexArray(obj->vao);
+                // --- BATCHING LOGIC ---
+                highlightCounts.clear();
+                highlightIndices.clear();
                 for (size_t baseIndex : indices) {
-                     if (baseIndex + 2 < obj->get_mesh_buffers().indices.size()) {
-                        // We need to find the material for this part of the mesh to blend with
-                        Engine::Material* mat = matManager->GetMaterial("Default");
+                    if (baseIndex + 2 < obj->get_mesh_buffers().indices.size()) {
+                        highlightCounts.push_back(3);
+                        highlightIndices.push_back((const void*)(baseIndex * sizeof(unsigned int)));
+                    }
+                }
+                if (!highlightCounts.empty()) {
+                    // All triangles in a selection are assumed to have the same material for highlight blending,
+                    // which is a reasonable approximation for performance. We just pick the first one.
+                    Engine::Material* mat = scene->getMaterialManager()->GetMaterial("Default");
+                    if (!obj->meshGroups.empty() && !indices.empty()) {
                         for(const auto& group : obj->meshGroups) {
-                            if (baseIndex >= group.startIndex && baseIndex < group.startIndex + group.indexCount) {
-                                mat = matManager->GetMaterial(group.materialName);
+                            if (indices[0] >= group.startIndex && indices[0] < group.startIndex + group.indexCount) {
+                                mat = scene->getMaterialManager()->GetMaterial(group.materialName);
                                 break;
                             }
                         }
-                        if (mat->diffuseTextureID != 0) {
-                            glUniform1i(glGetUniformLocation(objectShaderProgram, "u_useTexture"), 1);
-                            glActiveTexture(GL_TEXTURE0);
-                            glBindTexture(GL_TEXTURE_2D, mat->diffuseTextureID);
-                            glUniform1i(glGetUniformLocation(objectShaderProgram, "u_diffuseTexture"), 0);
-                        } else {
-                            glUniform1i(glGetUniformLocation(objectShaderProgram, "u_useTexture"), 0);
-                            glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(mat->diffuseColor));
-                        }
-                        // Set the highlight color as the 'light' to achieve a blended effect
-                        glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), 0.5f);
-                        glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(color));
-                        glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 0.6f);
-                        glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, (void*)(baseIndex * sizeof(unsigned int)));
-                     }
+                    }
+                    if (mat->diffuseTextureID != 0) {
+                        glUniform1i(objectShaderLocs.useTexture, 1);
+                        glActiveTexture(GL_TEXTURE0);
+                        glBindTexture(GL_TEXTURE_2D, mat->diffuseTextureID);
+                        glUniform1i(objectShaderLocs.diffuseTexture, 0);
+                    } else {
+                        glUniform1i(objectShaderLocs.useTexture, 0);
+                        glUniform3fv(objectShaderLocs.objectColor, 1, glm::value_ptr(mat->diffuseColor));
+                    }
+                    glUniform1f(objectShaderLocs.ambientStrength, 0.5f);
+                    glUniform3fv(objectShaderLocs.lightColor, 1, glm::value_ptr(color));
+                    
+                    glMultiDrawElements(GL_TRIANGLES, highlightCounts.data(), GL_UNSIGNED_INT, highlightIndices.data(), highlightCounts.size());
                 }
                 glDisable(GL_POLYGON_OFFSET_FILL);
                 // Reset lighting
-                glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength);
-                glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor));
-                glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+                glUniform1f(objectShaderLocs.ambientStrength, ambientStrength);
+                glUniform3fv(objectShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
             };
 
             bool isHoverSameAsSelected = (hoveredObjId == selectedObjId) && (hoveredFaceTriangleIndices == selectedTriangleIndices);
@@ -683,28 +692,29 @@ namespace Urbaxio {
             }
             renderHighlight(selectedObjId, selectedTriangleIndices, selectionHighlightColor);
             if (previewVertexCount > 0) {
-                glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(hoverHighlightColor));
-                glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 0.5f);
+                glUniform1i(objectShaderLocs.useTexture, 0);
+                glUniform3fv(objectShaderLocs.objectColor, 1, glm::value_ptr(hoverHighlightColor));
+                glUniform1f(objectShaderLocs.overrideAlpha, 0.5f);
                 glBindVertexArray(previewVAO);
                 glDrawArrays(GL_TRIANGLES, 0, previewVertexCount);
                 glBindVertexArray(0);
-                glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+                glUniform1f(objectShaderLocs.overrideAlpha, 1.0f);
             }
         }
 
         if (showGrid && gridVAO != 0 && gridShaderProgram != 0) {
             glLineWidth(1.0f);
             glUseProgram(gridShaderProgram);
-            glUniformMatrix4fv(glGetUniformLocation(gridShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
-            glUniformMatrix4fv(glGetUniformLocation(gridShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(glGetUniformLocation(gridShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-            glUniform3fv(glGetUniformLocation(gridShaderProgram, "u_gridColor"), 1, glm::value_ptr(gridColor));
-            glUniform3fv(glGetUniformLocation(gridShaderProgram, "u_cursorWorldPos"), 1, glm::value_ptr(cursorWorldPos));
-            glUniform1f(glGetUniformLocation(gridShaderProgram, "u_cursorRadius"), cursorRadius);
-            glUniform1f(glGetUniformLocation(gridShaderProgram, "u_intensity"), intensity);
+            glUniformMatrix4fv(gridShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(gridShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(gridShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
+            glUniform3fv(gridShaderLocs.gridColor, 1, glm::value_ptr(gridColor));
+            glUniform3fv(gridShaderLocs.cursorWorldPos, 1, glm::value_ptr(cursorWorldPos));
+            glUniform1f(gridShaderLocs.cursorRadius, cursorRadius);
+            glUniform1f(gridShaderLocs.intensity, intensity);
             const float baseHoleStart = 0.25f, baseHoleEnd = 0.75f;
-            glUniform1f(glGetUniformLocation(gridShaderProgram, "u_holeStart"), baseHoleStart * distanceScale);
-            glUniform1f(glGetUniformLocation(gridShaderProgram, "u_holeEnd"), baseHoleEnd * distanceScale);
+            glUniform1f(gridShaderLocs.holeStart, baseHoleStart * distanceScale);
+            glUniform1f(gridShaderLocs.holeEnd, baseHoleEnd * distanceScale);
             glBindVertexArray(gridVAO);
             glDrawArrays(GL_LINES, 0, gridVertexCount);
             glBindVertexArray(0);
@@ -714,9 +724,9 @@ namespace Urbaxio {
         if (simpleLineShaderProgram != 0) {
             glLineWidth(2.0f);
             glUseProgram(simpleLineShaderProgram);
-            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
-            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            glUniformMatrix4fv(simpleLineShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(simpleLineShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(simpleLineShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
 
             if (userLinesVAO != 0 && userLinesVertexCount > 0) {
                 glBindVertexArray(userLinesVAO);
@@ -729,9 +739,9 @@ namespace Urbaxio {
         if (previewLineEnabled && previewLineVAO != 0 && simpleLineShaderProgram != 0) {
             glLineWidth(1.0f);
             glUseProgram(simpleLineShaderProgram);
-            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
-            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            glUniformMatrix4fv(simpleLineShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(simpleLineShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(simpleLineShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
             glBindVertexArray(previewLineVAO);
             glDrawArrays(GL_LINES, 0, 2);
             glBindVertexArray(0);
@@ -740,12 +750,12 @@ namespace Urbaxio {
         if (previewOutlineVertexCount > 0) {
             glLineWidth(1.5f);
             glUseProgram(dashedLineShaderProgram);
-            glUniformMatrix4fv(glGetUniformLocation(dashedLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
-            glUniformMatrix4fv(glGetUniformLocation(dashedLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(glGetUniformLocation(dashedLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-            glUniform4f(glGetUniformLocation(dashedLineShaderProgram, "u_Color"), 1.0f, 1.0f, 1.0f, 0.8f);
-            glUniform1f(glGetUniformLocation(dashedLineShaderProgram, "u_DashSize"), 0.2f);
-            glUniform1f(glGetUniformLocation(dashedLineShaderProgram, "u_GapSize"), 0.1f);
+            glUniformMatrix4fv(dashedLineShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(dashedLineShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(dashedLineShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
+            glUniform4f(dashedLineShaderLocs.color, 1.0f, 1.0f, 1.0f, 0.8f);
+            glUniform1f(dashedLineShaderLocs.dashSize, 0.2f);
+            glUniform1f(dashedLineShaderLocs.gapSize, 0.1f);
             glBindVertexArray(previewOutlineVAO);
             glDrawArrays(GL_LINES, 0, previewOutlineVertexCount);
             glBindVertexArray(0);
@@ -758,10 +768,10 @@ namespace Urbaxio {
 
             // 1. Solid fill pass (very transparent)
             glUseProgram(objectShaderProgram);
-            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
-            glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), 1); // Unlit
-            glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(glm::vec3(boxColor)));
-            glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 0.1f);
+            glUniformMatrix4fv(objectShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniform1i(objectShaderLocs.unlit, 1); // Unlit
+            glUniform3fv(objectShaderLocs.objectColor, 1, glm::value_ptr(glm::vec3(boxColor)));
+            glUniform1f(objectShaderLocs.overrideAlpha, 0.1f);
             
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(1.0f, 1.0f);
@@ -774,12 +784,12 @@ namespace Urbaxio {
 
             // 2. Dashed outline pass
             glUseProgram(dashedLineShaderProgram);
-            glUniformMatrix4fv(glGetUniformLocation(dashedLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
-            glUniformMatrix4fv(glGetUniformLocation(dashedLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(glGetUniformLocation(dashedLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-            glUniform4f(glGetUniformLocation(dashedLineShaderProgram, "u_Color"), boxColor.r, boxColor.g, boxColor.b, 0.5f);
-            glUniform1f(glGetUniformLocation(dashedLineShaderProgram, "u_DashSize"), 0.1f);
-            glUniform1f(glGetUniformLocation(dashedLineShaderProgram, "u_GapSize"), 0.05f);
+            glUniformMatrix4fv(dashedLineShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(dashedLineShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(dashedLineShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
+            glUniform4f(dashedLineShaderLocs.color, boxColor.r, boxColor.g, boxColor.b, 0.5f);
+            glUniform1f(dashedLineShaderLocs.dashSize, 0.1f);
+            glUniform1f(dashedLineShaderLocs.gapSize, 0.05f);
 
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, previewBoxEBO_lines);
             glDrawElements(GL_LINES, previewBoxLineIndexCount, GL_UNSIGNED_INT, 0);
@@ -793,9 +803,9 @@ namespace Urbaxio {
         if (vrPointerEnabled && vrPointerVAO != 0 && simpleLineShaderProgram != 0) {
             glLineWidth(2.0f);
             glUseProgram(simpleLineShaderProgram);
-            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
-            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(glGetUniformLocation(simpleLineShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            glUniformMatrix4fv(simpleLineShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(simpleLineShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(simpleLineShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
             glBindVertexArray(vrPointerVAO);
             glDrawArrays(GL_LINES, 0, 2);
             glBindVertexArray(0);
@@ -888,11 +898,11 @@ namespace Urbaxio {
     }
     bool Renderer::CreateShaderPrograms() {
         // Object Shader
-        { GLuint vs = CompileShader(GL_VERTEX_SHADER, objectVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, objectFragmentShaderSource); if (vs != 0 && fs != 0) objectShaderProgram = LinkShaderProgram(vs, fs); if (objectShaderProgram == 0) return false; std::cout << "Renderer: Object shader program created." << std::endl; }
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, objectVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, objectFragmentShaderSource); if (vs != 0 && fs != 0) objectShaderProgram = LinkShaderProgram(vs, fs); if (objectShaderProgram == 0) return false; objectShaderLocs.model = glGetUniformLocation(objectShaderProgram, "model"); objectShaderLocs.view = glGetUniformLocation(objectShaderProgram, "view"); objectShaderLocs.projection = glGetUniformLocation(objectShaderProgram, "projection"); objectShaderLocs.lightDir = glGetUniformLocation(objectShaderProgram, "lightDir"); objectShaderLocs.lightColor = glGetUniformLocation(objectShaderProgram, "lightColor"); objectShaderLocs.ambientStrength = glGetUniformLocation(objectShaderProgram, "ambientStrength"); objectShaderLocs.objectColor = glGetUniformLocation(objectShaderProgram, "objectColor"); objectShaderLocs.useTexture = glGetUniformLocation(objectShaderProgram, "u_useTexture"); objectShaderLocs.diffuseTexture = glGetUniformLocation(objectShaderProgram, "u_diffuseTexture"); objectShaderLocs.overrideAlpha = glGetUniformLocation(objectShaderProgram, "overrideAlpha"); objectShaderLocs.unlit = glGetUniformLocation(objectShaderProgram, "u_unlit"); std::cout << "Renderer: Object shader program created." << std::endl; }
         // Simple Line Shader
-        { GLuint vs = CompileShader(GL_VERTEX_SHADER, simpleLineVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, simpleLineFragmentShaderSource); if (vs != 0 && fs != 0) simpleLineShaderProgram = LinkShaderProgram(vs, fs); if (simpleLineShaderProgram == 0) return false; std::cout << "Renderer: Simple Line shader program created." << std::endl; }
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, simpleLineVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, simpleLineFragmentShaderSource); if (vs != 0 && fs != 0) simpleLineShaderProgram = LinkShaderProgram(vs, fs); if (simpleLineShaderProgram == 0) return false; simpleLineShaderLocs.model = glGetUniformLocation(simpleLineShaderProgram, "model"); simpleLineShaderLocs.view = glGetUniformLocation(simpleLineShaderProgram, "view"); simpleLineShaderLocs.projection = glGetUniformLocation(simpleLineShaderProgram, "projection"); std::cout << "Renderer: Simple Line shader program created." << std::endl; }
         // Grid Shader
-        { GLuint vs = CompileShader(GL_VERTEX_SHADER, gridVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, gridFragmentShaderSource); if (vs != 0 && fs != 0) gridShaderProgram = LinkShaderProgram(vs, fs); if (gridShaderProgram == 0) return false; std::cout << "Renderer: Grid shader program created." << std::endl; }
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, gridVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, gridFragmentShaderSource); if (vs != 0 && fs != 0) gridShaderProgram = LinkShaderProgram(vs, fs); if (gridShaderProgram == 0) return false; gridShaderLocs.model = glGetUniformLocation(gridShaderProgram, "model"); gridShaderLocs.view = glGetUniformLocation(gridShaderProgram, "view"); gridShaderLocs.projection = glGetUniformLocation(gridShaderProgram, "projection"); gridShaderLocs.gridColor = glGetUniformLocation(gridShaderProgram, "u_gridColor"); gridShaderLocs.cursorWorldPos = glGetUniformLocation(gridShaderProgram, "u_cursorWorldPos"); gridShaderLocs.cursorRadius = glGetUniformLocation(gridShaderProgram, "u_cursorRadius"); gridShaderLocs.intensity = glGetUniformLocation(gridShaderProgram, "u_intensity"); gridShaderLocs.holeStart = glGetUniformLocation(gridShaderProgram, "u_holeStart"); gridShaderLocs.holeEnd = glGetUniformLocation(gridShaderProgram, "u_holeEnd"); std::cout << "Renderer: Grid shader program created." << std::endl; }
         // Axis Shader
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, axisVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, axisFragmentShaderSource); if (vs != 0 && fs != 0) axisShaderProgram = LinkShaderProgram(vs, fs); if (axisShaderProgram == 0) return false; std::cout << "Renderer: Axis shader program created." << std::endl; }
         // Unlit Shader
@@ -902,7 +912,7 @@ namespace Urbaxio {
         // Marker Shader
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, markerVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, markerFragmentShaderSource); if (vs != 0 && fs != 0) markerShaderProgram = LinkShaderProgram(vs, fs); if (markerShaderProgram == 0) { std::cerr << "Renderer Error: Failed to link marker shader program!" << std::endl; return false; } std::cout << "Renderer: Marker shader program created." << std::endl; }
         // Dashed Line Shader
-        { GLuint vs = CompileShader(GL_VERTEX_SHADER, dashedLineVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, dashedLineFragmentShaderSource); if (vs != 0 && fs != 0) dashedLineShaderProgram = LinkShaderProgram(vs, fs); if (dashedLineShaderProgram == 0) return false; std::cout << "Renderer: Dashed Line shader program created." << std::endl; }
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, dashedLineVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, dashedLineFragmentShaderSource); if (vs != 0 && fs != 0) dashedLineShaderProgram = LinkShaderProgram(vs, fs); if (dashedLineShaderProgram == 0) return false; dashedLineShaderLocs.model = glGetUniformLocation(dashedLineShaderProgram, "model"); dashedLineShaderLocs.view = glGetUniformLocation(dashedLineShaderProgram, "view"); dashedLineShaderLocs.projection = glGetUniformLocation(dashedLineShaderProgram, "projection"); dashedLineShaderLocs.color = glGetUniformLocation(dashedLineShaderProgram, "u_Color"); dashedLineShaderLocs.dashSize = glGetUniformLocation(dashedLineShaderProgram, "u_DashSize"); dashedLineShaderLocs.gapSize = glGetUniformLocation(dashedLineShaderProgram, "u_GapSize"); std::cout << "Renderer: Dashed Line shader program created." << std::endl; }
         // Selection Box Shader
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, selectionBoxVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, selectionBoxFragmentShaderSource); if (vs != 0 && fs != 0) selectionBoxShaderProgram = LinkShaderProgram(vs, fs); if (selectionBoxShaderProgram == 0) return false; std::cout << "Renderer: Selection Box shader program created." << std::endl; }
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, vrMenuWidgetVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, vrMenuWidgetFragmentShaderSource); if (vs != 0 && fs != 0) vrMenuWidgetShaderProgram = LinkShaderProgram(vs, fs); if (vrMenuWidgetShaderProgram == 0) return false; std::cout << "Renderer: VR Menu Widget shader program created." << std::endl; }
@@ -1399,12 +1409,22 @@ namespace Urbaxio {
         glGenBuffers(1, &previewBoxVBO);
         glGenBuffers(1, &previewBoxEBO_triangles);
         glGenBuffers(1, &previewBoxEBO_lines);
-
         glBindVertexArray(previewBoxVAO);
         glBindBuffer(GL_ARRAY_BUFFER, previewBoxVBO);
         glBufferData(GL_ARRAY_BUFFER, 8 * sizeof(glm::vec3), nullptr, GL_DYNAMIC_DRAW);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(0);
+        
+        // --- STATIC EBO DATA ---
+        unsigned int tri_indices[] = { 0,1,2, 0,2,3, 4,5,6, 4,6,7, 0,4,7, 0,7,3, 1,5,6, 1,6,2, 0,1,5, 0,5,4, 3,2,6, 3,6,7 };
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, previewBoxEBO_triangles);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(tri_indices), tri_indices, GL_STATIC_DRAW);
+        previewBoxTriangleIndexCount = 36;
+        
+        unsigned int line_indices[] = { 0,1, 1,2, 2,3, 3,0, 4,5, 5,6, 6,7, 7,4, 0,4, 1,5, 2,6, 3,7 };
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, previewBoxEBO_lines);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(line_indices), line_indices, GL_STATIC_DRAW);
+        previewBoxLineIndexCount = 24;
         
         glBindVertexArray(0);
         std::cout << "Renderer: Preview Box VAO/VBO/EBOs created." << std::endl;
@@ -1414,10 +1434,8 @@ namespace Urbaxio {
     void Renderer::UpdatePreviewBox(const glm::vec3& p1, const glm::vec3& p2, bool enabled) {
         previewBoxEnabled = enabled;
         if (!enabled) return;
-
         glm::vec3 min_c = glm::min(p1, p2);
         glm::vec3 max_c = glm::max(p1, p2);
-
         glm::vec3 vertices[] = {
             glm::vec3(min_c.x, min_c.y, min_c.z), glm::vec3(max_c.x, min_c.y, min_c.z),
             glm::vec3(max_c.x, max_c.y, min_c.z), glm::vec3(min_c.x, max_c.y, min_c.z),
@@ -1425,21 +1443,10 @@ namespace Urbaxio {
             glm::vec3(max_c.x, max_c.y, max_c.z), glm::vec3(min_c.x, max_c.y, max_c.z)
         };
         
+        // --- ONLY UPDATE VBO ---
         glBindBuffer(GL_ARRAY_BUFFER, previewBoxVBO);
         glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
-        
-        unsigned int tri_indices[] = { 0,1,2, 0,2,3, 4,5,6, 4,6,7, 0,4,7, 0,7,3, 1,5,6, 1,6,2, 0,1,5, 0,5,4, 3,2,6, 3,6,7 };
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, previewBoxEBO_triangles);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(tri_indices), tri_indices, GL_DYNAMIC_DRAW);
-        previewBoxTriangleIndexCount = 36;
-        
-        unsigned int line_indices[] = { 0,1, 1,2, 2,3, 3,0, 4,5, 5,6, 6,7, 7,4, 0,4, 1,5, 2,6, 3,7 };
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, previewBoxEBO_lines);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(line_indices), line_indices, GL_DYNAMIC_DRAW);
-        previewBoxLineIndexCount = 24;
-        
         glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     }
 
     void Renderer::UpdateDragStartPoint(const glm::vec3& point, bool enabled) {
