@@ -97,9 +97,7 @@ extern "C" {
 #include <BRepBuilderAPI_Transform.hxx>
 
 namespace { // Anonymous namespace for helpers
-    // START OF MODIFICATION: Replace the entire VRPanelRowWidget class
-    // A widget that renders a single row in the Panel Manager list.
-    // It displays a text label and three interactive spheres.
+    // --- НАЧАЛО ИЗМЕНЕНИЯ: Замените весь класс VRPanelRowWidget на этот ---
     class VRPanelRowWidget : public Urbaxio::UI::IVRWidget {
     public:
         VRPanelRowWidget(const std::string& name, const glm::vec2& size) 
@@ -107,23 +105,25 @@ namespace { // Anonymous namespace for helpers
               sphere2_toggled_(false), sphere3_toggled_(false)
         {
             float sphereDiameter = size.y * 0.7f;
-            float sphereSpacing = sphereDiameter * 1.1f;
+            float sphereSpacing = sphereDiameter * 1.05f; // Reduced spacing
             float rightEdge = size.x * 0.5f;
-            sphere3_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f, 0, 0.002f);
-            sphere2_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f - sphereSpacing, 0, 0.002f);
-            sphere1_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f - sphereSpacing * 2, 0, 0.002f);
+
+            // Move spheres closer to the right edge
+            sphere3_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f + 0.01f, 0.005f, 0.002f);
+            sphere2_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f - sphereSpacing + 0.01f, 0.005f, 0.002f);
+            sphere1_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f - sphereSpacing * 2 + 0.01f, 0.005f, 0.002f);
             
-            auto createSphere = [&](const glm::vec3& offset) {
-                return std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(offset, sphereDiameter, defaultColor_, [](){});
+            auto createSphere = [&](const glm::vec3& offset, const glm::vec3& color) {
+                return std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(offset, sphereDiameter, color, [](){});
             };
-            sphere1_ = createSphere(sphere1_offset_);
-            sphere2_ = createSphere(sphere2_offset_);
-            sphere3_ = createSphere(sphere3_offset_);
+            sphere1_ = createSphere(sphere1_offset_, defaultColor_);
+            sphere2_ = createSphere(sphere2_offset_, defaultColor_);
+            sphere3_ = createSphere(sphere3_offset_, defaultColor_);
             
-            // Initialize colors based on toggle state
             sphere2_->SetColor(defaultColor_);
             sphere3_->SetColor(defaultColor_);
         }
+
         void Update(const Urbaxio::UI::Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) override {
             const float ANIM_SPEED = 0.15f;
             float targetT = isHovered_ ? 1.0f : 0.0f;
@@ -136,16 +136,11 @@ namespace { // Anonymous namespace for helpers
             sphere2_->SetHover(hit2.didHit);
             sphere3_->SetHover(hit3.didHit);
             
-            // A click is a press from either the trigger or the A button
             if (triggerPressed || aButtonPressed) {
-                if (hit2.didHit) {
-                    sphere2_toggled_ = !sphere2_toggled_;
-                }
-                if (hit3.didHit) {
-                    sphere3_toggled_ = !sphere3_toggled_;
-                }
+                if (hit2.didHit) sphere2_toggled_ = !sphere2_toggled_;
+                if (hit3.didHit) sphere3_toggled_ = !sphere3_toggled_;
             }
-            // Update colors every frame
+            
             sphere2_->SetColor(sphere2_toggled_ ? selectedColor_ : defaultColor_);
             sphere3_->SetColor(sphere3_toggled_ ? selectedColor_ : defaultColor_);
             
@@ -167,40 +162,52 @@ namespace { // Anonymous namespace for helpers
             
             if (hoverAnimationT_ > 0.01f) {
                 float sphereAlpha = alpha * hoverAnimationT_;
-                sphere1_->Render(renderer, textRenderer, panelTransform, view, projection, sphereAlpha, mask);
-                sphere2_->Render(renderer, textRenderer, panelTransform, view, projection, sphereAlpha, mask);
-                sphere3_->Render(renderer, textRenderer, panelTransform, view, projection, sphereAlpha, mask);
+
+                // Create a list of spheres with their depths for sorting
+                std::vector<std::pair<float, Urbaxio::UI::IVRWidget*>> spheres_to_render;
+                for (auto* sphere : {sphere1_.get(), sphere2_.get(), sphere3_.get()}) {
+                    glm::vec3 sphere_world_pos = panelTransform * glm::vec4(sphere->GetLocalPosition(), 1.0f);
+                    float viewZ = (view * glm::vec4(sphere_world_pos, 1.0f)).z;
+                    spheres_to_render.emplace_back(viewZ, sphere);
+                }
+
+                // Sort from back to front
+                std::sort(spheres_to_render.begin(), spheres_to_render.end(), [](const auto& a, const auto& b) {
+                    return a.first < b.first;
+                });
+
+                // Render in sorted order
+                for (const auto& [depth, sphere] : spheres_to_render) {
+                    sphere->Render(renderer, textRenderer, panelTransform, view, projection, sphereAlpha, mask);
+                }
             }
         }
+
+        // ... (остальные методы класса VRPanelRowWidget остаются без изменений)
         Urbaxio::UI::HitResult CheckIntersection(const Urbaxio::UI::Ray& localRay) override {
+            // ... (unmodified)
             Urbaxio::UI::HitResult result;
             float t;
-            // Check intersection with the entire row's bounding box. `localRay` is in the scroll content space.
             if (glm::intersectRayPlane(localRay.origin, localRay.direction, localPosition_, glm::vec3(0, 0, 1), t) && t > 0) {
                 glm::vec3 hitPoint = localRay.origin + localRay.direction * t;
-                if (glm::abs(hitPoint.x - localPosition_.x) <= size_.x * 0.5f &&
-                    glm::abs(hitPoint.y - localPosition_.y) <= size_.y * 0.5f) {
+                if (glm::abs(hitPoint.x - localPosition_.x) <= size_.x * 0.5f && glm::abs(hitPoint.y - localPosition_.y) <= size_.y * 0.5f) {
                     result.didHit = true;
                     result.distance = t;
-                    // The hit is on this row. The parent (scroll widget) will now know which row is hovered.
-                    result.hitWidget = this; 
+                    result.hitWidget = this;
                 }
             }
             return result;
         }
         void HandleClick() override {
-            // This is called by the parent (VRScrollWidget) on a quick click.
-            // We don't need to do anything here because the logic is now handled in Update based on `isPressed`.
+            // ... (unmodified)
         }
-        
         void SetLocalPosition(const glm::vec3& pos) override {
+            // ... (unmodified)
             localPosition_ = pos;
-            // Children positions are absolute within the scroll content area
             sphere1_->SetLocalPosition(pos + sphere1_offset_);
             sphere2_->SetLocalPosition(pos + sphere2_offset_);
             sphere3_->SetLocalPosition(pos + sphere3_offset_);
         }
-        // isHovered_ is now controlled by the parent scroll widget.
         void SetHover(bool hover) override { isHovered_ = hover; }
         const glm::vec3& GetLocalPosition() const override { return localPosition_; }
         glm::vec2 GetSize() const override { return size_; }
@@ -215,10 +222,11 @@ namespace { // Anonymous namespace for helpers
         bool sphere3_toggled_;
         
         // Colors to match the toolbar
-        const glm::vec3 defaultColor_{1.0f, 1.0f, 1.0f};
+        const glm::vec3 defaultColor_{0.3f, 0.75f, 1.0f};
         const glm::vec3 selectedColor_{1.0f, 0.79f, 0.4f};
         bool isHovered_ = false;
     };
+    // --- КОНЕЦ ИЗМЕНЕНИЯ ---
     
     // A widget that wraps a VRScrollWidget and dynamically populates it
     // with a list of all panels from the VRUIManager.

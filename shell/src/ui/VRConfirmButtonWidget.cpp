@@ -90,10 +90,13 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
     
     float aberration = 0.05f + hoverAlpha_ * 0.10f;
 
-    glm::vec3 abColor1 = color_;
-    glm::vec3 abColor2 = color_;
+    glm::vec3 abColor1;
+    glm::vec3 abColor2;
 
     const glm::vec3 greenColor(0.1f, 0.8f, 0.2f);
+    // --- НАЧАЛО ИЗМЕНЕНИЯ: Цвета абберации для синего и оранжевого ---
+    const glm::vec3 blueColor(0.3f, 0.75f, 1.0f);
+    const glm::vec3 orangeColor(1.0f, 0.79f, 0.4f);
 
     if (isCloseHandle) {
         abColor1 = glm::vec3(0.99f, 0.65f, 0.90f);
@@ -104,7 +107,17 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
     } else if (glm::distance2(color_, whiteColor) < 0.01f) {
         abColor1 = glm::vec3(0.93f, 0.72f, 1.00f);
         abColor2 = glm::vec3(0.7f, 0.9f, 1.0f);
+    } else if (glm::distance2(color_, blueColor) < 0.01f) {
+        abColor1 = glm::vec3(0.67f, 0.5f, 1.0f);
+        abColor2 = glm::vec3(0.3f, 1.0f, 0.76f);
+    } else if (glm::distance2(color_, orangeColor) < 0.01f) {
+        abColor1 = glm::vec3(1.00f, 0.84f, 0.26f);
+        abColor2 = glm::vec3(1.0f, 0.1f, 0.1f);
+    } else { // Fallback to current color
+        abColor1 = color_;
+        abColor2 = color_;
     }
+    // --- КОНЕЦ ИЗМЕНЕНИЯ ---
     
     renderer.RenderVRMenuWidget(view, projection, modelMatrix, color_, aberration, finalAlpha, abColor1, abColor2);
 
