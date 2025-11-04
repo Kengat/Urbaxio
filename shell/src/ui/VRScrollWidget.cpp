@@ -107,10 +107,13 @@ void VRScrollWidget::Update(const Ray& localRay, bool triggerPressed, bool trigg
 		if (hoveredChild_) hoveredChild_->SetHover(true);
 	}
 
-	for (auto& child : children_) {
-		bool childIsHovered = (hoveredChild_ == child.get());
-		child->Update(contentRay, (triggerPressed || aButtonPressed) && childIsHovered, triggerReleased, triggerHeld, aButtonPressed, stickY);
-	}
+    // --- START OF MODIFICATION ---
+    for (auto& child : children_) {
+        bool childIsHovered = (hoveredChild_ == child.get());
+        // Pass triggerPressed and aButtonPressed separately, gated by hover.
+        child->Update(contentRay, triggerPressed && childIsHovered, triggerReleased, triggerHeld, aButtonPressed && childIsHovered, stickY);
+    }
+    // --- END OF MODIFICATION ---
 }
 
 void VRScrollWidget::Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& scissor) const {

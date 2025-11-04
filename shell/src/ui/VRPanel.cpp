@@ -291,12 +291,15 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
         hoveredWidget_ = nullptr;
     }
     
+    // --- START OF MODIFICATION ---
     if (minimizeT_ < 0.99f) {
         for (auto& widget : widgets_) {
             bool childIsHovered = (hoveredWidget_ == widget.get());
-            widget->Update(localRay, (triggerPressed || aButtonPressed) && childIsHovered, triggerReleased, triggerHeld, aButtonPressed, stickY);
+            // Pass triggerPressed and aButtonPressed separately, gated by hover.
+            widget->Update(localRay, triggerPressed && childIsHovered, triggerReleased, triggerHeld, aButtonPressed && childIsHovered, stickY);
         }
     }
+    // --- END OF MODIFICATION ---
 }
 
 void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection) const {
