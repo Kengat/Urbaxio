@@ -58,6 +58,11 @@ namespace Urbaxio::Engine {
         // --- NEW: Mesh Groups for Materials ---
         std::vector<MeshGroup> meshGroups;
 
+        // --- NEW: Axis-Aligned Bounding Box ---
+        glm::vec3 aabbMin = glm::vec3(0.0f);
+        glm::vec3 aabbMax = glm::vec3(0.0f);
+        bool aabbValid = false;
+
         //                       (GPU)
         GLuint vao = 0;
         GLuint vbo_vertices = 0;

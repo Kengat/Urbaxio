@@ -2,6 +2,7 @@
 #include <utility>
 #include <iostream>
 #include <map>
+#include <limits> // For std::numeric_limits
 #include <TopoDS.hxx> // <-- ГЛАВНОЕ ИСПРАВЛЕНИЕ: этот инклуд был пропущен
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Vertex.hxx>
@@ -32,6 +33,7 @@ namespace Urbaxio::Engine {
         shape_(std::move(other.shape_)),
         mesh_buffers_(std::move(other.mesh_buffers_)),
         meshGroups(std::move(other.meshGroups)),
+        aabbMin(other.aabbMin), aabbMax(other.aabbMax), aabbValid(other.aabbValid),
         boundaryLineIDs(std::move(other.boundaryLineIDs)), // <-- ДОБАВИТЬ
         meshAdjacency(std::move(other.meshAdjacency)),
         locationToVertexMapPimpl_(std::move(other.locationToVertexMapPimpl_)) // <-- ИЗМЕНИТЬ
@@ -48,6 +50,7 @@ namespace Urbaxio::Engine {
             shape_ = std::move(other.shape_);
             mesh_buffers_ = std::move(other.mesh_buffers_);
             meshGroups = std::move(other.meshGroups);
+            aabbMin = other.aabbMin; aabbMax = other.aabbMax; aabbValid = other.aabbValid;
             boundaryLineIDs = std::move(other.boundaryLineIDs); // <-- ДОБАВИТЬ
             meshAdjacency = std::move(other.meshAdjacency);
             locationToVertexMapPimpl_ = std::move(other.locationToVertexMapPimpl_); // <-- ИЗМЕНИТЬ
@@ -76,12 +79,29 @@ namespace Urbaxio::Engine {
     void SceneObject::set_mesh_buffers(Urbaxio::CadKernel::MeshBuffers buffers) {
         mesh_buffers_ = std::move(buffers);
         
-        // --- REVERTED/FIXED: This function MUST create a default material group ---
         meshAdjacency.clear();
         meshGroups.clear();
+        aabbValid = false;
         if (mesh_buffers_.isEmpty()) {
             return;
         }
+        
+        // --- Calculate AABB ---
+        if (!mesh_buffers_.vertices.empty()) {
+            aabbMin = glm::vec3(std::numeric_limits<float>::max());
+            aabbMax = glm::vec3(std::numeric_limits<float>::lowest());
+            for (size_t i = 0; i < mesh_buffers_.vertices.size(); i += 3) {
+                aabbMin.x = std::min(aabbMin.x, mesh_buffers_.vertices[i]);
+                aabbMin.y = std::min(aabbMin.y, mesh_buffers_.vertices[i+1]);
+                aabbMin.z = std::min(aabbMin.z, mesh_buffers_.vertices[i+2]);
+                aabbMax.x = std::max(aabbMax.x, mesh_buffers_.vertices[i]);
+                aabbMax.y = std::max(aabbMax.y, mesh_buffers_.vertices[i+1]);
+                aabbMax.z = std::max(aabbMax.z, mesh_buffers_.vertices[i+2]);
+            }
+            aabbValid = true;
+        }
+        
+        // --- REVERTED/FIXED: This function MUST create a default material group ---
         // Create a single default group that covers the entire mesh.
         // This ensures the object is always renderable.
         // Importers (like OBJ) can overwrite this with more specific groups.
