@@ -28,6 +28,10 @@ public:
     VRPanel(const std::string& name, const std::string& displayName, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius, unsigned int grabIcon, unsigned int closeIcon, unsigned int minimizeIcon);
 
     void AddWidget(std::unique_ptr<IVRWidget> widget);
+    void SetMinimized(bool minimized);
+    bool IsMinimized() const;
+    void ResetPosition();
+
     void SetLayout(std::unique_ptr<ILayout> layout);
     void RecalculateLayout();
     void Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, bool aButtonHeld, bool bButtonIsPressed, float stickY, bool isLeftTriggerPressed);
@@ -62,6 +66,7 @@ public:
 private:
     std::string name_;
     std::string displayName_;
+    glm::mat4 initialOffsetTransform_;
     glm::vec2 size_;
     glm::mat4 offsetTransform_;
     bool isVisible_ = true;

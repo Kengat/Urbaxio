@@ -97,95 +97,104 @@ extern "C" {
 #include <BRepBuilderAPI_Transform.hxx>
 
 namespace { // Anonymous namespace for helpers
-    // --- НАЧАЛО ИЗМЕНЕНИЯ: Замените весь класс VRPanelRowWidget на этот ---
+    // --- START OF MODIFICATION: Replace the entire VRPanelRowWidget class with this ---
     class VRPanelRowWidget : public Urbaxio::UI::IVRWidget {
     public:
-        VRPanelRowWidget(const std::string& name, const glm::vec2& size) 
-            : name_(name), size_(size), localPosition_(0.0f), hoverAnimationT_(0.0f),
-              sphere2_toggled_(false), sphere3_toggled_(false)
+        VRPanelRowWidget(const std::string& panelName, Urbaxio::UI::VRUIManager& manager, const glm::vec2& size,
+                         unsigned int backIcon, unsigned int minIcon, unsigned int closeIcon) 
+            : panelName_(panelName), manager_(manager), size_(size), localPosition_(0.0f), hoverAnimationT_(0.0f),
+              isMinimized_(false), isVisible_(true)
         {
             float sphereDiameter = size.y * 0.7f;
-            float sphereSpacing = sphereDiameter * 1.05f; // Reduced spacing
+            float sphereSpacing = sphereDiameter * 1.05f;
             float rightEdge = size.x * 0.5f;
 
-            // Move spheres closer to the right edge
-            sphere3_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f + 0.01f, 0.005f, 0.002f);
-            sphere2_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f - sphereSpacing + 0.01f, 0.005f, 0.002f);
-            sphere1_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f - sphereSpacing * 2 + 0.01f, 0.005f, 0.002f);
+            btnResetPosOffset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f - sphereSpacing * 2 + 0.01f, 0.005f, 0.002f);
+            btnToggleMinimizeOffset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f - sphereSpacing + 0.01f, 0.005f, 0.002f);
+            btnToggleVisibleOffset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f + 0.01f, 0.005f, 0.002f);
             
-            auto createSphere = [&](const glm::vec3& offset, const glm::vec3& color) {
-                return std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(offset, sphereDiameter, color, [](){});
-            };
-            sphere1_ = createSphere(sphere1_offset_, defaultColor_);
-            sphere2_ = createSphere(sphere2_offset_, defaultColor_);
-            sphere3_ = createSphere(sphere3_offset_, defaultColor_);
+            btnResetPos_ = std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(btnResetPosOffset_, sphereDiameter, backIcon, nullptr);
+            btnToggleMinimize_ = std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(btnToggleMinimizeOffset_, sphereDiameter, minIcon, nullptr);
+            btnToggleVisible_ = std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(btnToggleVisibleOffset_, sphereDiameter, closeIcon, nullptr);
             
-            sphere2_->SetColor(defaultColor_);
-            sphere3_->SetColor(defaultColor_);
+            btnResetPos_->setDepthEffect(Urbaxio::UI::DepthEffect::CONVEX);
+            btnToggleMinimize_->setDepthEffect(Urbaxio::UI::DepthEffect::CONVEX);
+            btnToggleVisible_->setDepthEffect(Urbaxio::UI::DepthEffect::CONVEX);
         }
 
         void Update(const Urbaxio::UI::Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) override {
+            Urbaxio::UI::VRPanel* panel = manager_.GetPanel(panelName_);
+            if (!panel) return;
+
+            // Sync state from the actual panel
+            isMinimized_ = panel->IsMinimized();
+            isVisible_ = panel->IsVisible();
+
             const float ANIM_SPEED = 0.15f;
             float targetT = isHovered_ ? 1.0f : 0.0f;
             hoverAnimationT_ += (targetT - hoverAnimationT_) * ANIM_SPEED;
             
-            Urbaxio::UI::HitResult hit1 = sphere1_->CheckIntersection(localRay);
-            Urbaxio::UI::HitResult hit2 = sphere2_->CheckIntersection(localRay);
-            Urbaxio::UI::HitResult hit3 = sphere3_->CheckIntersection(localRay);
-            sphere1_->SetHover(hit1.didHit);
-            sphere2_->SetHover(hit2.didHit);
-            sphere3_->SetHover(hit3.didHit);
+            Urbaxio::UI::HitResult hitReset = btnResetPos_->CheckIntersection(localRay);
+            Urbaxio::UI::HitResult hitMin = btnToggleMinimize_->CheckIntersection(localRay);
+            Urbaxio::UI::HitResult hitClose = btnToggleVisible_->CheckIntersection(localRay);
             
-            if (triggerPressed || aButtonPressed) {
-                if (hit2.didHit) sphere2_toggled_ = !sphere2_toggled_;
-                if (hit3.didHit) sphere3_toggled_ = !sphere3_toggled_;
-                }
+            btnResetPos_->SetHover(hitReset.didHit);
+            btnToggleMinimize_->SetHover(hitMin.didHit);
+            btnToggleVisible_->SetHover(hitClose.didHit);
             
-            sphere2_->SetColor(sphere2_toggled_ ? selectedColor_ : defaultColor_);
-            sphere3_->SetColor(sphere3_toggled_ ? selectedColor_ : defaultColor_);
+            if ((triggerPressed || aButtonPressed) && isHovered_) {
+                if (hitReset.didHit) panel->ResetPosition();
+                if (hitMin.didHit) panel->SetMinimized(!panel->IsMinimized());
+                if (hitClose.didHit) panel->SetVisible(!panel->IsVisible());
+            }
             
-            sphere1_->Update(localRay, false, false, false, false, 0.0f);
-            sphere2_->Update(localRay, false, false, false, false, 0.0f);
-            sphere3_->Update(localRay, false, false, false, false, 0.0f);
+            // Update button colors based on synced state
+            btnToggleMinimize_->SetColor(isMinimized_ ? selectedColor_ : defaultColor_);
+            btnToggleVisible_->SetColor(isVisible_ ? selectedColor_ : defaultColor_);
+            btnResetPos_->SetColor(defaultColor_);
+            
+            btnResetPos_->Update(localRay, false, false, false, false, 0.0f);
+            btnToggleMinimize_->Update(localRay, false, false, false, false, 0.0f);
+            btnToggleVisible_->Update(localRay, false, false, false, false, 0.0f);
         }
         
         void Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<Urbaxio::UI::MaskData>& mask) const override {
+            Urbaxio::UI::VRPanel* panel = manager_.GetPanel(panelName_);
+            if (!panel) return;
+            
             glm::mat4 rowWorldTransform = panelTransform * glm::translate(glm::mat4(1.0f), localPosition_);
             textRenderer.SetPanelModelMatrix(rowWorldTransform);
+            
             float textHeight = size_.y * 0.7f;
-            glm::vec2 textSize = textRenderer.GetTextSize(name_, textHeight);
+            glm::vec2 textSize = textRenderer.GetTextSize(panel->GetDisplayName(), textHeight);
+            
             float startX = -textSize.x * 0.5f;
             float endX = -size_.x * 0.5f;
             float currentX = glm::mix(startX, endX, hoverAnimationT_);
+            
             glm::vec3 textRelativePos(currentX, 0, 0.001f);
-            textRenderer.AddTextOnPanel(name_, textRelativePos, glm::vec4(1.0f, 1.0f, 1.0f, alpha), textHeight, Urbaxio::TextAlign::LEFT, mask);
+            textRenderer.AddTextOnPanel(panel->GetDisplayName(), textRelativePos, glm::vec4(1.0f, 1.0f, 1.0f, alpha), textHeight, Urbaxio::TextAlign::LEFT, mask);
             
             if (hoverAnimationT_ > 0.01f) {
                 float sphereAlpha = alpha * hoverAnimationT_;
-
-                // Create a list of spheres with their depths for sorting
-                std::vector<std::pair<float, Urbaxio::UI::IVRWidget*>> spheres_to_render;
-                for (auto* sphere : {sphere1_.get(), sphere2_.get(), sphere3_.get()}) {
+                std::vector<std::pair<float, const Urbaxio::UI::IVRWidget*>> spheres_to_render;
+                for (auto* sphere : {btnResetPos_.get(), btnToggleMinimize_.get(), btnToggleVisible_.get()}) {
                     glm::vec3 sphere_world_pos = panelTransform * glm::vec4(sphere->GetLocalPosition(), 1.0f);
                     float viewZ = (view * glm::vec4(sphere_world_pos, 1.0f)).z;
                     spheres_to_render.emplace_back(viewZ, sphere);
                 }
 
-                // Sort from back to front
                 std::sort(spheres_to_render.begin(), spheres_to_render.end(), [](const auto& a, const auto& b) {
                     return a.first < b.first;
                 });
 
-                // Render in sorted order
                 for (const auto& [depth, sphere] : spheres_to_render) {
                     sphere->Render(renderer, textRenderer, panelTransform, view, projection, sphereAlpha, mask);
+                }
             }
         }
-        }
 
-        // ... (остальные методы класса VRPanelRowWidget остаются без изменений)
         Urbaxio::UI::HitResult CheckIntersection(const Urbaxio::UI::Ray& localRay) override {
-            // ... (unmodified)
             Urbaxio::UI::HitResult result;
             float t;
             if (glm::intersectRayPlane(localRay.origin, localRay.direction, localPosition_, glm::vec3(0, 0, 1), t) && t > 0) {
@@ -198,42 +207,42 @@ namespace { // Anonymous namespace for helpers
             }
             return result;
         }
-        void HandleClick() override {
-            // ... (unmodified)
-        }
+        void HandleClick() override {}
         void SetLocalPosition(const glm::vec3& pos) override {
-            // ... (unmodified)
             localPosition_ = pos;
-            sphere1_->SetLocalPosition(pos + sphere1_offset_);
-            sphere2_->SetLocalPosition(pos + sphere2_offset_);
-            sphere3_->SetLocalPosition(pos + sphere3_offset_);
+            btnResetPos_->SetLocalPosition(pos + btnResetPosOffset_);
+            btnToggleMinimize_->SetLocalPosition(pos + btnToggleMinimizeOffset_);
+            btnToggleVisible_->SetLocalPosition(pos + btnToggleVisibleOffset_);
         }
         void SetHover(bool hover) override { isHovered_ = hover; }
         const glm::vec3& GetLocalPosition() const override { return localPosition_; }
         glm::vec2 GetSize() const override { return size_; }
     private:
-        std::string name_;
+        std::string panelName_;
+        Urbaxio::UI::VRUIManager& manager_;
         glm::vec2 size_;
         glm::vec3 localPosition_;
         float hoverAnimationT_;
-        std::unique_ptr<Urbaxio::UI::VRConfirmButtonWidget> sphere1_, sphere2_, sphere3_;
-        glm::vec3 sphere1_offset_, sphere2_offset_, sphere3_offset_;
-        bool sphere2_toggled_;
-        bool sphere3_toggled_;
         
-        // Colors to match the toolbar
+        std::unique_ptr<Urbaxio::UI::VRConfirmButtonWidget> btnResetPos_, btnToggleMinimize_, btnToggleVisible_;
+        glm::vec3 btnResetPosOffset_, btnToggleMinimizeOffset_, btnToggleVisibleOffset_;
+        
+        bool isMinimized_;
+        bool isVisible_;
+        
         const glm::vec3 defaultColor_{0.3f, 0.75f, 1.0f};
         const glm::vec3 selectedColor_{1.0f, 0.79f, 0.4f};
         bool isHovered_ = false;
     };
-    // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+    // --- END OF MODIFICATION ---
     
     // A widget that wraps a VRScrollWidget and dynamically populates it
     // with a list of all panels from the VRUIManager.
     class VRPanelListWidget : public Urbaxio::UI::IVRWidget {
     public:
-        VRPanelListWidget(Urbaxio::UI::VRUIManager& manager, const glm::vec3& localPos, const glm::vec2& size) 
-        : manager_(manager)
+        VRPanelListWidget(Urbaxio::UI::VRUIManager& manager, const glm::vec3& localPos, const glm::vec2& size,
+                          unsigned int backIcon, unsigned int minIcon, unsigned int closeIcon) 
+        : manager_(manager), backIcon_(backIcon), minIcon_(minIcon), closeIcon_(closeIcon)
         {
             scrollWidget_ = std::make_unique<Urbaxio::UI::VRScrollWidget>(localPos, size);
             lastPanelCount_ = 0;
@@ -269,31 +278,9 @@ namespace { // Anonymous namespace for helpers
             scrollWidget_->ClearState();
             glm::vec2 rowSize(0.15f, 0.03f);
             
-            // Add real panels
             for (const auto& [name, panel] : manager_.GetPanels()) {
                 if (name == "PanelManager") continue;
-                scrollWidget_->AddWidget(std::make_unique<VRPanelRowWidget>(panel.GetDisplayName(), rowSize));
-            }
-            // Add 15 placeholder items for scroll testing
-            const std::vector<std::string> test_items = {
-                "Short Item 1",
-                "A Medium Length Item 2",
-                "This is a Very, Very Long Item Name for Testing Number 3",
-                "Item 4",
-                "Another Test Item 5",
-                "Scrolling Test Row Six",
-                "Seven",
-                "Eight is a nice number",
-                "Item 9 is quite long indeed",
-                "The Tenth Item",
-                "Eleventh hour",
-                "A twelfth test item appears",
-                "Lucky thirteen is here",
-                "Slightly longer one for fourteen",
-                "Fifteen, the final test placeholder"
-            };
-            for(const auto& text : test_items) {
-                scrollWidget_->AddWidget(std::make_unique<VRPanelRowWidget>(text, rowSize));
+                scrollWidget_->AddWidget(std::make_unique<VRPanelRowWidget>(name, manager_, rowSize, backIcon_, minIcon_, closeIcon_));
             }
             lastPanelCount_ = manager_.GetPanels().size();
         }
@@ -301,10 +288,11 @@ namespace { // Anonymous namespace for helpers
         Urbaxio::UI::VRUIManager& manager_;
         std::unique_ptr<Urbaxio::UI::VRScrollWidget> scrollWidget_;
         size_t lastPanelCount_;
+        unsigned int backIcon_, minIcon_, closeIcon_;
     };
     // END OF MODIFICATION
 
-    void SetupPanelManagerPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
+    void SetupPanelManagerPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int closeIcon, unsigned int minimizeIcon, unsigned int backIcon) {
         glm::vec3 translation = glm::vec3(0.004f, 0.045f, 0.020f);
         glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-117.219f, 2.847f, -4.021f));
         glm::vec3 scale = glm::vec3(0.308f);
@@ -313,10 +301,8 @@ namespace { // Anonymous namespace for helpers
                                glm::scale(glm::mat4(1.0f), scale);
         
         auto& panelMgr = vruiManager.AddPanel("PanelManager", "Panels", glm::vec2(0.217f, 0.381f), panelOffset, 0.1f, dragIcon, closeIcon, minimizeIcon);
-        // START OF MODIFICATION
-        auto listWidget = std::make_unique<VRPanelListWidget>(vruiManager, glm::vec3(0.0f, -0.01f, 0.01f), glm::vec2(0.18f, 0.3f));
+        auto listWidget = std::make_unique<VRPanelListWidget>(vruiManager, glm::vec3(0.0f, -0.01f, 0.01f), glm::vec2(0.18f, 0.3f), backIcon, minimizeIcon, closeIcon);
         panelMgr.AddWidget(std::move(listWidget));
-        // END OF MODIFICATION
     }
 
     // Helper to create a model matrix from an OpenXR pose
@@ -1006,12 +992,12 @@ int main(int argc, char* argv[]) {
     unsigned int closeIconTexture = load_icon("close_icon.png");
     unsigned int minimizeIconTexture = load_icon("minimize_icon.png");
     unsigned int panelManagerIconTexture = load_icon("panel_manager.png");
+    unsigned int backIconTexture = load_icon("back.png");
 
     // --- NEW: Setup our VR panels using the new system ---
     SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture, closeIconTexture, minimizeIconTexture);
     SetupToolMenuPanel(vruiManager, toolManager, dragIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture, closeIconTexture, minimizeIconTexture);
-    // ДОБАВЬТЕ ЭТУ СТРОКУ:
-    SetupPanelManagerPanel(vruiManager, dragIconTexture, closeIconTexture, minimizeIconTexture);
+    SetupPanelManagerPanel(vruiManager, dragIconTexture, closeIconTexture, minimizeIconTexture, backIconTexture);
     
     if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
         panelMgr->SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);

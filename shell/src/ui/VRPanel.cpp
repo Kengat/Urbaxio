@@ -16,7 +16,7 @@
 namespace Urbaxio::UI {
 
 VRPanel::VRPanel(const std::string& name, const std::string& displayName, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius, unsigned int grabIcon, unsigned int closeIcon, unsigned int minimizeIcon)
-    : name_(name), displayName_(displayName), size_(size), offsetTransform_(offsetTransform), cornerRadius_(cornerRadius), hoveredWidget_(nullptr), isGrabbing(false) {
+    : name_(name), displayName_(displayName), initialOffsetTransform_(offsetTransform), size_(size), offsetTransform_(offsetTransform), cornerRadius_(cornerRadius), hoveredWidget_(nullptr), isGrabbing(false) {
     
     const float handleDiameter = 0.02f;
     const float handleSpacing = 0.025f;
@@ -266,10 +266,10 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
     // Handle simple clicks (Trigger or A button) for close/minimize
     if ((triggerPressed || aButtonPressed) && !clickConsumed) {
         if (minimizeHit.didHit) {
-            minimizeTargetState_ = !minimizeTargetState_;
+            SetMinimized(!IsMinimized());
             clickConsumed = true;
         } else if (closeHit.didHit) {
-            isVisible_ = false;
+            SetVisible(false);
             clickConsumed = true;
         }
     }
@@ -513,6 +513,18 @@ bool VRPanel::IsResizing() const {
 
 bool VRPanel::IsChangingProportions() const {
     return isChangingProportions_;
+}
+
+void VRPanel::SetMinimized(bool minimized) {
+    minimizeTargetState_ = minimized;
+}
+
+bool VRPanel::IsMinimized() const {
+    return minimizeTargetState_;
+}
+
+void VRPanel::ResetPosition() {
+    offsetTransform_ = initialOffsetTransform_;
 }
 
 }
