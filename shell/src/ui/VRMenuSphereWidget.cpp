@@ -33,13 +33,15 @@ void VRMenuSphereWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
 
     // -- START OF MODIFICATION --
 
-    // Spherical billboard logic using a stable cyclops eye position to prevent stereo disparity.
+    // Spherical billboard logic using camera's UP vector to prevent flipping.
 
     glm::vec3 cameraPos = renderer.getCyclopsEyePosition();
 
+    glm::vec3 cameraUp = glm::inverse(view)[1]; // Get camera's up vector in world space
+
     
 
-    glm::mat4 lookAtMatrix = glm::lookAt(worldPos, cameraPos, glm::vec3(0.0f, 0.0f, 1.0f));
+    glm::mat4 lookAtMatrix = glm::lookAt(worldPos, cameraPos, cameraUp);
 
     glm::mat4 rotationMatrix = glm::inverse(lookAtMatrix);
 

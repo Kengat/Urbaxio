@@ -53,11 +53,13 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
 
     // -- START OF MODIFICATION --
 
-    // Spherical billboard logic using a stable cyclops eye position to prevent stereo disparity.
+    // Spherical billboard logic using camera's UP vector to prevent flipping.
 
     glm::vec3 cameraPos = renderer.getCyclopsEyePosition();
 
-    glm::mat4 lookAtMatrix = glm::lookAt(sphereWorldPos, cameraPos, glm::vec3(0.0f, 0.0f, 1.0f));
+    glm::vec3 cameraUp = glm::inverse(view)[1]; // Get camera's up vector in world space
+
+    glm::mat4 lookAtMatrix = glm::lookAt(sphereWorldPos, cameraPos, cameraUp);
 
     glm::mat4 rotationMatrix = glm::inverse(lookAtMatrix);
 
@@ -80,13 +82,13 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
     renderer.RenderVRMenuWidget(view, projection, sphereModel, baseColor, aberration, alpha, abColor1, abColor2);
 
     if (textureId_ != 0) {
-        const float ICON_FORWARD_FACTOR = 0.15f; // Пропорционально диаметру
-
-        float scaledSphereDiameter = sphereDiameter * panelLocalScale;
-
         // -- START OF MODIFICATION --
 
-        // Offset the icon towards the camera along the new billboarded forward axis
+        // Increased forward offset to create a "convex" or "floating in front" effect.
+
+        const float ICON_FORWARD_FACTOR = 0.5f;
+
+        float scaledSphereDiameter = sphereDiameter * panelLocalScale;
 
         glm::vec3 z_axis = glm::vec3(rotationMatrix[2]);
 
