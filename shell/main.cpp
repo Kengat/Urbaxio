@@ -11,6 +11,7 @@ extern "C" {
 #include <engine/engine.h>
 #include <engine/scene.h>
 #include <engine/scene_object.h>
+#include <engine/MaterialManager.h>
 #include <cad_kernel/cad_kernel.h>
 #include <tools/ToolManager.h>
 #include <tools/SelectTool.h>
@@ -26,6 +27,7 @@ extern "C" {
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
 #include <glad/glad.h>
+#include "stb_image.h"
 
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
@@ -836,7 +838,68 @@ namespace { // Anonymous namespace for helpers
 } // end anonymous namespace
 
 // --- GPU Mesh Upload Helper ---
-bool UploadMeshToGPU(Urbaxio::Engine::SceneObject& object) { /* ... */ const Urbaxio::CadKernel::MeshBuffers& mesh = object.get_mesh_buffers(); if (mesh.isEmpty() || mesh.normals.empty()) { if (mesh.normals.empty() && !mesh.vertices.empty()) { std::cerr << "UploadMeshToGPU: Mesh for object " << object.get_id() << " is missing normals!" << std::endl; } return false; } if (object.vao != 0) glDeleteVertexArrays(1, &object.vao); if (object.vbo_vertices != 0) glDeleteBuffers(1, &object.vbo_vertices); if (object.vbo_normals != 0) glDeleteBuffers(1, &object.vbo_normals); if (object.ebo != 0) glDeleteBuffers(1, &object.ebo); object.vao = object.vbo_vertices = object.vbo_normals = object.ebo = 0; object.index_count = 0; glGenVertexArrays(1, &object.vao); if (object.vao == 0) return false; glBindVertexArray(object.vao); glGenBuffers(1, &object.vbo_vertices); if (object.vbo_vertices == 0) { glDeleteVertexArrays(1, &object.vao); object.vao = 0; return false; } glBindBuffer(GL_ARRAY_BUFFER, object.vbo_vertices); glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(float), mesh.vertices.data(), GL_STATIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glGenBuffers(1, &object.vbo_normals); if (object.vbo_normals == 0) { glDeleteBuffers(1, &object.vbo_vertices); glDeleteVertexArrays(1, &object.vao); object.vao = object.vbo_vertices = 0; return false; } glBindBuffer(GL_ARRAY_BUFFER, object.vbo_normals); glBufferData(GL_ARRAY_BUFFER, mesh.normals.size() * sizeof(float), mesh.normals.data(), GL_STATIC_DRAW); glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0); glEnableVertexAttribArray(1); glGenBuffers(1, &object.ebo); if (object.ebo == 0) { glDeleteBuffers(1, &object.vbo_normals); glDeleteBuffers(1, &object.vbo_vertices); glDeleteVertexArrays(1, &object.vao); object.vao = object.vbo_vertices = object.vbo_normals = 0; return false; } glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, object.ebo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(unsigned int), mesh.indices.data(), GL_STATIC_DRAW); object.index_count = static_cast<GLsizei>(mesh.indices.size()); glBindVertexArray(0); glBindBuffer(GL_ARRAY_BUFFER, 0); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0); std::cout << "UploadMeshToGPU: Successfully uploaded mesh for object " << object.get_id() << std::endl; return true; }
+bool UploadMeshToGPU(Urbaxio::Engine::SceneObject& object) {
+    const Urbaxio::CadKernel::MeshBuffers& mesh = object.get_mesh_buffers();
+    if (mesh.isEmpty() || mesh.normals.empty()) {
+        if (mesh.normals.empty() && !mesh.vertices.empty()) {
+            std::cerr << "UploadMeshToGPU: Mesh for object " << object.get_id() << " is missing normals!" << std::endl;
+        }
+        return false;
+    }
+    
+    // Clean up old buffers if they exist
+    if (object.vao != 0) glDeleteVertexArrays(1, &object.vao);
+    if (object.vbo_vertices != 0) glDeleteBuffers(1, &object.vbo_vertices);
+    if (object.vbo_normals != 0) glDeleteBuffers(1, &object.vbo_normals);
+    if (object.vbo_uvs != 0) glDeleteBuffers(1, &object.vbo_uvs);
+    if (object.ebo != 0) glDeleteBuffers(1, &object.ebo);
+    object.vao = object.vbo_vertices = object.vbo_normals = object.vbo_uvs = object.ebo = 0;
+    object.index_count = 0;
+
+    glGenVertexArrays(1, &object.vao);
+    if (object.vao == 0) return false;
+    glBindVertexArray(object.vao);
+
+    // VBO for vertices
+    glGenBuffers(1, &object.vbo_vertices);
+    if (object.vbo_vertices == 0) { glDeleteVertexArrays(1, &object.vao); object.vao = 0; return false; }
+    glBindBuffer(GL_ARRAY_BUFFER, object.vbo_vertices);
+    glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(float), mesh.vertices.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    // VBO for normals
+    glGenBuffers(1, &object.vbo_normals);
+    if (object.vbo_normals == 0) { /* cleanup */ return false; }
+    glBindBuffer(GL_ARRAY_BUFFER, object.vbo_normals);
+    glBufferData(GL_ARRAY_BUFFER, mesh.normals.size() * sizeof(float), mesh.normals.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+
+    // --- NEW: VBO for UVs (if they exist) ---
+    if (!mesh.uvs.empty()) {
+        glGenBuffers(1, &object.vbo_uvs);
+        if (object.vbo_uvs == 0) { /* cleanup */ return false; }
+        glBindBuffer(GL_ARRAY_BUFFER, object.vbo_uvs);
+        glBufferData(GL_ARRAY_BUFFER, mesh.uvs.size() * sizeof(float), mesh.uvs.data(), GL_STATIC_DRAW);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(2);
+    }
+
+    // EBO for indices
+    glGenBuffers(1, &object.ebo);
+    if (object.ebo == 0) { /* cleanup */ return false; }
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, object.ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(unsigned int), mesh.indices.data(), GL_STATIC_DRAW);
+    object.index_count = static_cast<GLsizei>(mesh.indices.size());
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+    std::cout << "UploadMeshToGPU: Successfully uploaded mesh for object " << object.get_id() << std::endl;
+    return true;
+}
 
 int main(int argc, char* argv[]) {
     std::cout << "Shell: Starting Urbaxio Application..." << std::endl;
@@ -881,7 +944,6 @@ int main(int argc, char* argv[]) {
     
     // --- Appearance Settings ---
     ImVec4 clear_color = ImVec4(0.13f, 0.13f, 0.18f, 1.00f);
-    glm::vec3 objectColor(0.8f, 0.85f, 0.9f);
     glm::vec3 lightColor = glm::vec3(0.618f, 0.858f, 0.844f);
     float ambientStrength = 0.267f;
     bool showGrid = true; bool showAxes = true;
@@ -1071,6 +1133,23 @@ int main(int argc, char* argv[]) {
             inputHandler.droppedFilePath.clear(); // Clear the path to prevent re-triggering
         }
 
+        // --- NEW: Asynchronous Texture Loading ---
+        if (scene_ptr && scene_ptr->getMaterialManager()) {
+            auto& materials = scene_ptr->getMaterialManager()->GetAllMaterials();
+            for (auto& kv : materials) {
+                auto& mat = kv.second;
+                if (!mat.diffuseTexturePath.empty() && mat.diffuseTextureID == 0) {
+                    mat.diffuseTextureID = LoadTextureFromFile(mat.diffuseTexturePath);
+                    if (mat.diffuseTextureID == 0) {
+                        std::cerr << "Shell: Failed to load texture: " << mat.diffuseTexturePath << std::endl;
+                        mat.diffuseTexturePath.clear();
+                    } else {
+                        std::cout << "Shell: Loaded texture '" << mat.diffuseTexturePath << "' with ID " << mat.diffuseTextureID << std::endl;
+                    }
+                }
+            }
+        }
+
         // --- Update Active Tool ---
         toolManager.OnUpdate(currentSnap);
         
@@ -1148,9 +1227,17 @@ int main(int argc, char* argv[]) {
             ImGui::Separator();
             ImGui::Text("File:");
             if (ImGui::Button("New Scene")) {
-                for (auto* obj : scene_ptr->get_all_objects()) {
-                    if (obj) FreeGPUResources(*obj);
+                // Delete textures from GPU
+                if (scene_ptr && scene_ptr->getMaterialManager()) {
+                    for (const auto& kv : scene_ptr->getMaterialManager()->GetAllMaterials()) {
+                        const auto& mat = kv.second;
+                        if (mat.diffuseTextureID != 0) {
+                            GLuint id = mat.diffuseTextureID;
+                            glDeleteTextures(1, &id);
+                        }
+                    }
                 }
+                for (auto* obj : scene_ptr->get_all_objects()) { if (obj) FreeGPUResources(*obj); }
                 scene_ptr->NewScene();
                 RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
             }
@@ -1165,6 +1252,13 @@ int main(int argc, char* argv[]) {
             if (ImGui::Button("Open Scene")) {
                 std::string path = OpenFileDialog(window);
                 if (!path.empty()) {
+                    // Delete old textures before loading new scene
+                    if (scene_ptr && scene_ptr->getMaterialManager()) {
+                        for (const auto& kv : scene_ptr->getMaterialManager()->GetAllMaterials()) {
+                            const auto& mat = kv.second;
+                            if (mat.diffuseTextureID != 0) { GLuint id = mat.diffuseTextureID; glDeleteTextures(1, &id); }
+                        }
+                    }
                     for (auto* obj : scene_ptr->get_all_objects()) { if (obj) FreeGPUResources(*obj); }
                     LoadProject(path, scene_ptr, camera);
                     RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
@@ -1247,7 +1341,7 @@ int main(int argc, char* argv[]) {
         // --- Appearance Settings Window ---
         if (show_style_editor) {
             ImGui::Begin("Appearance Settings", &show_style_editor);
-            if (ImGui::CollapsingHeader("Scene Colors")) { ImGui::ColorEdit3("Background", (float*)&clear_color); ImGui::ColorEdit3("Default Object", (float*)&objectColor); }
+            if (ImGui::CollapsingHeader("Scene Colors")) { ImGui::ColorEdit3("Background", (float*)&clear_color); }
             if (ImGui::CollapsingHeader("Lighting")) { 
                 ImGui::TextDisabled("Light follows camera direction (headlamp mode)");
                 ImGui::SliderFloat("Ambient Strength", &ambientStrength, 0.0f, 1.0f); 
@@ -1757,7 +1851,7 @@ int main(int argc, char* argv[]) {
                     renderer.RenderFrame(
                         swapchain.width, swapchain.height,
                         view, projection, viewPos, scene_ptr,
-                        objectColor, lightColor, ambientStrength, 
+                        lightColor, ambientStrength, 
                         showGrid, showAxes, axisLineWidth, negAxisLineWidth,
                         gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
                         vrSnap.worldPoint, cursorRadius, effectIntensity, 
@@ -1925,7 +2019,7 @@ int main(int argc, char* argv[]) {
                 display_w, display_h,
                 view, projection, camera.Position,
                 scene_ptr, 
-                objectColor, lightColor, ambientStrength, 
+                lightColor, ambientStrength, 
                 showGrid, showAxes, axisLineWidth, negAxisLineWidth,
                 gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
                 cursorWorldPos, cursorRadius, effectIntensity, 
@@ -1952,5 +2046,13 @@ int main(int argc, char* argv[]) {
     std::cout << "Shell: <<< Exiting main loop." << std::endl;
     std::cout << "Shell: Cleaning up..." << std::endl; 
     if (vrManager) vrManager->Shutdown();
-    if (scene_ptr) { for (auto* obj : scene_ptr->get_all_objects()) { if (obj) FreeGPUResources(*obj); } } ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui::DestroyContext(); SDL_GL_DeleteContext(gl_context); SDL_DestroyWindow(window); SDL_Quit(); std::cout << "Shell: Urbaxio Application finished gracefully." << std::endl; return 0;
+    // --- Texture cleanup ---
+    if (scene_ptr && scene_ptr->getMaterialManager()) {
+        for (const auto& kv : scene_ptr->getMaterialManager()->GetAllMaterials()) {
+            const auto& mat = kv.second;
+            if (mat.diffuseTextureID != 0) { GLuint id = mat.diffuseTextureID; glDeleteTextures(1, &id); }
+        }
+    }
+    if (scene_ptr) { for (auto* obj : scene_ptr->get_all_objects()) { if (obj) FreeGPUResources(*obj); } }
+    ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui::DestroyContext(); SDL_GL_DeleteContext(gl_context); SDL_DestroyWindow(window); SDL_Quit(); std::cout << "Shell: Urbaxio Application finished gracefully." << std::endl; return 0;
 }

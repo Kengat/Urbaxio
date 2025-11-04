@@ -2,6 +2,9 @@
 #include "../include/file_io.h"
 #include <engine/scene.h>
 #include <engine/scene_object.h>
+#include <engine/MaterialManager.h>
+#include <engine/MeshGroup.h>
+#include <engine/MeshGroup.h>
 #include <cad_kernel/MeshBuffers.h>
 #include <fstream>
 #include <iostream>
@@ -13,6 +16,33 @@
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
+#include <string>
+#include <algorithm>
+
+namespace {
+    // Custom comparator for tinyobj::index_t to use it in a map
+    struct IndexComparator {
+        bool operator()(const tinyobj::index_t& a, const tinyobj::index_t& b) const {
+            if (a.vertex_index < b.vertex_index) return true;
+            if (a.vertex_index > b.vertex_index) return false;
+            if (a.normal_index < b.normal_index) return true;
+            if (a.normal_index > b.normal_index) return false;
+            if (a.texcoord_index < b.texcoord_index) return true;
+            if (a.texcoord_index > b.texcoord_index) return false;
+            return false;
+        }
+    };
+    // --- NEW: String trimming helper function ---
+    std::string trim(const std::string& str) {
+        const char* whitespace = " \t\n\r\f\v";
+        size_t first = str.find_first_not_of(whitespace);
+        if (std::string::npos == first) {
+            return str;
+        }
+        size_t last = str.find_last_not_of(whitespace);
+        return str.substr(first, (last - first + 1));
+    }
+}
 
 namespace Urbaxio::FileIO {
 
@@ -32,6 +62,7 @@ bool ExportSceneToObj(const std::string& filepath, const Engine::Scene& scene) {
 
     size_t vertex_offset = 1; // OBJ indices are 1-based
     size_t normal_offset = 1;
+    size_t uv_offset = 1;
 
     for (const auto* obj : scene.get_all_objects()) {
         // We only export objects that are marked as exportable and have a mesh
@@ -58,20 +89,34 @@ bool ExportSceneToObj(const std::string& filepath, const Engine::Scene& scene) {
             file << "vn " << transformed_norm.x << " " << transformed_norm.y << " " << transformed_norm.z << "\n";
         }
 
-        // Write faces (format: f v1//vn1 v2//vn2 v3//vn3)
+        // Write UVs if they exist
+        if (!mesh.uvs.empty()) {
+            for (size_t i = 0; i < mesh.uvs.size(); i += 2) {
+                file << "vt " << mesh.uvs[i] << " " << mesh.uvs[i+1] << "\n";
+            }
+        }
+
+        // Write faces
         for (size_t i = 0; i < mesh.indices.size(); i += 3) {
-            unsigned int i0 = mesh.indices[i] + vertex_offset;
-            unsigned int i1 = mesh.indices[i+1] + vertex_offset;
-            unsigned int i2 = mesh.indices[i+2] + vertex_offset;
-            // In our case, vertex and normal indices are the same
-            unsigned int n0 = mesh.indices[i] + normal_offset;
-            unsigned int n1 = mesh.indices[i+1] + normal_offset;
-            unsigned int n2 = mesh.indices[i+2] + normal_offset;
-            file << "f " << i0 << "//" << n0 << " " << i1 << "//" << n1 << " " << i2 << "//" << n2 << "\n";
+            file << "f";
+            for (int j = 0; j < 3; ++j) {
+                unsigned int v_idx = mesh.indices[i+j] + vertex_offset;
+                unsigned int n_idx = mesh.indices[i+j] + normal_offset;
+                file << " " << v_idx;
+                if (!mesh.uvs.empty()) {
+                    unsigned int uv_idx = mesh.indices[i+j] + uv_offset;
+                    file << "/" << uv_idx;
+                }
+                file << "/" << n_idx;
+            }
+            file << "\n";
         }
 
         vertex_offset += mesh.vertices.size() / 3;
         normal_offset += mesh.normals.size() / 3;
+        if (!mesh.uvs.empty()) {
+            uv_offset += mesh.uvs.size() / 2;
+        }
     }
 
     std::cout << "FileIO: Successfully exported scene to " << filepath << std::endl;
@@ -84,7 +129,10 @@ bool ImportObjToScene(const std::string& filepath, Engine::Scene& scene, float s
     std::vector<tinyobj::material_t> materials;
     std::string warn, err;
 
-    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filepath.c_str())) {
+    std::filesystem::path path(filepath);
+    std::string mtl_base_dir = path.parent_path().string();
+
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filepath.c_str(), mtl_base_dir.c_str(), true)) {
         std::cerr << "FileIO Error: Failed to load OBJ file: " << warn << err << std::endl;
         return false;
     }
@@ -93,66 +141,105 @@ bool ImportObjToScene(const std::string& filepath, Engine::Scene& scene, float s
         std::cout << "FileIO Warning: " << warn << std::endl;
     }
 
-    // --- NEW: Transformation from standard Y-Up to our Z-Up on import ---
-    // The scale is now passed as a parameter
+    // --- 1. Process and add materials to the scene's material manager ---
+    for (const auto& mat : materials) {
+        Engine::Material newMat;
+        newMat.name = trim(mat.name);
+        newMat.diffuseColor = { mat.diffuse[0], mat.diffuse[1], mat.diffuse[2] };
+        if (!mat.diffuse_texname.empty()) {
+            std::filesystem::path texture_path = std::filesystem::path(mtl_base_dir) / trim(mat.diffuse_texname);
+            newMat.diffuseTexturePath = std::filesystem::absolute(texture_path).string();
+        }
+        scene.getMaterialManager()->AddMaterial(newMat);
+    }
+
+    // --- 2. Transformation from standard Y-Up to our Z-Up on import ---
     glm::mat4 y_up_to_z_up = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
     glm::mat3 normal_transform = glm::mat3(y_up_to_z_up);
 
-    // Import each shape from the OBJ as a separate SceneObject
+    // --- 3. Import each shape from the OBJ as a separate SceneObject ---
     for (const auto& shape : shapes) {
-        Urbaxio::CadKernel::MeshBuffers mesh;
-        const auto& obj_mesh = shape.mesh;
+        CadKernel::MeshBuffers combinedMesh;
+        std::vector<Engine::MeshGroup> meshGroups;
+        std::map<tinyobj::index_t, uint32_t, IndexComparator> unique_vertices;
 
-        // The library triangulates faces for us, so we can assume faces are triangles.
-        // We can't directly use obj_mesh.indices because vertices/normals might be shared.
-        // We build a new, flat list of vertices and normals for our renderer.
-        for (const auto& index : obj_mesh.indices) {
-            // Vertex data
-            glm::vec3 pos(
-                attrib.vertices[3 * index.vertex_index + 0],
-                attrib.vertices[3 * index.vertex_index + 1],
-                attrib.vertices[3 * index.vertex_index + 2]
-            );
-            glm::vec3 transformed_pos = y_up_to_z_up * glm::vec4(pos, 1.0f);
-            transformed_pos *= scale;
-            mesh.vertices.push_back(transformed_pos.x);
-            mesh.vertices.push_back(transformed_pos.y);
-            mesh.vertices.push_back(transformed_pos.z);
-
-            // Normal data (check if available)
-            if (index.normal_index >= 0) {
-                glm::vec3 norm(
-                    attrib.normals[3 * index.normal_index + 0],
-                    attrib.normals[3 * index.normal_index + 1],
-                    attrib.normals[3 * index.normal_index + 2]
-                );
-                glm::vec3 transformed_norm = normal_transform * norm;
-                mesh.normals.push_back(transformed_norm.x);
-                mesh.normals.push_back(transformed_norm.y);
-                mesh.normals.push_back(transformed_norm.z);
-            } else {
-                // If no normals, push a zero vector as a placeholder. A better solution would be to compute them.
-                mesh.normals.push_back(0); mesh.normals.push_back(0); mesh.normals.push_back(1);
+        // Group faces by material ID
+        std::map<int, std::vector<tinyobj::index_t>> facesByMaterial;
+        for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
+            int material_id = shape.mesh.material_ids[f];
+            for (int v = 0; v < 3; ++v) { // We assume triangulation
+                facesByMaterial[material_id].push_back(shape.mesh.indices[f * 3 + v]);
             }
         }
-        
-        // tinyobjloader already gives us a flat list of vertices for triangles,
-        // so we can just create sequential indices.
-        mesh.indices.resize(obj_mesh.indices.size());
-        for (size_t i = 0; i < obj_mesh.indices.size(); ++i) {
-            mesh.indices[i] = i;
+
+        // Process each material group
+        for(const auto& [material_id, indices] : facesByMaterial) {
+            Engine::MeshGroup group;
+            group.startIndex = combinedMesh.indices.size();
+            
+            if (material_id >= 0 && material_id < materials.size()) {
+                group.materialName = trim(materials[material_id].name);
+            } else {
+                group.materialName = "Default";
+            }
+            
+            for (const auto& index : indices) {
+                auto it = unique_vertices.find(index);
+                if (it != unique_vertices.end()) {
+                    combinedMesh.indices.push_back(it->second);
+                } else {
+                    uint32_t new_idx = static_cast<uint32_t>(combinedMesh.vertices.size() / 3);
+                    
+                    // Vertex position
+                    glm::vec3 pos(
+                        attrib.vertices[3 * index.vertex_index + 0],
+                        attrib.vertices[3 * index.vertex_index + 1],
+                        attrib.vertices[3 * index.vertex_index + 2]
+                    );
+                    glm::vec3 transformed_pos = y_up_to_z_up * glm::vec4(pos, 1.0f);
+                    transformed_pos *= scale;
+                    combinedMesh.vertices.push_back(transformed_pos.x);
+                    combinedMesh.vertices.push_back(transformed_pos.y);
+                    combinedMesh.vertices.push_back(transformed_pos.z);
+                    // Vertex normal
+                    if (index.normal_index >= 0) {
+                        glm::vec3 norm(
+                            attrib.normals[3 * index.normal_index + 0],
+                            attrib.normals[3 * index.normal_index + 1],
+                            attrib.normals[3 * index.normal_index + 2]
+                        );
+                        glm::vec3 transformed_norm = normal_transform * norm;
+                        combinedMesh.normals.push_back(transformed_norm.x);
+                        combinedMesh.normals.push_back(transformed_norm.y);
+                        combinedMesh.normals.push_back(transformed_norm.z);
+                    } else { combinedMesh.normals.insert(combinedMesh.normals.end(), {0,0,1}); }
+                    // Vertex UV
+                    if (index.texcoord_index >= 0) {
+                        combinedMesh.uvs.push_back(attrib.texcoords[2 * index.texcoord_index + 0]);
+                        combinedMesh.uvs.push_back(attrib.texcoords[2 * index.texcoord_index + 1]);
+                    } else { combinedMesh.uvs.insert(combinedMesh.uvs.end(), {0,0}); }
+                    combinedMesh.indices.push_back(new_idx);
+                    unique_vertices[index] = new_idx;
+                }
+            }
+            group.indexCount = combinedMesh.indices.size() - group.startIndex;
+            if (group.indexCount > 0) {
+                meshGroups.push_back(group);
+            }
         }
 
         std::string objectName = shape.name;
         if (objectName.empty()) {
-            objectName = "ImportedObject_" + std::filesystem::path(filepath).stem().string();
+            objectName = path.stem().string();
         }
-        
+
         Engine::SceneObject* new_obj = scene.create_object(objectName);
         if (new_obj) {
-            // IMPORTANT: We do NOT set a shape. This is a mesh-only object.
-            new_obj->set_mesh_buffers(std::move(mesh));
-            new_obj->vao = 0; // Mark for GPU upload
+            // Manually set mesh and groups, bypassing the default group creation in set_mesh_buffers
+            CadKernel::MeshBuffers temp_mesh = combinedMesh; // Make a copy
+            new_obj->set_mesh_buffers(std::move(temp_mesh)); // This will build adjacency and create a default group
+            new_obj->meshGroups = std::move(meshGroups); // Now overwrite with the correct groups
+            new_obj->vao = 0;
         }
     }
 
@@ -177,43 +264,48 @@ CadKernel::MeshBuffers LoadMeshFromObj(const std::string& filepath) {
     glm::mat4 y_up_to_z_up = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
     glm::mat3 normal_transform = glm::mat3(y_up_to_z_up);
 
+    std::map<tinyobj::index_t, uint32_t, IndexComparator> unique_vertices;
     // Combine all shapes from the OBJ file into a single mesh
     for (const auto& shape : shapes) {
-        const auto& obj_mesh = shape.mesh;
-
-        for (const auto& index : obj_mesh.indices) {
-            // Vertex data
-            glm::vec3 pos(
-                attrib.vertices[3 * index.vertex_index + 0],
-                attrib.vertices[3 * index.vertex_index + 1],
-                attrib.vertices[3 * index.vertex_index + 2]
-            );
-            glm::vec3 transformed_pos = y_up_to_z_up * glm::vec4(pos, 1.0f);
-            resultMesh.vertices.push_back(transformed_pos.x);
-            resultMesh.vertices.push_back(transformed_pos.y);
-            resultMesh.vertices.push_back(transformed_pos.z);
-
-            // Normal data
-            if (index.normal_index >= 0) {
-                glm::vec3 norm(
-                    attrib.normals[3 * index.normal_index + 0],
-                    attrib.normals[3 * index.normal_index + 1],
-                    attrib.normals[3 * index.normal_index + 2]
-                );
-                glm::vec3 transformed_norm = normal_transform * norm;
-                resultMesh.normals.push_back(transformed_norm.x);
-                resultMesh.normals.push_back(transformed_norm.y);
-                resultMesh.normals.push_back(transformed_norm.z);
+        for (const auto& index : shape.mesh.indices) {
+            auto it = unique_vertices.find(index);
+            if (it != unique_vertices.end()) {
+                resultMesh.indices.push_back(it->second);
             } else {
-                resultMesh.normals.push_back(0); resultMesh.normals.push_back(0); resultMesh.normals.push_back(1);
+                uint32_t new_idx = static_cast<uint32_t>(resultMesh.vertices.size() / 3);
+                
+                // Vertex data
+                glm::vec3 pos(
+                    attrib.vertices[3 * index.vertex_index + 0],
+                    attrib.vertices[3 * index.vertex_index + 1],
+                    attrib.vertices[3 * index.vertex_index + 2]
+                );
+                glm::vec3 transformed_pos = y_up_to_z_up * glm::vec4(pos, 1.0f);
+                resultMesh.vertices.push_back(transformed_pos.x);
+                resultMesh.vertices.push_back(transformed_pos.y);
+                resultMesh.vertices.push_back(transformed_pos.z);
+                // Normal data
+                if (index.normal_index >= 0) {
+                    glm::vec3 norm(
+                        attrib.normals[3 * index.normal_index + 0],
+                        attrib.normals[3 * index.normal_index + 1],
+                        attrib.normals[3 * index.normal_index + 2]
+                    );
+                    glm::vec3 transformed_norm = normal_transform * norm;
+                    resultMesh.normals.push_back(transformed_norm.x);
+                    resultMesh.normals.push_back(transformed_norm.y);
+                    resultMesh.normals.push_back(transformed_norm.z);
+                } else { resultMesh.normals.insert(resultMesh.normals.end(), {0,0,1}); }
+                
+                // UV data
+                if (index.texcoord_index >= 0) {
+                    resultMesh.uvs.push_back(attrib.texcoords[2 * index.texcoord_index + 0]);
+                    resultMesh.uvs.push_back(attrib.texcoords[2 * index.texcoord_index + 1]);
+                } else { resultMesh.uvs.insert(resultMesh.uvs.end(), {0,0}); }
+                resultMesh.indices.push_back(new_idx);
+                unique_vertices[index] = new_idx;
             }
         }
-    }
-
-    // Create sequential indices for the combined mesh
-    resultMesh.indices.resize(resultMesh.vertices.size() / 3);
-    for (size_t i = 0; i < resultMesh.indices.size(); ++i) {
-        resultMesh.indices[i] = i;
     }
 
     return resultMesh;

@@ -3,6 +3,7 @@ add_library(engine STATIC
     src/engine_main.cpp
     src/scene.cpp
     src/scene_object.cpp
+    src/MaterialManager.cpp
     # --- Undo/Redo System ---
     src/commands/CommandManager.cpp
     src/commands/PushPullCommand.cpp

@@ -31,7 +31,6 @@ namespace Urbaxio {
             const glm::mat4& view, const glm::mat4& projection, const glm::vec3& viewPos,
         Urbaxio::Engine::Scene* scene,
         // Appearance
-        const glm::vec3& defaultObjectColor,
         const glm::vec3& lightColor, float ambientStrength,
         bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
         const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ,

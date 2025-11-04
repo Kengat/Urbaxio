@@ -13,6 +13,7 @@
 #include <glad/glad.h>
 #include <glm/glm.hpp>      // <-- ДОБАВИТЬ ЭТОТ ИНКЛУД
 #include "engine/scene.h"   // <-- ДОБАВИТЬ ЭТОТ ИНКЛУД ДЛЯ Vec3Comparator //     GLuint
+#include "engine/MeshGroup.h" // <-- ADD THIS INCLUDE
 
 class TopoDS_Shape;
 class TopoDS_Vertex;
@@ -54,10 +55,14 @@ namespace Urbaxio::Engine {
         const Urbaxio::CadKernel::MeshBuffers& get_mesh_buffers() const;
         bool has_mesh() const;
 
+        // --- NEW: Mesh Groups for Materials ---
+        std::vector<MeshGroup> meshGroups;
+
         //                       (GPU)
         GLuint vao = 0;
         GLuint vbo_vertices = 0;
         GLuint vbo_normals = 0;
+        GLuint vbo_uvs = 0; // <-- ADD THIS
         GLuint ebo = 0;
         GLsizei index_count = 0;
         

@@ -9,6 +9,7 @@
 #include <TopAbs.hxx>
 #include <BRep_Tool.hxx>
 #include <gp_Pnt.hxx>
+#include "engine/MeshGroup.h"
 
 namespace Urbaxio::Engine {
 
@@ -30,6 +31,7 @@ namespace Urbaxio::Engine {
         isExportable_(other.isExportable_),
         shape_(std::move(other.shape_)),
         mesh_buffers_(std::move(other.mesh_buffers_)),
+        meshGroups(std::move(other.meshGroups)),
         boundaryLineIDs(std::move(other.boundaryLineIDs)), // <-- ДОБАВИТЬ
         meshAdjacency(std::move(other.meshAdjacency)),
         locationToVertexMapPimpl_(std::move(other.locationToVertexMapPimpl_)) // <-- ИЗМЕНИТЬ
@@ -45,6 +47,7 @@ namespace Urbaxio::Engine {
             isExportable_ = other.isExportable_;
             shape_ = std::move(other.shape_);
             mesh_buffers_ = std::move(other.mesh_buffers_);
+            meshGroups = std::move(other.meshGroups);
             boundaryLineIDs = std::move(other.boundaryLineIDs); // <-- ДОБАВИТЬ
             meshAdjacency = std::move(other.meshAdjacency);
             locationToVertexMapPimpl_ = std::move(other.locationToVertexMapPimpl_); // <-- ИЗМЕНИТЬ
@@ -73,12 +76,11 @@ namespace Urbaxio::Engine {
     void SceneObject::set_mesh_buffers(Urbaxio::CadKernel::MeshBuffers buffers) {
         mesh_buffers_ = std::move(buffers);
         
-        // --- NEW: Build the vertex adjacency map ---
+        // Build the vertex adjacency map only. Do not touch material groups here.
         meshAdjacency.clear();
         if (mesh_buffers_.isEmpty()) {
             return;
         }
-
         for (size_t i = 0; i + 2 < mesh_buffers_.indices.size(); i += 3) {
             unsigned int i0 = mesh_buffers_.indices[i];
             unsigned int i1 = mesh_buffers_.indices[i+1];

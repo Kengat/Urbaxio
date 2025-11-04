@@ -13,6 +13,8 @@
 #include <glm/glm.hpp>
 #include "engine/line.h"
 #include "engine/commands/CommandManager.h"
+// --- Material system ---
+#include "engine/MaterialManager.h"
 
 // Forward declare OCCT types
 class gp_Pln;
@@ -81,6 +83,9 @@ namespace Urbaxio::Engine {
         std::vector<const SceneObject*> get_all_objects() const;
         void DeleteObject(uint64_t id);
 
+        // --- NEW: Material Manager Accessor ---
+        MaterialManager* getMaterialManager();
+
         // --- Undo/Redo System ---
         CommandManager* getCommandManager();
         std::unique_ptr<SceneState> CaptureState();
@@ -131,6 +136,8 @@ namespace Urbaxio::Engine {
         std::map<glm::vec3, std::vector<uint64_t>, Urbaxio::Vec3Comparator> vertexAdjacency_;
         
         std::unique_ptr<CommandManager> commandManager_;
+        // --- NEW: Material Manager ---
+        std::unique_ptr<MaterialManager> materialManager_;
 
         // --- NEW: Private helper for loading ---
         // Creates an object with a specific ID during file loading

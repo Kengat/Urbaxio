@@ -3,6 +3,8 @@
 #include <engine/scene.h>
 #include <engine/scene_object.h>
 #include <engine/line.h>
+#include <engine/MaterialManager.h>
+#include <engine/Material.h>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/constants.hpp>
@@ -80,14 +82,17 @@ namespace Urbaxio {
             "#version 330 core\n"
             "layout (location = 0) in vec3 aPos;\n"
             "layout (location = 1) in vec3 aNormal;\n"
+            "layout (location = 2) in vec2 aTexCoord;\n"
             "uniform mat4 model;\n"
             "uniform mat4 view;\n"
             "uniform mat4 projection;\n"
             "out vec3 FragPosWorld;\n"
             "out vec3 NormalWorld;\n"
+            "out vec2 v_texCoord;\n"
             "void main() {\n"
             "    FragPosWorld = vec3(model * vec4(aPos, 1.0));\n"
             "    NormalWorld = mat3(transpose(inverse(model))) * aNormal;\n"
+            "    v_texCoord = aTexCoord;\n"
             "    gl_Position = projection * view * vec4(FragPosWorld, 1.0);\n"
             "}\n";
 
@@ -96,25 +101,35 @@ namespace Urbaxio {
             "out vec4 FragColor;\n"
             "in vec3 FragPosWorld;\n"
             "in vec3 NormalWorld;\n"
+            "in vec2 v_texCoord;\n"
             "uniform vec3 objectColor;\n"
             "uniform vec3 lightDir;\n"
             "uniform vec3 lightColor;\n"
             "uniform float ambientStrength;\n"
-            "uniform vec3 viewPos;\n"
+            "uniform bool u_useTexture;\n"
+            "uniform sampler2D u_diffuseTexture;\n"
             "uniform float overrideAlpha = 1.0;\n"
-            "uniform bool u_unlit = false;\n" // <-- ДОБАВИТЬ uniform
+            "uniform bool u_unlit = false;\n"
             "void main() {\n"
             "    vec3 result;\n"
-            "    if (u_unlit) {\n" // <-- ДОБАВИТЬ ЭТОТ БЛОК
-            "        result = objectColor;\n"
+            "    vec4 baseColor;\n"
+            "    if (u_useTexture) {\n"
+            "        baseColor = texture(u_diffuseTexture, v_texCoord);\n"
+            "    } else {\n"
+            "        baseColor = vec4(objectColor, 1.0);\n"
+            "    }\n"
+            "    if (u_unlit) {\n"
+            "        result = baseColor.rgb;\n"
             "    } else {\n"
             "        vec3 norm = normalize(NormalWorld);\n"
-            "        vec3 ambient = ambientStrength * lightColor * objectColor;\n"
+            "        vec3 ambient = ambientStrength * lightColor * baseColor.rgb;\n"
             "        float diff = max(dot(norm, normalize(lightDir)), 0.0);\n"
-            "        vec3 diffuse = diff * lightColor * objectColor;\n"
+            "        vec3 diffuse = diff * lightColor * baseColor.rgb;\n"
             "        result = ambient + diffuse;\n"
             "    }\n"
-            "    FragColor = vec4(result, overrideAlpha);\n"
+            "    // Discard fully transparent pixels from textures\n"
+            "    if (baseColor.a < 0.1) discard;\n"
+            "    FragColor = vec4(result, baseColor.a * overrideAlpha);\n"
             "}\n";
 
         // This will be for simple lines like the rubber band and user lines
@@ -465,7 +480,6 @@ namespace Urbaxio {
         const glm::mat4& view, const glm::mat4& projection, const glm::vec3& viewPos,
         Urbaxio::Engine::Scene* scene,
         // Appearance
-        const glm::vec3& defaultObjectColor,
         const glm::vec3& lightColor, float ambientStrength,
         bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
         const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ,
@@ -500,67 +514,72 @@ namespace Urbaxio {
         float distanceScale = distanceToCamera / referenceDistance;
         
         // --- 1. OPAQUE PASS ---
-        if (objectShaderProgram != 0 && scene) {
+        if (objectShaderProgram != 0 && scene && scene->getMaterialManager()) {
             glUseProgram(objectShaderProgram);
+
+            Urbaxio::Engine::MaterialManager* matManager = scene->getMaterialManager();
+
+            // Set per-frame uniforms
             glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-            // -- START OF MODIFICATION --
-            // Robust way to calculate headlight direction, works for both 2D and VR
             glm::mat3 worldFromViewRot = glm::mat3(glm::inverse(view));
             glm::vec3 camForwardWS = glm::normalize(worldFromViewRot * glm::vec3(0, 0, -1));
             glm::vec3 lightDir = -camForwardWS;
-            // -- END OF MODIFICATION --
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir));
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor));
             glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength);
-            glUniform3fv(glGetUniformLocation(objectShaderProgram, "viewPos"), 1, glm::value_ptr(viewPos));
+
             for (const auto* obj : scene->get_all_objects()) {
-                if (obj && obj->vao != 0 && obj->index_count > 0) {
-                    
-                    // Skip the object if it's being moved by the MoveTool (handled by ghost mesh)
-                    if (obj->get_id() == previewObjectId) { 
-                        continue;
-                    }
+                if (!obj || obj->vao == 0 || obj->index_count == 0) continue;
+                if (obj->get_id() == previewObjectId) continue; // Skip ghost object
 
-                    auto transformIt = transformOverrides.find(obj->get_id());
-                    bool hasOverride = (transformIt != transformOverrides.end());
-                    const auto& name = obj->get_name();
-                    if ((name == "LeftControllerVisual" || name == "RightControllerVisual") && !hasOverride) {
-                        // This is a controller visual at origin (0,0,0) in a non-VR or pre-transform pass. Hide it.
-                        continue;
-                    }
-
-                    // 1. Set Transform (Model Matrix)
-                    glm::mat4 modelMatrix = identityModel;
-                    if (hasOverride) {
-                        modelMatrix = transformIt->second;
-                    }
-                    glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
-                    
-                    // 2. Set Color
-                    glm::vec3 currentColor = defaultObjectColor;
-                    auto colorIt = colorOverrides.find(obj->get_id());
-                    if (colorIt != colorOverrides.end()) {
-                        currentColor = colorIt->second;
-                    }
-                    glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(currentColor));
-                    
-                    // 3. Set Lighting
-                    bool isUnlit = false;
-                    auto unlitIt = unlitOverrides.find(obj->get_id());
-                    if (unlitIt != unlitOverrides.end()) {
-                        isUnlit = unlitIt->second;
-                    }
-                    glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), isUnlit);
-                    glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
-                    
-                    // Skip rendering special markers in this main pass
-                    if (name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m") {
-                         glBindVertexArray(obj->vao);
-                         glDrawElements(GL_TRIANGLES, obj->index_count, GL_UNSIGNED_INT, 0);
-                         glBindVertexArray(0);
-                    }
+                // Hide raw controller visuals without transform override
+                auto transformIt = transformOverrides.find(obj->get_id());
+                bool hasOverride = (transformIt != transformOverrides.end());
+                const auto& name = obj->get_name();
+                if ((name == "LeftControllerVisual" || name == "RightControllerVisual") && !hasOverride) {
+                    continue;
                 }
+
+                // Transform
+                glm::mat4 modelMatrix = hasOverride ? transformIt->second : identityModel;
+                glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
+
+                // Lighting flags
+                auto unlitIt = unlitOverrides.find(obj->get_id());
+                bool isUnlit = (unlitIt != unlitOverrides.end()) ? unlitIt->second : false;
+                glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), isUnlit);
+                glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+
+                // Draw per-mesh group with materials
+                glBindVertexArray(obj->vao);
+                for (const auto& group : obj->meshGroups) {
+                    if (group.indexCount == 0) continue;
+
+                    Urbaxio::Engine::Material* mat = matManager->GetMaterial(group.materialName);
+
+                    if (mat && mat->diffuseTextureID != 0) {
+                        glUniform1i(glGetUniformLocation(objectShaderProgram, "u_useTexture"), 1);
+                        glActiveTexture(GL_TEXTURE0);
+                        glBindTexture(GL_TEXTURE_2D, mat->diffuseTextureID);
+                        glUniform1i(glGetUniformLocation(objectShaderProgram, "u_diffuseTexture"), 0);
+                    } else {
+                        glUniform1i(glGetUniformLocation(objectShaderProgram, "u_useTexture"), 0);
+                        glActiveTexture(GL_TEXTURE0);
+                        glBindTexture(GL_TEXTURE_2D, 0); // Explicitly unbind texture to avoid state leak
+
+                        // Base color: material diffuseColor or diagnostic magenta if lookup failed
+                        glm::vec3 currentColor = mat ? mat->diffuseColor : glm::vec3(1.0f, 0.0f, 1.0f);
+                        auto colorIt = colorOverrides.find(obj->get_id());
+                        if (colorIt != colorOverrides.end()) {
+                            currentColor = colorIt->second;
+                        }
+                        glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(currentColor));
+                    }
+
+                    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(group.indexCount), GL_UNSIGNED_INT, (void*)(group.startIndex * sizeof(unsigned int)));
+                }
+                glBindVertexArray(0);
             }
         }
 
@@ -577,6 +596,7 @@ namespace Urbaxio {
             glPolygonOffset(1.0f, 1.0f); // Push the solid fill back slightly
             glUniform1i(glGetUniformLocation(objectShaderProgram, "u_unlit"), 0); // Lighting ON
             glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+            glm::vec3 defaultObjectColor = glm::vec3(0.8f, 0.85f, 0.9f);
             glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(defaultObjectColor));
             
             glBindVertexArray(ghostMeshVAO);

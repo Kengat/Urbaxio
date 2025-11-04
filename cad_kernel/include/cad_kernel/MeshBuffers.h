@@ -9,12 +9,14 @@ namespace Urbaxio::CadKernel {
     {
         std::vector<float> vertices;   //                   (x, y, z, x, y, z, ...)
         std::vector<float> normals;    //                (nx, ny, nz, nx, ny, nz, ...)
+        std::vector<float> uvs;        // UV coordinates (u, v, u, v, ...)
         std::vector<unsigned int> indices; //                       (i1, i2, i3, i1, i2, i3, ...)
 
         //                          
         void clear() {
             vertices.clear();
             normals.clear();
+            uvs.clear();
             indices.clear();
         }
 
