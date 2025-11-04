@@ -51,13 +51,25 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
     glm::vec3 sphereLocalPos = localPosition_; 
     glm::vec3 sphereWorldPos = panelTransform * glm::vec4(sphereLocalPos, 1.0f);
 
-    glm::mat4 cameraWorld = glm::inverse(view);
-    glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
-    glm::vec3 camUp    = glm::normalize(glm::vec3(cameraWorld[1]));
-    glm::vec3 camFwd   = glm::normalize(glm::vec3(cameraWorld[2]));
+    // -- START OF MODIFICATION --
+
+    // Spherical billboard logic using a stable cyclops eye position to prevent stereo disparity.
+
+    glm::vec3 cameraPos = renderer.getCyclopsEyePosition();
+
+    glm::mat4 lookAtMatrix = glm::lookAt(sphereWorldPos, cameraPos, glm::vec3(0.0f, 0.0f, 1.0f));
+
+    glm::mat4 rotationMatrix = glm::inverse(lookAtMatrix);
+
+    rotationMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f); // Remove translation component
+
     glm::mat4 sphereModel = glm::translate(glm::mat4(1.0f), sphereWorldPos) *
-                            glm::mat4(glm::mat3(camRight, camUp, glm::vec3(0))) *
+
+                            rotationMatrix *
+
                             glm::scale(glm::mat4(1.0f), glm::vec3(sphereDiameter * panelLocalScale));
+
+    // -- END OF MODIFICATION --
 
     float aberration = 0.05f + sphereHoverAlpha_ * 0.10f;
     
@@ -69,11 +81,24 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
 
     if (textureId_ != 0) {
         const float ICON_FORWARD_FACTOR = 0.15f; // Пропорционально диаметру
+
         float scaledSphereDiameter = sphereDiameter * panelLocalScale;
-        glm::vec3 iconWorldPos = sphereWorldPos + camFwd * (scaledSphereDiameter * ICON_FORWARD_FACTOR);
+
+        // -- START OF MODIFICATION --
+
+        // Offset the icon towards the camera along the new billboarded forward axis
+
+        glm::vec3 z_axis = glm::vec3(rotationMatrix[2]);
+
+        glm::vec3 iconWorldPos = sphereWorldPos + z_axis * (scaledSphereDiameter * ICON_FORWARD_FACTOR);
+
         glm::mat4 iconModel = glm::translate(glm::mat4(1.0f), iconWorldPos) *
-                              glm::mat4(glm::mat3(camRight, camUp, glm::vec3(0))) *
+
+                              rotationMatrix *
+
                               glm::scale(glm::mat4(1.0f), glm::vec3(scaledSphereDiameter * 0.8f));
+
+        // -- END OF MODIFICATION --
 
         renderer.RenderVRMenuWidget(view, projection, iconModel, glm::vec3(1.0f), 0.0f, alpha, glm::vec3(0.0f), glm::vec3(0.0f), textureId_);
     }

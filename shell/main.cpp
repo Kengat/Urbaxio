@@ -1503,7 +1503,16 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
+                // --- NEW: Calculate a stable "cyclops eye" position for billboards ---
+                glm::vec3 cyclopsEyePos(0.0f);
                 const auto& vr_views = vrManager->GetViews();
+                if (!vr_views.empty()) {
+                    glm::vec3 pos1 = glm::inverse(vr_views[0].viewMatrix)[3];
+                    glm::vec3 pos2 = (vr_views.size() > 1) ? glm::inverse(vr_views[1].viewMatrix)[3] : pos1;
+                    cyclopsEyePos = (pos1 + pos2) * 0.5f;
+                }
+                renderer.setCyclopsEyePosition(cyclopsEyePos);
+
                 for (uint32_t i = 0; i < vr_views.size(); ++i) {
                     const auto& swapchain = vrManager->GetSwapchain(i);
                     uint32_t imageIndex = vrManager->AcquireSwapchainImage(i);

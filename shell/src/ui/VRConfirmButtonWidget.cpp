@@ -46,11 +46,27 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
     float scaledDiameter = diameter_ * panelLocalScale;
     glm::vec3 worldPos = panelTransform * glm::vec4(localPosition_, 1.0f);
 
-    glm::mat4 cameraWorld = glm::inverse(view);
-    glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
-    glm::vec3 camUp    = glm::normalize(glm::vec3(cameraWorld[1]));
-    glm::vec3 camFwd   = glm::normalize(glm::vec3(cameraWorld[2]));
-    glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), worldPos) * glm::mat4(glm::mat3(camRight, camUp, camFwd)) * glm::scale(glm::mat4(1.0f), glm::vec3(scaledDiameter));
+    // -- START OF MODIFICATION --
+
+    // Spherical billboard logic using a stable cyclops eye position to prevent stereo disparity.
+
+    glm::vec3 cameraPos = renderer.getCyclopsEyePosition();
+
+    
+
+    glm::mat4 lookAtMatrix = glm::lookAt(worldPos, cameraPos, glm::vec3(0.0f, 0.0f, 1.0f));
+
+    glm::mat4 rotationMatrix = glm::inverse(lookAtMatrix);
+
+    rotationMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f); // Remove translation component
+
+    glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), worldPos) *
+
+                            rotationMatrix *
+
+                            glm::scale(glm::mat4(1.0f), glm::vec3(scaledDiameter));
+
+    // -- END OF MODIFICATION --
     
     float aberration = 0.05f + hoverAlpha_ * 0.10f;
 
@@ -73,9 +89,24 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
     renderer.RenderVRMenuWidget(view, projection, modelMatrix, color_, aberration, finalAlpha, abColor1, abColor2);
 
     if (textureId_ != 0) {
-        const float ICON_FORWARD_FACTOR = 0.25f; // Пропорционально диаметру
-        glm::vec3 iconWorldPos = worldPos + camFwd * (scaledDiameter * ICON_FORWARD_FACTOR);
-        glm::mat4 iconModelMatrix = glm::translate(glm::mat4(1.0f), iconWorldPos) * glm::mat4(glm::mat3(camRight, camUp, camFwd)) * glm::scale(glm::mat4(1.0f), glm::vec3(scaledDiameter * 0.8f));
+        const float ICON_FORWARD_FACTOR = 0.25f; // Proportional to diameter
+
+        // -- START OF MODIFICATION --
+
+        // Offset the icon towards the camera along the new billboarded forward axis
+
+        glm::vec3 z_axis = glm::vec3(rotationMatrix[2]);
+
+        glm::vec3 iconWorldPos = worldPos + z_axis * (scaledDiameter * ICON_FORWARD_FACTOR);
+
+        glm::mat4 iconModelMatrix = glm::translate(glm::mat4(1.0f), iconWorldPos) *
+
+                                    rotationMatrix *
+
+                                    glm::scale(glm::mat4(1.0f), glm::vec3(scaledDiameter * 0.8f));
+
+        // -- END OF MODIFICATION --
+
         renderer.RenderVRMenuWidget(view, projection, iconModelMatrix, glm::vec3(1.0f), 0.0f, finalAlpha, glm::vec3(0.0f), glm::vec3(0.0f), textureId_);
     }
 }

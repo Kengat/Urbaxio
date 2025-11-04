@@ -31,11 +31,27 @@ void VRMenuSphereWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
 
     glm::vec3 worldPos = panelTransform * glm::vec4(localPosition_, 1.0f);
 
-    glm::mat4 cameraWorld = glm::inverse(view);
-    glm::vec3 camRight = glm::normalize(glm::vec3(cameraWorld[0]));
-    glm::vec3 camUp    = glm::normalize(glm::vec3(cameraWorld[1]));
-    glm::vec3 camFwd   = glm::normalize(glm::vec3(cameraWorld[2]));
-    glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), worldPos) * glm::mat4(glm::mat3(camRight, camUp, camFwd)) * glm::scale(glm::mat4(1.0f), glm::vec3(scaledDiameter));
+    // -- START OF MODIFICATION --
+
+    // Spherical billboard logic using a stable cyclops eye position to prevent stereo disparity.
+
+    glm::vec3 cameraPos = renderer.getCyclopsEyePosition();
+
+    
+
+    glm::mat4 lookAtMatrix = glm::lookAt(worldPos, cameraPos, glm::vec3(0.0f, 0.0f, 1.0f));
+
+    glm::mat4 rotationMatrix = glm::inverse(lookAtMatrix);
+
+    rotationMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f); // Remove translation component
+
+    glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), worldPos) *
+
+                            rotationMatrix *
+
+                            glm::scale(glm::mat4(1.0f), glm::vec3(scaledDiameter));
+
+    // -- END OF MODIFICATION --
     
     float aberration = 0.05f + hoverAlpha_ * 0.10f;
 

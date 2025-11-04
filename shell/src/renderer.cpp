@@ -1669,4 +1669,12 @@ namespace Urbaxio {
         outViewport = { (float)viewport[0], (float)viewport[1], (float)viewport[2], (float)viewport[3] };
     }
 
+    void Renderer::setCyclopsEyePosition(const glm::vec3& pos) {
+        cyclopsEyePosition_ = pos;
+    }
+
+    glm::vec3 Renderer::getCyclopsEyePosition() const {
+        return cyclopsEyePosition_;
+    }
+
 } // namespace Urbaxio
