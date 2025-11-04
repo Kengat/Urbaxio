@@ -76,16 +76,26 @@ namespace Urbaxio::Engine {
     void SceneObject::set_mesh_buffers(Urbaxio::CadKernel::MeshBuffers buffers) {
         mesh_buffers_ = std::move(buffers);
         
-        // Build the vertex adjacency map only. Do not touch material groups here.
+        // --- REVERTED/FIXED: This function MUST create a default material group ---
         meshAdjacency.clear();
+        meshGroups.clear();
         if (mesh_buffers_.isEmpty()) {
             return;
+        }
+        // Create a single default group that covers the entire mesh.
+        // This ensures the object is always renderable.
+        // Importers (like OBJ) can overwrite this with more specific groups.
+        MeshGroup defaultGroup;
+        defaultGroup.materialName = "Default";
+        defaultGroup.startIndex = 0;
+        defaultGroup.indexCount = mesh_buffers_.indices.size();
+        if (defaultGroup.indexCount > 0) {
+            meshGroups.push_back(defaultGroup);
         }
         for (size_t i = 0; i + 2 < mesh_buffers_.indices.size(); i += 3) {
             unsigned int i0 = mesh_buffers_.indices[i];
             unsigned int i1 = mesh_buffers_.indices[i+1];
             unsigned int i2 = mesh_buffers_.indices[i+2];
-
             // Add edges to the map. (i0, i1), (i1, i2), (i2, i0)
             meshAdjacency[i0].insert(i1);
             meshAdjacency[i0].insert(i2);

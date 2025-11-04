@@ -1396,7 +1396,20 @@ int main(int argc, char* argv[]) {
                 // --- Left Pane: Material List ---
                 ImGui::BeginChild("MaterialList", ImVec2(150, 0), true);
                 static std::string selectedMaterialName = "Default";
-                for (const auto& [name, mat] : matManager->GetAllMaterials()) {
+                if (ImGui::Button("New Material")) {
+                    std::string name = "New_Material";
+                    int counter = 1;
+                    while(matManager->GetMaterial(name)) {
+                        name = "New_Material_" + std::to_string(counter++);
+                    }
+                    matManager->AddMaterial({name, glm::vec3(0.8f)});
+                    selectedMaterialName = name;
+                }
+                ImGui::Separator();
+                // Using a copy of keys because map can be modified
+                std::vector<std::string> matNames;
+                for (const auto& [name, mat] : matManager->GetAllMaterials()) matNames.push_back(name);
+                for (const auto& name : matNames) {
                     if (ImGui::Selectable(name.c_str(), selectedMaterialName == name)) {
                         selectedMaterialName = name;
                     }
@@ -1410,25 +1423,24 @@ int main(int argc, char* argv[]) {
                     ImGui::Text("Editing: %s", selectedMaterialName.c_str());
                     ImGui::Separator();
                     
-                    // Allow editing color only for non-default materials
-                    if (selectedMaterialName != "Default") {
-                        ImGui::ColorEdit3("Diffuse Color", glm::value_ptr(selectedMat->diffuseColor));
-                    } else {
-                        ImGui::TextDisabled("Diffuse Color");
-                        ImGui::SameLine();
-                        ImGui::ColorButton("##defaultcolor", ImVec4(selectedMat->diffuseColor.r, selectedMat->diffuseColor.g, selectedMat->diffuseColor.b, 1.0f));
+                    // --- Use Color Picker ---
+                    ImVec4 color = ImVec4(selectedMat->diffuseColor.r, selectedMat->diffuseColor.g, selectedMat->diffuseColor.b, 1.0f);
+                    if (ImGui::ColorPicker4("##picker", (float*)&color, ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_NoSmallPreview)) {
+                        if (selectedMaterialName != "Default") { // Prevent editing default material color
+                           selectedMat->diffuseColor = glm::vec3(color.x, color.y, color.z);
+                        }
                     }
                     
                     ImGui::Text("Texture Path: %s", selectedMat->diffuseTexturePath.empty() ? "None" : selectedMat->diffuseTexturePath.c_str());
-                    if (ImGui::Button("Assign Texture")) {
+                    if (ImGui::Button("Assign Texture") && selectedMaterialName != "Default") {
                         // TODO: Open file dialog to select a texture
                     }
                     if (selectedMat->diffuseTextureID != 0) {
                         ImGui::SameLine();
                         if (ImGui::Button("Clear Texture")) {
-                            // TODO: Unload texture from GPU and reset ID
+                            // We don't delete from GPU here, just disconnect. A cleanup task could do it later.
                             selectedMat->diffuseTexturePath.clear();
-                            selectedMat->diffuseTextureID = 0; // The loader loop will see this and not try to reload
+                            selectedMat->diffuseTextureID = 0;
                         }
                     }
                     // Pass the selected material name to the PaintTool

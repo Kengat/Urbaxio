@@ -533,16 +533,19 @@ namespace Urbaxio {
                 if (!obj || obj->vao == 0 || obj->index_count == 0) continue;
                 if (obj->get_id() == previewObjectId) continue; // Skip ghost object
 
-                // Hide raw controller visuals without transform override
+                // --- MODIFIED: Use the isExportable flag to filter out helper objects ---
                 auto transformIt = transformOverrides.find(obj->get_id());
-                bool hasOverride = (transformIt != transformOverrides.end());
-                const auto& name = obj->get_name();
-                if ((name == "LeftControllerVisual" || name == "RightControllerVisual") && !hasOverride) {
-                    continue;
+                if (!obj->isExportable()) {
+                    // This will skip markers, controllers, and any other internal visuals.
+                    // But only if they are not explicitly being rendered via an override.
+                    if (transformIt == transformOverrides.end()) {
+                        continue;
+                    }
                 }
+                // --- END MODIFICATION ---
 
-                // Transform
-                glm::mat4 modelMatrix = hasOverride ? transformIt->second : identityModel;
+                // --- Determine Transform ---
+                glm::mat4 modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : identityModel;
                 glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
 
                 // Lighting flags
@@ -623,47 +626,62 @@ namespace Urbaxio {
 
         // --- 2. TRANSPARENT / OVERLAY PASS ---
         glDepthMask(GL_FALSE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         
-        if (objectShaderProgram != 0 && scene) {
+        if (objectShaderProgram != 0 && scene && scene->getMaterialManager()) {
             glUseProgram(objectShaderProgram);
             glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
-            glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
 
-            if (hoveredObjId != 0 && !hoveredFaceTriangleIndices.empty()) {
-                bool isSameAsSelected = (hoveredObjId == selectedObjId) && (hoveredFaceTriangleIndices == selectedTriangleIndices);
-                if (!isSameAsSelected) {
-                    Urbaxio::Engine::SceneObject* hoveredObj = scene->get_object_by_id(hoveredObjId);
-                     if (hoveredObj && hoveredObj->vao != 0) {
-                        glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(hoverHighlightColor));
-                        glEnable(GL_POLYGON_OFFSET_FILL);
-                        glPolygonOffset(-2.0f, -2.0f);
-                        glBindVertexArray(hoveredObj->vao);
-                        for (size_t baseIndex : hoveredFaceTriangleIndices) {
-                             if (baseIndex + 2 < hoveredObj->get_mesh_buffers().indices.size()) {
-                                 glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, (void*)(baseIndex * sizeof(unsigned int)));
-                             }
+            Urbaxio::Engine::MaterialManager* matManager = scene->getMaterialManager();
+
+            // --- MODIFIED: Translucent Highlights ---
+            auto renderHighlight = [&](uint64_t objId, const std::vector<size_t>& indices, const glm::vec3& color){
+                if (objId == 0 || indices.empty()) return;
+                
+                Urbaxio::Engine::SceneObject* obj = scene->get_object_by_id(objId);
+                if (!obj || obj->vao == 0) return;
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(-1.0f, -1.0f); // Pull towards camera to avoid z-fighting
+                glBindVertexArray(obj->vao);
+                for (size_t baseIndex : indices) {
+                     if (baseIndex + 2 < obj->get_mesh_buffers().indices.size()) {
+                        // We need to find the material for this part of the mesh to blend with
+                        Engine::Material* mat = matManager->GetMaterial("Default");
+                        for(const auto& group : obj->meshGroups) {
+                            if (baseIndex >= group.startIndex && baseIndex < group.startIndex + group.indexCount) {
+                                mat = matManager->GetMaterial(group.materialName);
+                                break;
+                            }
                         }
-                        glBindVertexArray(0);
-                        glDisable(GL_POLYGON_OFFSET_FILL);
+                        if (mat->diffuseTextureID != 0) {
+                            glUniform1i(glGetUniformLocation(objectShaderProgram, "u_useTexture"), 1);
+                            glActiveTexture(GL_TEXTURE0);
+                            glBindTexture(GL_TEXTURE_2D, mat->diffuseTextureID);
+                            glUniform1i(glGetUniformLocation(objectShaderProgram, "u_diffuseTexture"), 0);
+                        } else {
+                            glUniform1i(glGetUniformLocation(objectShaderProgram, "u_useTexture"), 0);
+                            glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(mat->diffuseColor));
+                        }
+                        // Set the highlight color as the 'light' to achieve a blended effect
+                        glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), 0.5f);
+                        glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(color));
+                        glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 0.6f);
+                        glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, (void*)(baseIndex * sizeof(unsigned int)));
                      }
                 }
+                glDisable(GL_POLYGON_OFFSET_FILL);
+                // Reset lighting
+                glUniform1f(glGetUniformLocation(objectShaderProgram, "ambientStrength"), ambientStrength);
+                glUniform3fv(glGetUniformLocation(objectShaderProgram, "lightColor"), 1, glm::value_ptr(lightColor));
+                glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 1.0f);
+            };
+
+            bool isHoverSameAsSelected = (hoveredObjId == selectedObjId) && (hoveredFaceTriangleIndices == selectedTriangleIndices);
+            if (!isHoverSameAsSelected) {
+                renderHighlight(hoveredObjId, hoveredFaceTriangleIndices, hoverHighlightColor);
             }
-            if (selectedObjId != 0 && !selectedTriangleIndices.empty()) {
-                Urbaxio::Engine::SceneObject* selectedObj = scene->get_object_by_id(selectedObjId);
-                if (selectedObj && selectedObj->vao != 0) {
-                    glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(selectionHighlightColor));
-                    glEnable(GL_POLYGON_OFFSET_FILL);
-                    glPolygonOffset(-1.0f, -1.0f);
-                    glBindVertexArray(selectedObj->vao);
-                    for (size_t baseIndex : selectedTriangleIndices) {
-                        if (baseIndex + 2 < selectedObj->get_mesh_buffers().indices.size()) {
-                             glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, (void*)(baseIndex * sizeof(unsigned int)));
-                        }
-                    }
-                    glBindVertexArray(0);
-                    glDisable(GL_POLYGON_OFFSET_FILL);
-                }
-            }
+            renderHighlight(selectedObjId, selectedTriangleIndices, selectionHighlightColor);
             if (previewVertexCount > 0) {
                 glUniform3fv(glGetUniformLocation(objectShaderProgram, "objectColor"), 1, glm::value_ptr(hoverHighlightColor));
                 glUniform1f(glGetUniformLocation(objectShaderProgram, "overrideAlpha"), 0.5f);

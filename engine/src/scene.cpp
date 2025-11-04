@@ -407,7 +407,30 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
     return nullptr;
 }
 
-    SceneObject* Scene::create_box_object(const std::string& name, double dx, double dy, double dz) { SceneObject* new_obj = create_object(name); if (!new_obj) { return nullptr; } Urbaxio::CadKernel::OCCT_ShapeUniquePtr box_shape_ptr = Urbaxio::CadKernel::create_box(dx, dy, dz); if (!box_shape_ptr) { return nullptr; } const TopoDS_Shape* shape_to_triangulate = box_shape_ptr.get(); if (!shape_to_triangulate || shape_to_triangulate->IsNull()) { return nullptr; } new_obj->set_shape(std::move(box_shape_ptr)); UpdateObjectBoundary(new_obj); Urbaxio::CadKernel::MeshBuffers mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_obj->get_shape()); if (!mesh_data.isEmpty()) { new_obj->set_mesh_buffers(std::move(mesh_data)); new_obj->meshGroups.clear(); MeshGroup defaultGroup; defaultGroup.materialName = "Default"; defaultGroup.startIndex = 0; defaultGroup.indexCount = new_obj->get_mesh_buffers().indices.size(); if (defaultGroup.indexCount > 0) { new_obj->meshGroups.push_back(defaultGroup); } } else { std::cerr << "Scene: Warning - Triangulation failed for box '" << name << "'." << std::endl; } return new_obj; }
+    SceneObject* Scene::create_box_object(const std::string& name, double dx, double dy, double dz) {
+        SceneObject* new_obj = create_object(name);
+        if (!new_obj) {
+            return nullptr;
+        }
+        Urbaxio::CadKernel::OCCT_ShapeUniquePtr box_shape_ptr = Urbaxio::CadKernel::create_box(dx, dy, dz);
+        if (!box_shape_ptr) {
+            return nullptr;
+        }
+        const TopoDS_Shape* shape_to_triangulate = box_shape_ptr.get();
+        if (!shape_to_triangulate || shape_to_triangulate->IsNull()) {
+            return nullptr;
+        }
+        new_obj->set_shape(std::move(box_shape_ptr));
+        UpdateObjectBoundary(new_obj);
+        Urbaxio::CadKernel::MeshBuffers mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_obj->get_shape());
+        if (!mesh_data.isEmpty()) {
+            // --- SIMPLIFIED: Rely on set_mesh_buffers to create the default group ---
+            new_obj->set_mesh_buffers(std::move(mesh_data));
+        } else {
+            std::cerr << "Scene: Warning - Triangulation failed for box '" << name << "'." << std::endl;
+        }
+        return new_obj;
+    }
     SceneObject* Scene::get_object_by_id(uint64_t id) { auto it = objects_.find(id); if (it != objects_.end()) { return it->second.get(); } return nullptr; }
     const SceneObject* Scene::get_object_by_id(uint64_t id) const { auto it = objects_.find(id); if (it != objects_.end()) { return it->second.get(); } return nullptr; }
     std::vector<SceneObject*> Scene::get_all_objects() { std::vector<SceneObject*> result; result.reserve(objects_.size()); for (auto const& [id, obj_ptr] : objects_) { result.push_back(obj_ptr.get()); } return result; }
