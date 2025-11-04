@@ -11,6 +11,7 @@ public:
     VRScrollWidget(const glm::vec3& localPos, const glm::vec2& size);
 
     void AddWidget(std::unique_ptr<IVRWidget> widget);
+    void ClearChildren();
     void RecalculateContentLayout();
 
     void Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) override;

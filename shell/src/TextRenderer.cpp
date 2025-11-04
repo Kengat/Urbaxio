@@ -451,6 +451,19 @@ void TextRenderer::RenderPanelText(const glm::mat4& view, const glm::mat4& proje
     panelBatches_.clear();
 }
 
+glm::vec2 TextRenderer::GetTextSize(const std::string& text, float height) const {
+    if (lineHeight_ < 1e-6f) return {0.0f, 0.0f};
+    float finalScale = height / lineHeight_;
+    float totalAdvance = 0.0f;
+    for (char ch : text) {
+        auto it = glyphs_.find((int)ch);
+        if (it != glyphs_.end()) {
+            totalAdvance += it->second.advance;
+        }
+    }
+    return { totalAdvance * finalScale, height };
+}
+
 } // namespace Urbaxio
 
 

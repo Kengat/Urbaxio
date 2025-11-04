@@ -19,6 +19,12 @@ void VRConfirmButtonWidget::setDepthEffect(DepthEffect effect) {
 
 }
 
+void VRConfirmButtonWidget::SetFadesWhenNotHovered(bool fades) {
+
+    fadesWhenNotHovered_ = fades;
+
+}
+
 void VRConfirmButtonWidget::Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) {
     const float FADE_SPEED = 0.15f;
     float targetAlpha = isHovered_ ? 1.0f : 0.0f;
@@ -34,15 +40,17 @@ void VRConfirmButtonWidget::HandleClick() {
 void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) const {
     const glm::vec3 whiteColor(1.0f, 1.0f, 1.0f);
     const glm::vec3 closeButtonColor(1.00f, 0.20f, 0.32f);
-    bool isResizeHandle = (textureId_ == 0 && glm::distance2(color_, whiteColor) < 0.01f);
     bool isCloseHandle = (glm::distance2(color_, closeButtonColor) < 0.01f);
 
     float finalAlpha;
-    if (isResizeHandle) {
+    // START OF MODIFICATION
+    // Use the new explicit flag to control visibility logic
+    if (fadesWhenNotHovered_) {
         finalAlpha = hoverAlpha_ * alpha;
     } else {
         finalAlpha = alpha;
     }
+    // END OF MODIFICATION
 
     if (finalAlpha < 0.01f) {
         return;

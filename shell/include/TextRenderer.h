@@ -58,6 +58,8 @@ public:
     void Render(const glm::mat4& view, const glm::mat4& projection);
     void RenderPanelText(const glm::mat4& view, const glm::mat4& projection);
 
+    glm::vec2 GetTextSize(const std::string& text, float height) const;
+
 private:
     struct Vertex {
         glm::vec3 pos;

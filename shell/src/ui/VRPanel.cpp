@@ -30,6 +30,9 @@ VRPanel::VRPanel(const std::string& name, const std::string& displayName, const 
     minimizeHandle_ = std::make_unique<VRConfirmButtonWidget>(minimizePos, handleDiameter, minimizeIcon, nullptr);
     grabHandle_ = std::make_unique<VRConfirmButtonWidget>(grabPos, handleDiameter, grabIcon, nullptr);
     resizeHandle_ = std::make_unique<VRConfirmButtonWidget>(resizePos, handleDiameter, glm::vec3(1.0f), nullptr);
+    // START OF MODIFICATION
+    resizeHandle_->SetFadesWhenNotHovered(true);
+    // END OF MODIFICATION
     // -- START OF MODIFICATION --
 
     // Set the desired depth effect for the panel control buttons to CONVEX (popped out)
@@ -460,6 +463,10 @@ VisibilityMode VRPanel::GetVisibilityMode() const {
 
 const std::string& VRPanel::GetName() const {
     return name_;
+}
+
+const std::string& VRPanel::GetDisplayName() const {
+    return displayName_;
 }
 
 bool VRPanel::HandleClick() {

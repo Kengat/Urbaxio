@@ -38,6 +38,7 @@ public:
     void SetVisible(bool visible);
     bool IsVisible() const;
     const std::string& GetName() const;
+    const std::string& GetDisplayName() const;
     
     void SetVisibilityMode(VisibilityMode mode);
     VisibilityMode GetVisibilityMode() const;

@@ -41,6 +41,8 @@ public:
 
     void setDepthEffect(DepthEffect effect);
 
+    void SetFadesWhenNotHovered(bool fades);
+
 private:
     glm::vec3 localPosition_;
     float diameter_;
@@ -52,6 +54,8 @@ private:
     // ДОБАВЬ ЭТОТ ЧЛЕН КЛАССА
 
     DepthEffect effect_ = DepthEffect::CONVEX; // По умолчанию эффект "выпуклый"
+
+    bool fadesWhenNotHovered_ = false;
 
 };
 

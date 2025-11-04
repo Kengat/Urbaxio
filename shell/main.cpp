@@ -97,31 +97,203 @@ extern "C" {
 #include <BRepBuilderAPI_Transform.hxx>
 
 namespace { // Anonymous namespace for helpers
-    // ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ:
+    // START OF MODIFICATION: Replace the entire VRPanelRowWidget class
+    // A widget that renders a single row in the Panel Manager list.
+    // It displays a text label and three interactive spheres.
+    class VRPanelRowWidget : public Urbaxio::UI::IVRWidget {
+    public:
+        VRPanelRowWidget(const std::string& name, const glm::vec2& size) 
+            : name_(name), size_(size), localPosition_(0.0f), hoverAnimationT_(0.0f) 
+        {
+            float sphereDiameter = size.y * 0.7f;
+            float sphereSpacing = sphereDiameter * 1.1f;
+            float rightEdge = size.x * 0.5f;
+            sphere3_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f, 0, 0.002f);
+            sphere2_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f - sphereSpacing, 0, 0.002f);
+            sphere1_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f - sphereSpacing * 2, 0, 0.002f);
+            
+            auto createSphere = [&](const glm::vec3& offset) {
+                return std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(offset, sphereDiameter, glm::vec3(1.f), [](){});
+            };
+            sphere1_ = createSphere(sphere1_offset_);
+            sphere2_ = createSphere(sphere2_offset_);
+            sphere3_ = createSphere(sphere3_offset_);
+        }
+        void Update(const Urbaxio::UI::Ray& localRay, bool isClicked, bool isClickReleased, float stickY) override {
+            // localRay is in the scroll content's coordinate space.
+            // The sphere positions are also in this space.
+            const float ANIM_SPEED = 0.15f;
+            float targetT = isHovered_ ? 1.0f : 0.0f;
+            hoverAnimationT_ += (targetT - hoverAnimationT_) * ANIM_SPEED;
+            
+            // The `isClicked` boolean is true if the parent scroll widget detected a click on this row.
+            // Now, we determine which child (if any) should receive that click.
+            Urbaxio::UI::HitResult hit1 = sphere1_->CheckIntersection(localRay);
+            Urbaxio::UI::HitResult hit2 = sphere2_->CheckIntersection(localRay);
+            Urbaxio::UI::HitResult hit3 = sphere3_->CheckIntersection(localRay);
+            sphere1_->SetHover(hit1.didHit);
+            sphere2_->SetHover(hit2.didHit);
+            sphere3_->SetHover(hit3.didHit);
+            
+            // Pass the events down to the children. Only the hovered sphere gets the click event.
+            sphere1_->Update(localRay, isClicked && hit1.didHit, isClickReleased, stickY);
+            sphere2_->Update(localRay, isClicked && hit2.didHit, isClickReleased, stickY);
+            sphere3_->Update(localRay, isClicked && hit3.didHit, isClickReleased, stickY);
+        }
+        
+        void Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<Urbaxio::UI::MaskData>& mask) const override {
+            // The panelTransform is for the scroll content area.
+            // 1. Calculate the row's absolute world transform for text positioning.
+            glm::mat4 rowWorldTransform = panelTransform * glm::translate(glm::mat4(1.0f), localPosition_);
+            textRenderer.SetPanelModelMatrix(rowWorldTransform);
+            // 2. Animate text position
+            float textHeight = size_.y * 0.7f;
+            glm::vec2 textSize = textRenderer.GetTextSize(name_, textHeight);
+            float startX = -textSize.x * 0.5f; // Centered
+            float endX = -size_.x * 0.5f;      // Left-aligned
+            float currentX = glm::mix(startX, endX, hoverAnimationT_);
+            glm::vec3 textRelativePos(currentX, 0, 0.001f);
+            textRenderer.AddTextOnPanel(name_, textRelativePos, glm::vec4(1.0f, 1.0f, 1.0f, alpha), textHeight, Urbaxio::TextAlign::LEFT, mask);
+            
+            // 3. Render spheres only when row is hovered.
+            if (hoverAnimationT_ > 0.01f) {
+                float sphereAlpha = alpha * hoverAnimationT_;
+                // The spheres' Render function takes the scroll content area transform, and they already have their local positions set correctly within that space.
+                sphere1_->Render(renderer, textRenderer, panelTransform, view, projection, sphereAlpha, mask);
+                sphere2_->Render(renderer, textRenderer, panelTransform, view, projection, sphereAlpha, mask);
+                sphere3_->Render(renderer, textRenderer, panelTransform, view, projection, sphereAlpha, mask);
+            }
+        }
+        Urbaxio::UI::HitResult CheckIntersection(const Urbaxio::UI::Ray& localRay) override {
+            // This is called by the parent (VRScrollWidget). The localRay is relative to the scroll content area.
+            // We first check if the ray hits the row's bounding box.
+            Urbaxio::UI::HitResult result;
+            float t;
+            if (glm::intersectRayPlane(localRay.origin, localRay.direction, localPosition_, glm::vec3(0, 0, 1), t) && t > 0) {
+                glm::vec3 hitPoint = localRay.origin + localRay.direction * t;
+                if (glm::abs(hitPoint.x - localPosition_.x) <= size_.x * 0.5f && glm::abs(hitPoint.y - localPosition_.y) <= size_.y * 0.5f) {
+                    result.didHit = true;
+                    result.distance = t;
+                    result.hitWidget = this; // Return a pointer to this row widget itself.
+                }
+            }
+            return result;
+        }
+        void HandleClick() override {
+            // Delegate the click to the sphere that is currently hovered.
+            if (sphere1_->IsHovered()) sphere1_->HandleClick();
+            else if (sphere2_->IsHovered()) sphere2_->HandleClick();
+            else if (sphere3_->IsHovered()) sphere3_->HandleClick();
+        }
+        
+        void SetLocalPosition(const glm::vec3& pos) override {
+            localPosition_ = pos;
+            // Children positions are absolute within the scroll content area
+            sphere1_->SetLocalPosition(pos + sphere1_offset_);
+            sphere2_->SetLocalPosition(pos + sphere2_offset_);
+            sphere3_->SetLocalPosition(pos + sphere3_offset_);
+        }
+        // isHovered_ is now controlled by the parent scroll widget.
+        void SetHover(bool hover) override { isHovered_ = hover; }
+        const glm::vec3& GetLocalPosition() const override { return localPosition_; }
+        glm::vec2 GetSize() const override { return size_; }
+    private:
+        std::string name_;
+        glm::vec2 size_;
+        glm::vec3 localPosition_;
+        float hoverAnimationT_; // Animation value for the whole row (0 to 1)
+        bool isHovered_ = false;
+        std::unique_ptr<Urbaxio::UI::VRConfirmButtonWidget> sphere1_, sphere2_, sphere3_;
+        glm::vec3 sphere1_offset_, sphere2_offset_, sphere3_offset_;
+    };
+    
+    // A widget that wraps a VRScrollWidget and dynamically populates it
+    // with a list of all panels from the VRUIManager.
+    class VRPanelListWidget : public Urbaxio::UI::IVRWidget {
+    public:
+        VRPanelListWidget(Urbaxio::UI::VRUIManager& manager, const glm::vec3& localPos, const glm::vec2& size) 
+        : manager_(manager)
+        {
+            scrollWidget_ = std::make_unique<Urbaxio::UI::VRScrollWidget>(localPos, size);
+            lastPanelCount_ = 0;
+        }
+        
+        void Update(const Urbaxio::UI::Ray& localRay, bool isClicked, bool isClickReleased, float stickY) override {
+            if (manager_.GetPanels().size() != lastPanelCount_) {
+                rebuild();
+            }
+            scrollWidget_->Update(localRay, isClicked, isClickReleased, stickY);
+        }
+        
+        void Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<Urbaxio::UI::MaskData>& mask) const override {
+            scrollWidget_->Render(renderer, textRenderer, panelTransform, view, projection, alpha, mask);
+        }
+        Urbaxio::UI::HitResult CheckIntersection(const Urbaxio::UI::Ray& localRay) override {
+            return scrollWidget_->CheckIntersection(localRay);
+        }
+        void HandleClick() override {
+            scrollWidget_->HandleClick();
+        }
+        void SetHover(bool hover) override {
+            scrollWidget_->SetHover(hover);
+        }
+        void SetLocalPosition(const glm::vec3& pos) override { scrollWidget_->SetLocalPosition(pos); }
+        const glm::vec3& GetLocalPosition() const override { return scrollWidget_->GetLocalPosition(); }
+        glm::vec2 GetSize() const override { return scrollWidget_->GetSize(); }
+    private:
+        // START OF MODIFICATION
+        void rebuild() {
+            scrollWidget_->ClearChildren();
+            glm::vec2 rowSize(0.15f, 0.03f);
+            
+            // Add real panels
+            for (const auto& [name, panel] : manager_.GetPanels()) {
+                if (name == "PanelManager") continue;
+                scrollWidget_->AddWidget(std::make_unique<VRPanelRowWidget>(panel.GetDisplayName(), rowSize));
+            }
+            // Add 15 placeholder items for scroll testing
+            const std::vector<std::string> test_items = {
+                "Short Item 1",
+                "A Medium Length Item 2",
+                "This is a Very, Very Long Item Name for Testing Number 3",
+                "Item 4",
+                "Another Test Item 5",
+                "Scrolling Test Row Six",
+                "Seven",
+                "Eight is a nice number",
+                "Item 9 is quite long indeed",
+                "The Tenth Item",
+                "Eleventh hour",
+                "A twelfth test item appears",
+                "Lucky thirteen is here",
+                "Slightly longer one for fourteen",
+                "Fifteen, the final test placeholder"
+            };
+            for(const auto& text : test_items) {
+                scrollWidget_->AddWidget(std::make_unique<VRPanelRowWidget>(text, rowSize));
+            }
+            lastPanelCount_ = manager_.GetPanels().size();
+        }
+        // END OF MODIFICATION
+        Urbaxio::UI::VRUIManager& manager_;
+        std::unique_ptr<Urbaxio::UI::VRScrollWidget> scrollWidget_;
+        size_t lastPanelCount_;
+    };
+    // END OF MODIFICATION
+
     void SetupPanelManagerPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
         glm::vec3 translation = glm::vec3(0.004f, 0.045f, 0.020f);
         glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-117.219f, 2.847f, -4.021f));
         glm::vec3 scale = glm::vec3(0.308f);
-
         glm::mat4 panelOffset = glm::translate(glm::mat4(1.0f), translation) *
                                glm::mat4_cast(glm::quat(eulerAnglesRad)) *
                                glm::scale(glm::mat4(1.0f), scale);
         
         auto& panelMgr = vruiManager.AddPanel("PanelManager", "Panels", glm::vec2(0.217f, 0.381f), panelOffset, 0.1f, dragIcon, closeIcon, minimizeIcon);
-
-        auto scrollWidget = std::make_unique<Urbaxio::UI::VRScrollWidget>(glm::vec3(0.0f, -0.01f, 0.01f), glm::vec2(0.18f, 0.3f));
-
-        for (int i = 0; i < 20; ++i) {
-            std::string buttonText = "Test Button " + std::to_string(i + 1);
-            scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>(
-                buttonText,
-                glm::vec3(0),
-                glm::vec2(0.15f, 0.03f),
-                [buttonText](){ std::cout << "Clicked " << buttonText << std::endl; }
-            ));
-        }
-
-        panelMgr.AddWidget(std::move(scrollWidget));
+        // START OF MODIFICATION
+        auto listWidget = std::make_unique<VRPanelListWidget>(vruiManager, glm::vec3(0.0f, -0.01f, 0.01f), glm::vec2(0.18f, 0.3f));
+        panelMgr.AddWidget(std::move(listWidget));
+        // END OF MODIFICATION
     }
 
     // Helper to create a model matrix from an OpenXR pose

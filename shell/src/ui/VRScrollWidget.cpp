@@ -21,6 +21,15 @@ void VRScrollWidget::AddWidget(std::unique_ptr<IVRWidget> widget) {
     RecalculateContentLayout();
 }
 
+void VRScrollWidget::ClearChildren() {
+    children_.clear();
+    hoveredChild_ = nullptr;
+    scrollOffset_ = 0.0f;
+    totalContentHeight_ = 0.0f;
+    isDraggingScroll_ = false;
+    dragCapturedChild_ = nullptr;
+}
+
 void VRScrollWidget::RecalculateContentLayout() {
     totalContentHeight_ = 0.0f;
     const float spacing = 0.005f;
@@ -44,6 +53,12 @@ void VRScrollWidget::RecalculateContentLayout() {
 }
 
 void VRScrollWidget::Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) {
+	// localRay is relative to the VRScrollWidget's frame.
+	// Transform ray into the scrollable content's space.
+	Ray contentRay = localRay;
+	contentRay.origin -= localPosition_;
+	contentRay.origin.y -= scrollOffset_;
+
 	HitResult hit = CheckIntersection(localRay);
 	bool isInside = hit.didHit;
 	float maxScroll = std::max(0.0f, totalContentHeight_ - size_.y);
@@ -66,7 +81,9 @@ void VRScrollWidget::Update(const Ray& localRay, bool isClicked, bool isClickRel
 	
 	if (isClickReleased) {
 		if (isDraggingScroll_ && !dragMoved_ && dragCapturedChild_) {
-			dragCapturedChild_->HandleClick();
+			// CheckIntersection sets hitWidget to the specific child (sphere or row background)
+			// HandleClick on the scroll widget will delegate to this child.
+			HandleClick();
 		}
 		isDraggingScroll_ = false;
 		dragCapturedChild_ = nullptr;
@@ -91,9 +108,12 @@ void VRScrollWidget::Update(const Ray& localRay, bool isClicked, bool isClickRel
 		if (hoveredChild_) hoveredChild_->SetHover(true);
 	}
 	
+	// -- START OF MODIFICATION --
 	for (auto& child : children_) {
-		child->Update(localRay, false, false, 0.0f);
+		// Pass the TRANSFORMED ray down to children and the correct click state.
+		child->Update(contentRay, isClicked && (hoveredChild_ == child.get()), isClickReleased, stickY);
 	}
+	// -- END OF MODIFICATION --
 }
 
 void VRScrollWidget::Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& scissor) const {
