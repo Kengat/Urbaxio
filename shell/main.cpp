@@ -1800,18 +1800,16 @@ int main(int argc, char* argv[]) {
                     }
 
                     // 2. Собираем виджет-шар
-                    if (menuSphereWidget) {
-                        float sphereAlpha = 0.0f;
-                        if (auto* toolMenu = vruiManager.GetPanel("ToolMenu")) {
-                            sphereAlpha = toolMenu->alpha;
-                        }
+                    // --- START OF MODIFICATION ---
+                    // The menu sphere is now rendered independently of any panel, based only on the left trigger press.
+                    if (menuSphereWidget && isLeftTriggerPressed) {
+                        float sphereAlpha = 1.0f; // It's either visible (1.0) or not rendered at all.
 
-                        if (sphereAlpha > 0.01f) {
+                        if (sphereAlpha > 0.01f) { // This check is a bit redundant now but harmless
                             glm::mat4 sphereWorldTransform = leftControllerUnscaledTransform * menuSphereOffset;
                             glm::vec3 spherePos = glm::vec3(sphereWorldTransform[3]);
                             float viewSpaceZ = (view * glm::vec4(spherePos, 1.0f)).z;
                             
-                            // ПРАВИЛЬНЫЙ ЗАХВАТ: Явно указываем, что захватывать по ссылке, а что по значению.
                             transparentQueue.push_back({viewSpaceZ, 
                                 [&renderer, &textRenderer, &view, &projection, widget = menuSphereWidget.get(), sphereWorldTransform, sphereAlpha] 
                                 {
@@ -1819,6 +1817,7 @@ int main(int argc, char* argv[]) {
                                 }});
                         }
                     }
+                    // --- END OF MODIFICATION ---
 
                     // 3. Сортируем список от дальних к ближним (по возрастанию Z в пространстве камеры)
                     std::sort(transparentQueue.begin(), transparentQueue.end(), [](const auto& a, const auto& b) {
