@@ -139,7 +139,7 @@ namespace { // Anonymous namespace for helpers
             if (triggerPressed || aButtonPressed) {
                 if (hit2.didHit) sphere2_toggled_ = !sphere2_toggled_;
                 if (hit3.didHit) sphere3_toggled_ = !sphere3_toggled_;
-            }
+                }
             
             sphere2_->SetColor(sphere2_toggled_ ? selectedColor_ : defaultColor_);
             sphere3_->SetColor(sphere3_toggled_ ? selectedColor_ : defaultColor_);
@@ -179,8 +179,8 @@ namespace { // Anonymous namespace for helpers
                 // Render in sorted order
                 for (const auto& [depth, sphere] : spheres_to_render) {
                     sphere->Render(renderer, textRenderer, panelTransform, view, projection, sphereAlpha, mask);
-                }
             }
+        }
         }
 
         // ... (остальные методы класса VRPanelRowWidget остаются без изменений)
@@ -193,7 +193,7 @@ namespace { // Anonymous namespace for helpers
                 if (glm::abs(hitPoint.x - localPosition_.x) <= size_.x * 0.5f && glm::abs(hitPoint.y - localPosition_.y) <= size_.y * 0.5f) {
                     result.didHit = true;
                     result.distance = t;
-                    result.hitWidget = this;
+                    result.hitWidget = this; 
                 }
             }
             return result;
@@ -242,6 +242,7 @@ namespace { // Anonymous namespace for helpers
         void Update(const Urbaxio::UI::Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) override {
             if (manager_.GetPanels().size() != lastPanelCount_) {
                 rebuild();
+                return;
             }
             scrollWidget_->Update(localRay, triggerPressed, triggerReleased, triggerHeld, aButtonPressed, stickY);
         }
@@ -265,6 +266,7 @@ namespace { // Anonymous namespace for helpers
         // START OF MODIFICATION
         void rebuild() {
             scrollWidget_->ClearChildren();
+            scrollWidget_->ClearState();
             glm::vec2 rowSize(0.15f, 0.03f);
             
             // Add real panels

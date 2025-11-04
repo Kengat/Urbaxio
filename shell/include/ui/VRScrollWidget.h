@@ -12,6 +12,7 @@ public:
 
     void AddWidget(std::unique_ptr<IVRWidget> widget);
     void ClearChildren();
+    void ClearState();
     void RecalculateContentLayout();
 
     void Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) override;

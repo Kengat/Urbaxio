@@ -145,7 +145,7 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
                 // Change in half-extent along each axis (in world units)
                 float deltaX_world = currentDistX - initialDistX;
                 float deltaY_world = currentDistY - initialDistY;
-                
+
                 // Convert world delta to the controller's local space (unscaled by world scale)
                 float deltaX_local = deltaX_world / worldScale;
                 float deltaY_local = deltaY_world / worldScale;
@@ -161,7 +161,7 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
                 size_.x = glm::max(minSize, newWidth);
                 size_.y = glm::max(minSize, newHeight);
                 // -- END OF MODIFICATION --
-                
+
                 RecalculateLayout();
             }
         }

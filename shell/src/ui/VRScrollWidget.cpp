@@ -23,11 +23,14 @@ void VRScrollWidget::AddWidget(std::unique_ptr<IVRWidget> widget) {
 }
 void VRScrollWidget::ClearChildren() {
     children_.clear();
+}
+
+void VRScrollWidget::ClearState() {
     hoveredChild_ = nullptr;
-    scrollOffset_ = 0.0f;
-    totalContentHeight_ = 0.0f;
     isAwaitingDrag_ = false;
     isDraggingScroll_ = false;
+    scrollOffset_ = 0.0f;
+    totalContentHeight_ = 0.0f;
 }
 
 void VRScrollWidget::RecalculateContentLayout() {
@@ -161,7 +164,18 @@ HitResult VRScrollWidget::CheckIntersection(const Ray& localRay) {
 
 void VRScrollWidget::HandleClick() {
     if (hoveredChild_) {
-        hoveredChild_->HandleClick();
+        bool childIsAlive = false;
+        for (const auto& child : children_) {
+            if (child.get() == hoveredChild_) {
+                childIsAlive = true;
+                break;
+            }
+        }
+        if (childIsAlive) {
+            hoveredChild_->HandleClick();
+        } else {
+            hoveredChild_ = nullptr;
+        }
     }
 }
 
