@@ -99,7 +99,7 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
 
         const float ICON_FORWARD_FACTOR_CONCAVE = 0.25f;  // Positive: pushes towards camera (inside sphere)
 
-        const float ICON_FORWARD_FACTOR_CONVEX = -0.2f;   // Negative: pushes away from camera (through sphere)
+        const float ICON_FORWARD_FACTOR_CONVEX = -0.1f;   // Negative: pushes away from camera (through sphere)
 
         const float DISPARITY_OFFSET = 0.04f;
 
@@ -113,9 +113,10 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
 
         float disparity_x_offset;
 
+        // Use base diameter (not scaled) for offsets to maintain proportional effect regardless of scale
         if (effect_ == DepthEffect::CONVEX) {
 
-            iconWorldPos = worldPos + z_axis * (scaledDiameter * ICON_FORWARD_FACTOR_CONVEX);
+            iconWorldPos = worldPos + z_axis * (diameter_ * ICON_FORWARD_FACTOR_CONVEX);
 
             // For CONVEX (popped out): left eye sees right (+), right eye sees left (-)
 
@@ -123,7 +124,7 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
 
         } else { // CONCAVE effect
 
-            iconWorldPos = worldPos + z_axis * (scaledDiameter * ICON_FORWARD_FACTOR_CONCAVE);
+            iconWorldPos = worldPos + z_axis * (diameter_ * ICON_FORWARD_FACTOR_CONCAVE);
 
             // For CONCAVE (pushed in): left eye sees left (-), right eye sees right (+)
 
@@ -133,7 +134,7 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
 
         glm::vec3 cameraRight = glm::inverse(view)[0];
 
-        iconWorldPos += cameraRight * (scaledDiameter * disparity_x_offset);
+        iconWorldPos += cameraRight * (diameter_ * disparity_x_offset);
 
         
 

@@ -84,7 +84,7 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
     if (textureId_ != 0) {
         // -- START OF MODIFICATION --
 
-        const float ICON_FORWARD_FACTOR = 0.25f; // Small positive offset for concave effect
+        const float ICON_FORWARD_FACTOR = 0.1f; // Small positive offset for concave effect
 
         const float DISPARITY_OFFSET = 0.04f;    // Horizontal stereo offset
 
@@ -94,7 +94,8 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
 
         glm::vec3 z_axis = glm::vec3(rotationMatrix[2]);
 
-        glm::vec3 iconWorldPos = sphereWorldPos + z_axis * (scaledSphereDiameter * ICON_FORWARD_FACTOR);
+        // Use base sphereDiameter (not scaled) for offsets to maintain proportional effect regardless of scale
+        glm::vec3 iconWorldPos = sphereWorldPos + z_axis * (sphereDiameter * ICON_FORWARD_FACTOR);
 
         int eyeIndex = renderer.getCurrentEyeIndex();
 
@@ -106,7 +107,7 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
 
         glm::vec3 cameraRight = glm::inverse(view)[0];
 
-        iconWorldPos += cameraRight * (scaledSphereDiameter * disparity);
+        iconWorldPos += cameraRight * (sphereDiameter * disparity);
 
         
 
