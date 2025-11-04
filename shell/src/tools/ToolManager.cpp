@@ -3,6 +3,7 @@
 #include "tools/LineTool.h"
 #include "tools/PushPullTool.h"
 #include "tools/MoveTool.h" // <-- NEW
+#include "tools/PaintTool.h" // <-- NEW
 
 namespace Urbaxio::Tools {
 
@@ -14,6 +15,18 @@ ToolManager::ToolManager(const ToolContext& context) : context(context) {
 
     // Start with the Select tool active
     SetTool(ToolType::Select);
+}
+
+void ToolManager::AddTool(ToolType type, std::unique_ptr<ITool> tool) {
+    tools[type] = std::move(tool);
+}
+
+ITool* ToolManager::GetTool(ToolType type) {
+    auto it = tools.find(type);
+    if (it != tools.end()) {
+        return it->second.get();
+    }
+    return nullptr;
 }
 
 void ToolManager::SetTool(ToolType type) {

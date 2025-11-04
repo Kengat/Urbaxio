@@ -18,6 +18,8 @@ extern "C" {
 #include <tools/LineTool.h>
 #include <tools/MoveTool.h>
 #include <tools/PushPullTool.h>
+// <-- NEW
+#include <tools/PaintTool.h>
 
 #include "camera.h"
 #include "input_handler.h"
@@ -961,6 +963,7 @@ int main(int argc, char* argv[]) {
     // --- Other Settings ---
     float maxLineWidth = renderer.GetMaxLineWidth();
     bool show_style_editor = false;
+    bool show_material_editor = true; // <-- NEW: Show by default
 
     // --- Core State Variables ---
     uint64_t selectedObjId = 0;
@@ -1009,6 +1012,7 @@ int main(int argc, char* argv[]) {
     }
     
     Urbaxio::Tools::ToolManager toolManager(toolContext);
+    toolManager.AddTool(Urbaxio::Tools::ToolType::Paint, std::make_unique<Urbaxio::Tools::PaintTool>()); // <-- NEW
 
     // --- Marker settings ---
     static float capsuleRadius = 0.5f;
@@ -1284,6 +1288,8 @@ int main(int argc, char* argv[]) {
             ImGui::Separator();
             
             if (ImGui::Button("Appearance Settings")) show_style_editor = true;
+            ImGui::SameLine(); // <-- NEW
+            if (ImGui::Button("Material Editor")) show_material_editor = true; // <-- NEW
             
             ImGui::Separator();
             ImGui::Text("Tools:");
@@ -1300,6 +1306,9 @@ int main(int argc, char* argv[]) {
             ImGui::SameLine();
             bool isPushPull = activeToolType == Urbaxio::Tools::ToolType::PushPull;
             if (ImGui::RadioButton("Push/Pull", isPushPull)) toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull);
+            ImGui::SameLine(); // <-- NEW
+            bool isPaint = activeToolType == Urbaxio::Tools::ToolType::Paint; // <-- NEW
+            if (ImGui::RadioButton("Paint", isPaint)) toolManager.SetTool(Urbaxio::Tools::ToolType::Paint); // <-- NEW
 
             if (ImGui::Button("Clear Lines") && scene_ptr) { 
                 scene_ptr->ClearUserLines(); 
@@ -1374,6 +1383,62 @@ int main(int argc, char* argv[]) {
                         }
                     }
                 }
+            }
+            ImGui::End();
+        }
+
+        // --- NEW: Material Editor Window ---
+        if (show_material_editor) {
+            ImGui::Begin("Material Editor", &show_material_editor);
+            
+            Urbaxio::Engine::MaterialManager* matManager = scene_ptr->getMaterialManager();
+            if (matManager) {
+                // --- Left Pane: Material List ---
+                ImGui::BeginChild("MaterialList", ImVec2(150, 0), true);
+                static std::string selectedMaterialName = "Default";
+                for (const auto& [name, mat] : matManager->GetAllMaterials()) {
+                    if (ImGui::Selectable(name.c_str(), selectedMaterialName == name)) {
+                        selectedMaterialName = name;
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::SameLine();
+                // --- Right Pane: Material Properties ---
+                ImGui::BeginGroup();
+                Urbaxio::Engine::Material* selectedMat = matManager->GetMaterial(selectedMaterialName);
+                if (selectedMat) {
+                    ImGui::Text("Editing: %s", selectedMaterialName.c_str());
+                    ImGui::Separator();
+                    
+                    // Allow editing color only for non-default materials
+                    if (selectedMaterialName != "Default") {
+                        ImGui::ColorEdit3("Diffuse Color", glm::value_ptr(selectedMat->diffuseColor));
+                    } else {
+                        ImGui::TextDisabled("Diffuse Color");
+                        ImGui::SameLine();
+                        ImGui::ColorButton("##defaultcolor", ImVec4(selectedMat->diffuseColor.r, selectedMat->diffuseColor.g, selectedMat->diffuseColor.b, 1.0f));
+                    }
+                    
+                    ImGui::Text("Texture Path: %s", selectedMat->diffuseTexturePath.empty() ? "None" : selectedMat->diffuseTexturePath.c_str());
+                    if (ImGui::Button("Assign Texture")) {
+                        // TODO: Open file dialog to select a texture
+                    }
+                    if (selectedMat->diffuseTextureID != 0) {
+                        ImGui::SameLine();
+                        if (ImGui::Button("Clear Texture")) {
+                            // TODO: Unload texture from GPU and reset ID
+                            selectedMat->diffuseTexturePath.clear();
+                            selectedMat->diffuseTextureID = 0; // The loader loop will see this and not try to reload
+                        }
+                    }
+                    // Pass the selected material name to the PaintTool
+                    if(auto* paintTool = dynamic_cast<Urbaxio::Tools::PaintTool*>(toolManager.GetTool(Urbaxio::Tools::ToolType::Paint))) {
+                        paintTool->SetCurrentMaterial(selectedMaterialName);
+                    }
+                } else {
+                    ImGui::Text("No material selected.");
+                }
+                ImGui::EndGroup();
             }
             ImGui::End();
         }

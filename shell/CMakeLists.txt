@@ -25,6 +25,7 @@ add_executable(Urbaxio
     src/tools/LineTool.cpp
     src/tools/PushPullTool.cpp
     src/tools/MoveTool.cpp
+    src/tools/PaintTool.cpp
     # Add UI source files
     src/ui/VRUIManager.cpp
     src/ui/VRPanel.cpp

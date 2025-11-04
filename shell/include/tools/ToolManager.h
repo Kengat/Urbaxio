@@ -15,6 +15,10 @@ public:
     ITool* GetActiveTool() const;
     ToolType GetActiveToolType() const;
 
+    // --- NEW ---
+    void AddTool(ToolType type, std::unique_ptr<ITool> tool);
+    ITool* GetTool(ToolType type);
+    
     // Check if snapping should be enabled for current tool
     bool ShouldEnableSnapping() const;
 
