@@ -112,6 +112,12 @@ namespace Urbaxio {
         void setCyclopsEyePosition(const glm::vec3& pos);
         glm::vec3 getCyclopsEyePosition() const;
 
+        // ДОБАВЬ ЭТИ ДВЕ СТРОКИ
+
+        void setCurrentEyeIndex(int index);
+
+        int getCurrentEyeIndex() const;
+
         // ДОБАВЬТЕ ЭТОТ МЕТОД:
         void GetViewport(glm::vec4& outViewport) const;
 
@@ -204,6 +210,9 @@ namespace Urbaxio {
         glm::vec4 userLineColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
         glm::vec4 selectedUserLineColor = glm::vec4(1.0f, 0.65f, 0.0f, 1.0f);
         glm::vec3 cyclopsEyePosition_{0.0f, 0.0f, 0.0f};
+        // ДОБАВЬ ЭТУ СТРОКУ
+
+        int currentEyeIndex_ = 0;
 
         bool CreateShaderPrograms();
         bool CreateGridResources();

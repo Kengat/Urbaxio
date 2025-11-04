@@ -1514,6 +1514,10 @@ int main(int argc, char* argv[]) {
                 renderer.setCyclopsEyePosition(cyclopsEyePos);
 
                 for (uint32_t i = 0; i < vr_views.size(); ++i) {
+                    // ДОБАВЬ ЭТУ СТРОКУ
+
+                    renderer.setCurrentEyeIndex(i); // Сообщаем рендереру, для какого глаза рисуем (0=левый, 1=правый)
+
                     const auto& swapchain = vrManager->GetSwapchain(i);
                     uint32_t imageIndex = vrManager->AcquireSwapchainImage(i);
                     if (i == 0) { leftEyeImageIndex = imageIndex; }

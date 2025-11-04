@@ -1677,4 +1677,18 @@ namespace Urbaxio {
         return cyclopsEyePosition_;
     }
 
+    // ДОБАВЬ ЭТИ ДВЕ ФУНКЦИИ
+
+    void Renderer::setCurrentEyeIndex(int index) {
+
+        currentEyeIndex_ = index;
+
+    }
+
+    int Renderer::getCurrentEyeIndex() const {
+
+        return currentEyeIndex_;
+
+    }
+
 } // namespace Urbaxio

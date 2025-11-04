@@ -13,6 +13,12 @@ VRConfirmButtonWidget::VRConfirmButtonWidget(const glm::vec3& localPos, float di
 VRConfirmButtonWidget::VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, unsigned int textureId, std::function<void()> onClick, glm::vec3 color)
     : localPosition_(localPos), diameter_(diameter), color_(color), textureId_(textureId), onClick_(onClick) {}
 
+void VRConfirmButtonWidget::setDepthEffect(DepthEffect effect) {
+
+    effect_ = effect;
+
+}
+
 void VRConfirmButtonWidget::Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) {
     const float FADE_SPEED = 0.15f;
     float targetAlpha = isHovered_ ? 1.0f : 0.0f;
@@ -91,13 +97,45 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
     if (textureId_ != 0) {
         // -- START OF MODIFICATION --
 
-        // Increased forward offset to create a "convex" or "floating in front" effect.
+        const float ICON_FORWARD_FACTOR_CONCAVE = 0.25f;  // Positive: pushes towards camera (inside sphere)
 
-        const float ICON_FORWARD_FACTOR = 0.6f;
+        const float ICON_FORWARD_FACTOR_CONVEX = -0.2f;   // Negative: pushes away from camera (through sphere)
+
+        const float DISPARITY_OFFSET = 0.04f;
 
         glm::vec3 z_axis = glm::vec3(rotationMatrix[2]);
 
-        glm::vec3 iconWorldPos = worldPos + z_axis * (scaledDiameter * ICON_FORWARD_FACTOR);
+        glm::vec3 iconWorldPos;
+
+        
+
+        int eyeIndex = renderer.getCurrentEyeIndex();
+
+        float disparity_x_offset;
+
+        if (effect_ == DepthEffect::CONVEX) {
+
+            iconWorldPos = worldPos + z_axis * (scaledDiameter * ICON_FORWARD_FACTOR_CONVEX);
+
+            // For CONVEX (popped out): left eye sees right (+), right eye sees left (-)
+
+            disparity_x_offset = (eyeIndex == 0) ? DISPARITY_OFFSET : -DISPARITY_OFFSET;
+
+        } else { // CONCAVE effect
+
+            iconWorldPos = worldPos + z_axis * (scaledDiameter * ICON_FORWARD_FACTOR_CONCAVE);
+
+            // For CONCAVE (pushed in): left eye sees left (-), right eye sees right (+)
+
+            disparity_x_offset = (eyeIndex == 0) ? -DISPARITY_OFFSET : DISPARITY_OFFSET;
+
+        }
+
+        glm::vec3 cameraRight = glm::inverse(view)[0];
+
+        iconWorldPos += cameraRight * (scaledDiameter * disparity_x_offset);
+
+        
 
         glm::mat4 iconModelMatrix = glm::translate(glm::mat4(1.0f), iconWorldPos) *
 

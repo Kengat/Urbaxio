@@ -84,15 +84,31 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
     if (textureId_ != 0) {
         // -- START OF MODIFICATION --
 
-        // Increased forward offset to create a "convex" or "floating in front" effect.
+        const float ICON_FORWARD_FACTOR = 0.25f; // Small positive offset for concave effect
 
-        const float ICON_FORWARD_FACTOR = 0.5f;
+        const float DISPARITY_OFFSET = 0.04f;    // Horizontal stereo offset
 
         float scaledSphereDiameter = sphereDiameter * panelLocalScale;
+
+        
 
         glm::vec3 z_axis = glm::vec3(rotationMatrix[2]);
 
         glm::vec3 iconWorldPos = sphereWorldPos + z_axis * (scaledSphereDiameter * ICON_FORWARD_FACTOR);
+
+        int eyeIndex = renderer.getCurrentEyeIndex();
+
+        // For CONCAVE (pushed in): left eye sees left (-), right eye sees right (+)
+
+        float disparity = (eyeIndex == 0) ? -DISPARITY_OFFSET : DISPARITY_OFFSET;
+
+        
+
+        glm::vec3 cameraRight = glm::inverse(view)[0];
+
+        iconWorldPos += cameraRight * (scaledSphereDiameter * disparity);
+
+        
 
         glm::mat4 iconModel = glm::translate(glm::mat4(1.0f), iconWorldPos) *
 

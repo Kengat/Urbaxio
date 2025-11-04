@@ -30,6 +30,18 @@ VRPanel::VRPanel(const std::string& name, const std::string& displayName, const 
     minimizeHandle_ = std::make_unique<VRConfirmButtonWidget>(minimizePos, handleDiameter, minimizeIcon, nullptr);
     grabHandle_ = std::make_unique<VRConfirmButtonWidget>(grabPos, handleDiameter, grabIcon, nullptr);
     resizeHandle_ = std::make_unique<VRConfirmButtonWidget>(resizePos, handleDiameter, glm::vec3(1.0f), nullptr);
+    // -- START OF MODIFICATION --
+
+    // Set the desired depth effect for the panel control buttons to CONVEX (popped out)
+
+    closeHandle_->setDepthEffect(DepthEffect::CONVEX);
+
+    minimizeHandle_->setDepthEffect(DepthEffect::CONVEX);
+
+    grabHandle_->setDepthEffect(DepthEffect::CONVEX);
+
+    // -- END OF MODIFICATION --
+
 }
 
 void VRPanel::AddWidget(std::unique_ptr<IVRWidget> widget) {

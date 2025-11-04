@@ -11,6 +11,16 @@ namespace Urbaxio {
 
 namespace Urbaxio::UI {
 
+// ДОБАВЬ ЭТОТ ENUM
+
+enum class DepthEffect {
+
+    CONVEX,  // "Выпуклый", парит перед сферой
+
+    CONCAVE  // "Вогнутый", эффект глубины
+
+};
+
 class VRConfirmButtonWidget : public IVRWidget {
 public:
     VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, glm::vec3 color, std::function<void()> onClick);
@@ -27,6 +37,10 @@ public:
 
     void SetIconOffsetUseCameraForward(bool useCameraForward) { iconOffsetUseCameraForward_ = useCameraForward; }
 
+    // ДОБАВЬ ЭТОТ МЕТОД
+
+    void setDepthEffect(DepthEffect effect);
+
 private:
     glm::vec3 localPosition_;
     float diameter_;
@@ -35,6 +49,10 @@ private:
     std::function<void()> onClick_;
     float hoverAlpha_ = 0.0f;
     bool iconOffsetUseCameraForward_ = false;
+    // ДОБАВЬ ЭТОТ ЧЛЕН КЛАССА
+
+    DepthEffect effect_ = DepthEffect::CONVEX; // По умолчанию эффект "выпуклый"
+
 };
 
 } // namespace Urbaxio::UI
