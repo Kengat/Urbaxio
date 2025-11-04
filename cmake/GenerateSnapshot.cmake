@@ -81,7 +81,15 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 
 
-# 4. Generate Code for AI
+# 4. Rollback to Previous Version (if needed before generating snapshot)
+
+# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio
+
+# git reset --hard HEAD
+
+
+
+# 5. Generate Code for AI
 
 #    A) Generate Project Structure (if AI doesn't know the project)
 
@@ -113,7 +121,7 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 
 
-# 5. Git Commit & Push
+# 6. Git Commit & Push
 
 # cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio
 
