@@ -15,7 +15,7 @@ VRToolButtonWidget::VRToolButtonWidget(const std::string& text, const glm::vec3&
       textureId_(textureId),
       toolType_(toolType), toolManager_(toolManager), onClick_(onClick) {}
 
-void VRToolButtonWidget::Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) {
+void VRToolButtonWidget::Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) {
     const float FADE_SPEED = 0.15f;
     float targetAlpha = isHovered_ ? 1.0f : 0.0f;
     sphereHoverAlpha_ += (targetAlpha - sphereHoverAlpha_) * FADE_SPEED;

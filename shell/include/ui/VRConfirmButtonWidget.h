@@ -26,7 +26,7 @@ public:
     VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, glm::vec3 color, std::function<void()> onClick);
     VRConfirmButtonWidget(const glm::vec3& localPos, float diameter, unsigned int textureId, std::function<void()> onClick, glm::vec3 color = glm::vec3(1.0f));
 
-    void Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) override;
+    void Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) override;
     void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask = std::nullopt) const override;
     HitResult CheckIntersection(const Ray& localRay) override;
     void HandleClick() override;
@@ -42,6 +42,8 @@ public:
     void setDepthEffect(DepthEffect effect);
 
     void SetFadesWhenNotHovered(bool fades);
+
+    void SetColor(const glm::vec3& newColor);
 
 private:
     glm::vec3 localPosition_;

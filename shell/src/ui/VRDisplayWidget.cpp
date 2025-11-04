@@ -8,7 +8,7 @@ namespace Urbaxio::UI {
 VRDisplayWidget::VRDisplayWidget(const glm::vec3& localPos, const glm::vec2& size, std::string& textValue)
     : localPosition_(localPos), size_(size), textValue_(textValue) {}
 
-void VRDisplayWidget::Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) {
+void VRDisplayWidget::Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) {
     // Display is not interactive
 }
 

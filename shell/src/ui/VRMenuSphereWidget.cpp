@@ -13,7 +13,7 @@ VRMenuSphereWidget::VRMenuSphereWidget(const glm::vec3& localPos, float diameter
       baseColor_(baseColor), aberrationColor1_(abColor1), aberrationColor2_(abColor2),
       onClick_(onClick) {}
 
-void VRMenuSphereWidget::Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) {
+void VRMenuSphereWidget::Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) {
     const float FADE_SPEED = 0.15f;
     float targetAlpha = isHovered_ ? 1.0f : 0.0f;
     hoverAlpha_ += (targetAlpha - hoverAlpha_) * FADE_SPEED;

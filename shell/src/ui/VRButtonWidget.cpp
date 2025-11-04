@@ -9,7 +9,7 @@ namespace Urbaxio::UI {
 VRButtonWidget::VRButtonWidget(const std::string& text, const glm::vec3& localPos, const glm::vec2& size, std::function<void()> onClick)
     : text_(text), localPosition_(localPos), size_(size), onClick_(onClick) {}
 
-void VRButtonWidget::Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) {
+void VRButtonWidget::Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) {
     // Click logic moved to HandleClick, Update is for continuous state changes like animations.
 }
 

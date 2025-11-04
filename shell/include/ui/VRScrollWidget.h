@@ -14,7 +14,7 @@ public:
     void ClearChildren();
     void RecalculateContentLayout();
 
-    void Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) override;
+    void Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) override;
     void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& scissor = std::nullopt) const override;
     
     HitResult CheckIntersection(const Ray& localRay) override;
@@ -34,14 +34,10 @@ private:
     // Scrolling state
     float scrollOffset_ = 0.0f;
     float totalContentHeight_ = 0.0f;
+    bool isAwaitingDrag_ = false;
     bool isDraggingScroll_ = false;
     glm::vec3 dragStartPoint_;
     float scrollOffsetAtDragStart_ = 0.0f;
-    
-    // Added fields for drag capture and movement threshold
-    IVRWidget* dragCapturedChild_ = nullptr;
-    bool dragMoved_ = false;
-    int lastStickDirection_ = 0;
 };
 
 } // namespace Urbaxio::UI

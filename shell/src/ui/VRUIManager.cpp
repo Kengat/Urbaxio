@@ -28,7 +28,7 @@ VRPanel* VRUIManager::GetHoveredPanel() {
     return nullptr;
 }
 
-void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& rightControllerTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed, float leftStickY, bool isLeftTriggerPressed) {
+void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& rightControllerTransform, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, bool aButtonHeld, bool bButtonIsPressed, float leftStickY, bool isLeftTriggerPressed) {
     const glm::mat4& parentTransform = leftControllerTransform;
     const glm::mat4& interactionTransform = rightControllerTransform;
 
@@ -49,9 +49,8 @@ void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTra
     
     for (auto& [name, panel] : panels_) {
         // Обновляем все панели, передавая им состояние курка
-        bool panelIsClicked = (name == activeInteractionPanel_) && isClicked;
         float stickForPanel = (name == activeInteractionPanel_) ? leftStickY : 0.0f;
-        panel.Update(worldRay, parentTransform, interactionTransform, panelIsClicked, isClickReleased, aButtonIsPressed, bButtonIsPressed, stickForPanel, isLeftTriggerPressed);
+        panel.Update(worldRay, parentTransform, interactionTransform, triggerPressed, triggerReleased, triggerHeld, aButtonPressed, aButtonHeld, bButtonIsPressed, stickForPanel, isLeftTriggerPressed);
     }
 }
 

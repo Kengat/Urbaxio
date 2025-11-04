@@ -30,7 +30,7 @@ public:
     void AddWidget(std::unique_ptr<IVRWidget> widget);
     void SetLayout(std::unique_ptr<ILayout> layout);
     void RecalculateLayout();
-    void Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed, float stickY, bool isLeftTriggerPressed);
+    void Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, bool aButtonHeld, bool bButtonIsPressed, float stickY, bool isLeftTriggerPressed);
     void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection) const;
     HitResult CheckIntersection(const Ray& worldRay, const glm::mat4& parentTransform);
     bool HandleClick();
@@ -85,6 +85,7 @@ private:
     glm::vec3 resizeStartScale_{1.0f};
     glm::vec3 panelCenterAtResizeStart_{0.0f};
     glm::vec2 resizeStartSize_{1.0f};
+    glm::vec3 lastControllerPosOnPlane_{0.0f};
     
     IVRWidget* hoveredWidget_ = nullptr;
     std::vector<std::unique_ptr<IVRWidget>> widgets_;

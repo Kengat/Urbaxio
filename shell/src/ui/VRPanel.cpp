@@ -61,7 +61,7 @@ void VRPanel::RecalculateLayout() {
     }
 }
 
-void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool isClicked, bool isClickReleased, bool aButtonIsPressed, bool bButtonIsPressed, float stickY, bool isLeftTriggerPressed) {
+void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, bool aButtonHeld, bool bButtonIsPressed, float stickY, bool isLeftTriggerPressed) {
     // --- НОВАЯ ЛОГИКА АНИМАЦИИ ALPHA ---
     const float ANIM_SPEED = 0.1f;
     float targetAlpha = 0.0f;
@@ -98,62 +98,76 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
 
     // --- Resize/Proportion Drag Logic ---
     if (isResizing_ || isChangingProportions_) {
-        // Project the current controller position onto the panel's plane
-        glm::vec3 panelOrigin = panelCenterAtResizeStart_;
-        glm::vec3 panelNormal = -glm::normalize(glm::vec3(transform[2]));
-        
-        float t;
-        glm::intersectRayPlane(worldRay.origin, worldRay.direction, panelOrigin, panelNormal, t);
-        glm::vec3 controllerPosOnPlane = worldRay.origin + worldRay.direction * t;
-
-        // Decompose the original offset transform to apply new scale
-        glm::vec3 scale, translation, skew;
-        glm::quat orientation;
-        glm::vec4 perspective;
-        (void)glm::decompose(offsetTransform_, scale, orientation, translation, skew, perspective);
-
-        if (isResizing_) {
-            // --- UNIFORM SCALE (proportional) ---
-            float currentDist = glm::distance(panelCenterAtResizeStart_, controllerPosOnPlane);
-            float initialDist = glm::distance(panelCenterAtResizeStart_, resizeStartControllerPos_);
-            float scaleFactor = (initialDist > 0.01f) ? (currentDist / initialDist) : 1.0f;
-            scaleFactor = glm::max(0.1f, scaleFactor);
-            glm::vec3 newScale = resizeStartScale_ * scaleFactor;
+        if (!triggerHeld) {
+            isResizing_ = false;
+            isChangingProportions_ = false;
+        } else {
+            // Project the current controller position onto the panel's plane
+            glm::vec3 panelOrigin = panelCenterAtResizeStart_;
+            glm::vec3 panelNormal = -glm::normalize(glm::vec3(transform[2]));
             
-            offsetTransform_ = glm::translate(glm::mat4(1.0f), translation) * glm::mat4_cast(orientation) * glm::scale(glm::mat4(1.0f), newScale);
-        
-        } else { // isChangingProportions_ (Non-proportional, affects size_)
-            // --- ADDITIVE DELTA WITH SCALE COMPENSATION ---
-            // Vectors from panel center to current and start controller positions (on panel plane)
-            glm::vec3 currentVec = controllerPosOnPlane - panelCenterAtResizeStart_;
-            glm::vec3 initialVec = resizeStartControllerPos_ - panelCenterAtResizeStart_;
+            float t;
+            glm::intersectRayPlane(worldRay.origin, worldRay.direction, panelOrigin, panelNormal, t);
+            glm::vec3 controllerPosOnPlane = worldRay.origin + worldRay.direction * t;
+
+            // Decompose the original offset transform to apply new scale
+            glm::vec3 scale, translation, skew;
+            glm::quat orientation;
+            glm::vec4 perspective;
+            (void)glm::decompose(offsetTransform_, scale, orientation, translation, skew, perspective);
+
+            if (isResizing_) {
+                // --- UNIFORM SCALE (proportional) ---
+                float currentDist = glm::distance(panelCenterAtResizeStart_, controllerPosOnPlane);
+                float initialDist = glm::distance(panelCenterAtResizeStart_, resizeStartControllerPos_);
+                float scaleFactor = (initialDist > 0.01f) ? (currentDist / initialDist) : 1.0f;
+                scaleFactor = glm::max(0.1f, scaleFactor);
+                glm::vec3 newScale = resizeStartScale_ * scaleFactor;
+                
+                offsetTransform_ = glm::translate(glm::mat4(1.0f), translation) * glm::mat4_cast(orientation) * glm::scale(glm::mat4(1.0f), newScale);
             
-            // Absolute distances along panel axes captured at drag start (world units)
-            float currentDistX = std::abs(glm::dot(currentVec, initialPanelXDir_));
-            float currentDistY = std::abs(glm::dot(currentVec, initialPanelYDir_));
-            float initialDistX = std::abs(glm::dot(initialVec, initialPanelXDir_));
-            float initialDistY = std::abs(glm::dot(initialVec, initialPanelYDir_));
+            } else { // isChangingProportions_ (Non-proportional, affects size_)
+                // -- START OF MODIFICATION --
+                // Compensate for the global world scale
+                float worldScale = glm::length(glm::vec3(parentTransform[0]));
+                if (worldScale < 1e-5f) worldScale = 1.0f;
 
-            // Change in half-extent along each axis (world units)
-            float deltaX_world = currentDistX - initialDistX;
-            float deltaY_world = currentDistY - initialDistY;
+                // Vectors from panel center to current and start controller positions (on panel plane)
+                glm::vec3 currentVec = controllerPosOnPlane - panelCenterAtResizeStart_;
+                glm::vec3 initialVec = resizeStartControllerPos_ - panelCenterAtResizeStart_;
+                
+                // Absolute distances along panel axes captured at drag start (world units)
+                float currentDistX = std::abs(glm::dot(currentVec, initialPanelXDir_));
+                float currentDistY = std::abs(glm::dot(currentVec, initialPanelYDir_));
+                float initialDistX = std::abs(glm::dot(initialVec, initialPanelXDir_));
+                float initialDistY = std::abs(glm::dot(initialVec, initialPanelYDir_));
 
-            // Compensate for starting panel local scale so deltas correctly map to local size units
-            float scaleCompensatorX = (resizeStartScale_.x > 1e-5f) ? (1.0f / resizeStartScale_.x) : 1.0f;
-            float scaleCompensatorY = (resizeStartScale_.y > 1e-5f) ? (1.0f / resizeStartScale_.y) : 1.0f;
+                // Change in half-extent along each axis (in world units)
+                float deltaX_world = currentDistX - initialDistX;
+                float deltaY_world = currentDistY - initialDistY;
+                
+                // Convert world delta to the controller's local space (unscaled by world scale)
+                float deltaX_local = deltaX_world / worldScale;
+                float deltaY_local = deltaY_world / worldScale;
 
-            // New size is start size plus twice the compensated delta (panel grows symmetrically)
-            const float minSize = 0.05f;
-            float newWidth  = resizeStartSize_.x + (deltaX_world * 2.0f) * scaleCompensatorX;
-            float newHeight = resizeStartSize_.y + (deltaY_world * 2.0f) * scaleCompensatorY;
-            size_.x = glm::max(minSize, newWidth);
-            size_.y = glm::max(minSize, newHeight);
+                // Compensate for the panel's own local scale to get the delta for the 'size_' property
+                float scaleCompensatorX = (resizeStartScale_.x > 1e-5f) ? (1.0f / resizeStartScale_.x) : 1.0f;
+                float scaleCompensatorY = (resizeStartScale_.y > 1e-5f) ? (1.0f / resizeStartScale_.y) : 1.0f;
 
-            RecalculateLayout();
+                // New size is start size plus twice the compensated delta (panel grows symmetrically)
+                const float minSize = 0.05f;
+                float newWidth  = resizeStartSize_.x + (deltaX_local * 2.0f) * scaleCompensatorX;
+                float newHeight = resizeStartSize_.y + (deltaY_local * 2.0f) * scaleCompensatorY;
+                size_.x = glm::max(minSize, newWidth);
+                size_.y = glm::max(minSize, newHeight);
+                // -- END OF MODIFICATION --
+                
+                RecalculateLayout();
+            }
         }
     }
 
-    if (isClickReleased) {
+    if (triggerReleased) {
         isResizing_ = false;
         isChangingProportions_ = false;
         isGrabbing = false;
@@ -177,12 +191,12 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
     minimizeHandle_->SetHover(minimizeHit.didHit);
     closeHandle_->SetHover(closeHit.didHit);
     
-    grabHandle_->Update(localRay, false, isClickReleased, 0.0f);
-    resizeHandle_->Update(localRay, false, isClickReleased, 0.0f);
-    minimizeHandle_->Update(localRay, false, isClickReleased, 0.0f);
-    closeHandle_->Update(localRay, false, isClickReleased, 0.0f);
+    grabHandle_->Update(localRay, triggerPressed && grabHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
+    resizeHandle_->Update(localRay, triggerPressed && resizeHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
+    minimizeHandle_->Update(localRay, (triggerPressed || aButtonPressed) && minimizeHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
+    closeHandle_->Update(localRay, (triggerPressed || aButtonPressed) && closeHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
 
-    if (isClicked) {
+    if (triggerPressed) {
         // Handle logging first to ensure we read final size_ from previous frame's resize
         if (resizeHit.didHit && bButtonIsPressed) {
             // Log panel info to console
@@ -216,30 +230,37 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
         } else if (resizeHit.didHit) {
             clickConsumed = true;
             // --- START RESIZE OR PROPORTION CHANGE ---
-        panelCenterAtResizeStart_ = glm::vec3(transform[3]);
-        
-        // Project start point onto panel plane
-        glm::vec3 panelNormal = -glm::normalize(glm::vec3(transform[2]));
-        float t;
-        glm::intersectRayPlane(worldRay.origin, worldRay.direction, panelCenterAtResizeStart_, panelNormal, t);
-        resizeStartControllerPos_ = worldRay.origin + worldRay.direction * t;
+            panelCenterAtResizeStart_ = glm::vec3(transform[3]);
+            
+            // Project start point onto panel plane
+            glm::vec3 panelNormal = -glm::normalize(glm::vec3(transform[2]));
+            float t;
+            glm::intersectRayPlane(worldRay.origin, worldRay.direction, panelCenterAtResizeStart_, panelNormal, t);
+            resizeStartControllerPos_ = worldRay.origin + worldRay.direction * t;
+            lastControllerPosOnPlane_ = resizeStartControllerPos_;
 
-        // Store initial scale
-        (void)glm::decompose(offsetTransform_, resizeStartScale_, glm::quat(), glm::vec3(), glm::vec3(), glm::vec4());
+            // Store initial scale
+            (void)glm::decompose(offsetTransform_, resizeStartScale_, glm::quat(), glm::vec3(), glm::vec3(), glm::vec4());
 
-        if (aButtonIsPressed) {
-            isChangingProportions_ = true;
-            isResizing_ = false;
-            // Store panel axes at start of drag
-            initialPanelXDir_ = glm::normalize(glm::vec3(transform[0]));
-            initialPanelYDir_ = glm::normalize(glm::vec3(transform[1]));
-            // Store the initial size to avoid jump at start of non-proportional resize
-            resizeStartSize_ = size_;
-        } else {
-            isResizing_ = true;
-            isChangingProportions_ = false;
+            // Non-proportional resize now requires BOTH trigger and A-button to be held
+            if (aButtonHeld) {
+                isChangingProportions_ = true;
+                isResizing_ = false;
+                // Store panel axes at start of drag
+                initialPanelXDir_ = glm::normalize(glm::vec3(transform[0]));
+                initialPanelYDir_ = glm::normalize(glm::vec3(transform[1]));
+                // Store the initial size to avoid jump at start of non-proportional resize
+                resizeStartSize_ = size_;
+            } else { // Proportional resize is the default for trigger
+                isResizing_ = true;
+                isChangingProportions_ = false;
+            }
         }
-    } else if (minimizeHit.didHit) {
+    }
+
+    // Handle simple clicks (Trigger or A button) for close/minimize
+    if ((triggerPressed || aButtonPressed) && !clickConsumed) {
+        if (minimizeHit.didHit) {
             minimizeTargetState_ = !minimizeTargetState_;
             clickConsumed = true;
         } else if (closeHit.didHit) {
@@ -272,7 +293,8 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
     
     if (minimizeT_ < 0.99f) {
         for (auto& widget : widgets_) {
-            widget->Update(localRay, isClicked && (hoveredWidget_ == widget.get()), isClickReleased, stickY);
+            bool childIsHovered = (hoveredWidget_ == widget.get());
+            widget->Update(localRay, (triggerPressed || aButtonPressed) && childIsHovered, triggerReleased, triggerHeld, aButtonPressed, stickY);
         }
     }
 }

@@ -15,7 +15,7 @@ class VRDisplayWidget : public IVRWidget {
 public:
     VRDisplayWidget(const glm::vec3& localPos, const glm::vec2& size, std::string& textValue);
 
-    void Update(const Ray& localRay, bool isClicked, bool isClickReleased, float stickY) override;
+    void Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) override;
     void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask = std::nullopt) const override;
     HitResult CheckIntersection(const Ray& localRay) override;
     void HandleClick() override;

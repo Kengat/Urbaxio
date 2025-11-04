@@ -103,7 +103,8 @@ namespace { // Anonymous namespace for helpers
     class VRPanelRowWidget : public Urbaxio::UI::IVRWidget {
     public:
         VRPanelRowWidget(const std::string& name, const glm::vec2& size) 
-            : name_(name), size_(size), localPosition_(0.0f), hoverAnimationT_(0.0f) 
+            : name_(name), size_(size), localPosition_(0.0f), hoverAnimationT_(0.0f),
+              sphere2_toggled_(false), sphere3_toggled_(false)
         {
             float sphereDiameter = size.y * 0.7f;
             float sphereSpacing = sphereDiameter * 1.1f;
@@ -113,21 +114,21 @@ namespace { // Anonymous namespace for helpers
             sphere1_offset_ = glm::vec3(rightEdge - sphereDiameter * 0.5f - sphereSpacing * 2, 0, 0.002f);
             
             auto createSphere = [&](const glm::vec3& offset) {
-                return std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(offset, sphereDiameter, glm::vec3(1.f), [](){});
+                return std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(offset, sphereDiameter, defaultColor_, [](){});
             };
             sphere1_ = createSphere(sphere1_offset_);
             sphere2_ = createSphere(sphere2_offset_);
             sphere3_ = createSphere(sphere3_offset_);
+            
+            // Initialize colors based on toggle state
+            sphere2_->SetColor(defaultColor_);
+            sphere3_->SetColor(defaultColor_);
         }
-        void Update(const Urbaxio::UI::Ray& localRay, bool isClicked, bool isClickReleased, float stickY) override {
-            // localRay is in the scroll content's coordinate space.
-            // The sphere positions are also in this space.
+        void Update(const Urbaxio::UI::Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) override {
             const float ANIM_SPEED = 0.15f;
             float targetT = isHovered_ ? 1.0f : 0.0f;
             hoverAnimationT_ += (targetT - hoverAnimationT_) * ANIM_SPEED;
             
-            // The `isClicked` boolean is true if the parent scroll widget detected a click on this row.
-            // Now, we determine which child (if any) should receive that click.
             Urbaxio::UI::HitResult hit1 = sphere1_->CheckIntersection(localRay);
             Urbaxio::UI::HitResult hit2 = sphere2_->CheckIntersection(localRay);
             Urbaxio::UI::HitResult hit3 = sphere3_->CheckIntersection(localRay);
@@ -135,55 +136,61 @@ namespace { // Anonymous namespace for helpers
             sphere2_->SetHover(hit2.didHit);
             sphere3_->SetHover(hit3.didHit);
             
-            // Pass the events down to the children. Only the hovered sphere gets the click event.
-            sphere1_->Update(localRay, isClicked && hit1.didHit, isClickReleased, stickY);
-            sphere2_->Update(localRay, isClicked && hit2.didHit, isClickReleased, stickY);
-            sphere3_->Update(localRay, isClicked && hit3.didHit, isClickReleased, stickY);
+            // A click is a press from either the trigger or the A button
+            if (triggerPressed || aButtonPressed) {
+                if (hit2.didHit) {
+                    sphere2_toggled_ = !sphere2_toggled_;
+                }
+                if (hit3.didHit) {
+                    sphere3_toggled_ = !sphere3_toggled_;
+                }
+            }
+            // Update colors every frame
+            sphere2_->SetColor(sphere2_toggled_ ? selectedColor_ : defaultColor_);
+            sphere3_->SetColor(sphere3_toggled_ ? selectedColor_ : defaultColor_);
+            
+            sphere1_->Update(localRay, false, false, false, false, 0.0f);
+            sphere2_->Update(localRay, false, false, false, false, 0.0f);
+            sphere3_->Update(localRay, false, false, false, false, 0.0f);
         }
         
         void Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<Urbaxio::UI::MaskData>& mask) const override {
-            // The panelTransform is for the scroll content area.
-            // 1. Calculate the row's absolute world transform for text positioning.
             glm::mat4 rowWorldTransform = panelTransform * glm::translate(glm::mat4(1.0f), localPosition_);
             textRenderer.SetPanelModelMatrix(rowWorldTransform);
-            // 2. Animate text position
             float textHeight = size_.y * 0.7f;
             glm::vec2 textSize = textRenderer.GetTextSize(name_, textHeight);
-            float startX = -textSize.x * 0.5f; // Centered
-            float endX = -size_.x * 0.5f;      // Left-aligned
+            float startX = -textSize.x * 0.5f;
+            float endX = -size_.x * 0.5f;
             float currentX = glm::mix(startX, endX, hoverAnimationT_);
             glm::vec3 textRelativePos(currentX, 0, 0.001f);
             textRenderer.AddTextOnPanel(name_, textRelativePos, glm::vec4(1.0f, 1.0f, 1.0f, alpha), textHeight, Urbaxio::TextAlign::LEFT, mask);
             
-            // 3. Render spheres only when row is hovered.
             if (hoverAnimationT_ > 0.01f) {
                 float sphereAlpha = alpha * hoverAnimationT_;
-                // The spheres' Render function takes the scroll content area transform, and they already have their local positions set correctly within that space.
                 sphere1_->Render(renderer, textRenderer, panelTransform, view, projection, sphereAlpha, mask);
                 sphere2_->Render(renderer, textRenderer, panelTransform, view, projection, sphereAlpha, mask);
                 sphere3_->Render(renderer, textRenderer, panelTransform, view, projection, sphereAlpha, mask);
             }
         }
         Urbaxio::UI::HitResult CheckIntersection(const Urbaxio::UI::Ray& localRay) override {
-            // This is called by the parent (VRScrollWidget). The localRay is relative to the scroll content area.
-            // We first check if the ray hits the row's bounding box.
             Urbaxio::UI::HitResult result;
             float t;
+            // Check intersection with the entire row's bounding box. `localRay` is in the scroll content space.
             if (glm::intersectRayPlane(localRay.origin, localRay.direction, localPosition_, glm::vec3(0, 0, 1), t) && t > 0) {
                 glm::vec3 hitPoint = localRay.origin + localRay.direction * t;
-                if (glm::abs(hitPoint.x - localPosition_.x) <= size_.x * 0.5f && glm::abs(hitPoint.y - localPosition_.y) <= size_.y * 0.5f) {
+                if (glm::abs(hitPoint.x - localPosition_.x) <= size_.x * 0.5f &&
+                    glm::abs(hitPoint.y - localPosition_.y) <= size_.y * 0.5f) {
                     result.didHit = true;
                     result.distance = t;
-                    result.hitWidget = this; // Return a pointer to this row widget itself.
+                    // The hit is on this row. The parent (scroll widget) will now know which row is hovered.
+                    result.hitWidget = this; 
                 }
             }
             return result;
         }
         void HandleClick() override {
-            // Delegate the click to the sphere that is currently hovered.
-            if (sphere1_->IsHovered()) sphere1_->HandleClick();
-            else if (sphere2_->IsHovered()) sphere2_->HandleClick();
-            else if (sphere3_->IsHovered()) sphere3_->HandleClick();
+            // This is called by the parent (VRScrollWidget) on a quick click.
+            // We don't need to do anything here because the logic is now handled in Update based on `isPressed`.
         }
         
         void SetLocalPosition(const glm::vec3& pos) override {
@@ -201,10 +208,16 @@ namespace { // Anonymous namespace for helpers
         std::string name_;
         glm::vec2 size_;
         glm::vec3 localPosition_;
-        float hoverAnimationT_; // Animation value for the whole row (0 to 1)
-        bool isHovered_ = false;
+        float hoverAnimationT_;
         std::unique_ptr<Urbaxio::UI::VRConfirmButtonWidget> sphere1_, sphere2_, sphere3_;
         glm::vec3 sphere1_offset_, sphere2_offset_, sphere3_offset_;
+        bool sphere2_toggled_;
+        bool sphere3_toggled_;
+        
+        // Colors to match the toolbar
+        const glm::vec3 defaultColor_{1.0f, 1.0f, 1.0f};
+        const glm::vec3 selectedColor_{1.0f, 0.79f, 0.4f};
+        bool isHovered_ = false;
     };
     
     // A widget that wraps a VRScrollWidget and dynamically populates it
@@ -218,11 +231,11 @@ namespace { // Anonymous namespace for helpers
             lastPanelCount_ = 0;
         }
         
-        void Update(const Urbaxio::UI::Ray& localRay, bool isClicked, bool isClickReleased, float stickY) override {
+        void Update(const Urbaxio::UI::Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) override {
             if (manager_.GetPanels().size() != lastPanelCount_) {
                 rebuild();
             }
-            scrollWidget_->Update(localRay, isClicked, isClickReleased, stickY);
+            scrollWidget_->Update(localRay, triggerPressed, triggerReleased, triggerHeld, aButtonPressed, stickY);
         }
         
         void Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<Urbaxio::UI::MaskData>& mask) const override {
@@ -1015,6 +1028,9 @@ int main(int argc, char* argv[]) {
     bool g_showImportOptionsPopup = false;
     std::string g_fileToImportPath;
 
+    // --- NEW: State for alternate VR click ---
+    bool rightAButtonWasPressed = false;
+
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
     while (!should_quit) {
         SDL_GetWindowSize(window, &display_w, &display_h);
@@ -1283,6 +1299,11 @@ int main(int argc, char* argv[]) {
                 // Poll controller state after syncing actions in BeginFrame
                 vrManager->PollActions();
                 const auto& leftHand = vrManager->GetLeftHandVisual();
+                
+                // -- START OF MODIFICATION: A-Button click detection --
+                bool rightAButtonIsClicked = (vrManager->rightAButtonIsPressed && !rightAButtonWasPressed);
+                rightAButtonWasPressed = vrManager->rightAButtonIsPressed;
+                // -- END OF MODIFICATION --
 
                 
                 
@@ -1485,7 +1506,10 @@ int main(int argc, char* argv[]) {
                     Urbaxio::UI::Ray worldRay = {vrRayOrigin, vrRayDirection};
                     
                     bool isLeftTriggerPressed = vrManager->leftTriggerValue > 0.5f;
-                    vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, vrManager->rightAButtonIsPressed, vrManager->rightBButtonIsPressed, vrManager->leftJoystick.y, isLeftTriggerPressed);
+                    
+                    // -- START OF MODIFICATION: Pass separate states --
+                    vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, rightHand.triggerWasPressed, rightAButtonIsClicked, vrManager->rightAButtonIsPressed, vrManager->rightBButtonIsPressed, vrManager->leftJoystick.y, isLeftTriggerPressed);
+                    // -- END OF MODIFICATION --
 
                     // --- NEW: Menu Sphere WIDGET logic ---
                     bool sphereConsumedClick = false;
@@ -1502,10 +1526,10 @@ int main(int argc, char* argv[]) {
                             localRay.direction = glm::normalize(glm::vec3(invSphereTransform * glm::vec4(vrRayDirection, 0.0f)));
                             Urbaxio::UI::HitResult hit = menuSphereWidget->CheckIntersection(localRay);
                             menuSphereWidget->SetHover(hit.didHit);
-                            menuSphereWidget->Update(localRay, false, false, 0.0f);
+                            menuSphereWidget->Update(localRay, false, false, false, false, 0.0f);
 
                             // 3. Логика клика/захвата
-                            if (rightHand.triggerClicked && hit.didHit) {
+                            if ((rightHand.triggerClicked || rightAButtonIsClicked) && hit.didHit) {
                                 sphereConsumedClick = true; // Этот клик обработан шаром
                                 if (vrManager->rightBButtonIsPressed) {
                                     // B+курок - начинаем захват для перемещения
@@ -1657,6 +1681,13 @@ int main(int argc, char* argv[]) {
                         // If not interacting with UI, it's a world action for the current tool
                         toolManager.OnLeftMouseDown(0, 0, shiftDown, ctrlDown, vrRayOrigin, vrRayDirection);
                     }
+                }
+                if (rightAButtonIsClicked) {
+                    bool clickConsumed = false;
+                    if (!sphereConsumedClick) {
+                        clickConsumed = vruiManager.HandleClick();
+                    }
+                    // We don't forward A-button clicks to world tools, only UI.
                 }
                 if (rightHand.triggerReleased) {
                     // --- ИЗМЕНИ ЭТОТ БЛОК ---
