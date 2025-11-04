@@ -55,14 +55,31 @@ add_subdirectory(engine)
 # Добавляем подпапку с исполняемым файлом приложения
 add_subdirectory(shell)
 
-# --- Пользовательская цель для генерации снапшота кода ---
+# --- Пользовательские цели для генерации ---
+
+# 1. Генерация ПОЛНОГО снапшота кода (старое поведение)
 add_custom_target(generate_snapshot
-    # Запускаем CMake в режиме скрипта для выполнения GenerateSnapshot.cmake
-    COMMAND ${CMAKE_COMMAND} -DPROJECT_SOURCE_DIR=${CMAKE_SOURCE_DIR} -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateSnapshot.cmake"
-    COMMENT "Generating project_snapshot.txt with all source code..."
-    VERBATIM # Важно для правильной передачи команд
+    COMMAND ${CMAKE_COMMAND} -DPROJECT_SOURCE_DIR=${CMAKE_SOURCE_DIR} -DFORCE_FULL_SNAPSHOT=TRUE -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateSnapshot.cmake"
+    COMMENT "Generating FULL project_snapshot.txt..."
+    VERBATIM
 )
-message(STATUS "Added custom target 'generate_snapshot'. Run 'cmake --build . --target generate_snapshot' to execute.")
+message(STATUS "Added custom target 'generate_snapshot'.")
+
+# 2. Генерация структуры проекта
+add_custom_target(generate_structure
+    COMMAND ${CMAKE_COMMAND} -DPROJECT_SOURCE_DIR=${CMAKE_SOURCE_DIR} -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateStructure.cmake"
+    COMMENT "Generating project_structure.txt with file list..."
+    VERBATIM
+)
+message(STATUS "Added custom target 'generate_structure'.")
+
+# 3. Генерация ЧАСТИЧНОГО снапшота (читает из snapshot_files.txt)
+add_custom_target(generate_partial_snapshot
+    COMMAND ${CMAKE_COMMAND} -DPROJECT_SOURCE_DIR=${CMAKE_SOURCE_DIR} -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateSnapshot.cmake"
+    COMMENT "Generating partial_snapshot.txt from snapshot_files.txt..."
+    VERBATIM
+)
+message(STATUS "Added custom target 'generate_partial_snapshot'.")
 
 
 # --- Настройки для удобства разработки ---

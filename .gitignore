@@ -19,7 +19,11 @@ CMakeUserPresets.json
 *.obj
 *.log 
 
+# AI workflow temporary files
 project_snapshot.txt
+partial_snapshot.txt
+project_structure.txt
+snapshot_files.txt
 pixdetz.txt
 
 # Vendor headers in shell/libs (do not track third-party single headers)
