@@ -1,5 +1,6 @@
 #include "renderer.h"
 #include "camera.h"
+#include "VRManager.h"
 #include <engine/scene.h>
 #include <engine/scene_object.h>
 #include <engine/line.h>
@@ -471,8 +472,58 @@ namespace Urbaxio {
             "    FragColor = vec4(finalRGB, finalAlpha * u_globalAlpha);\n"
             "}\n";
     }
+    // -- START OF MODIFICATION --
+    const char* objectMultiviewVertexShaderSource =
+        "#version 430 core\n"
+        "#extension GL_OVR_multiview2 : require\n"
+        "layout(num_views = 2) in;\n"
+        "layout (location = 0) in vec3 aPos;\n"
+        "layout (location = 1) in vec3 aNormal;\n"
+        "layout (location = 2) in vec2 aTexCoord;\n"
+        "uniform mat4 model;\n"
+        "uniform mat4 view[2];\n"
+        "uniform mat4 projection[2];\n"
+        "out vec3 FragPosWorld;\n"
+        "out vec3 NormalWorld;\n"
+        "out vec2 v_texCoord;\n"
+        "void main() {\n"
+        "    FragPosWorld = vec3(model * vec4(aPos, 1.0));\n"
+        "    NormalWorld = mat3(transpose(inverse(model))) * aNormal;\n"
+        "    v_texCoord = aTexCoord;\n"
+        "    gl_Position = projection[gl_ViewID_OVR] * view[gl_ViewID_OVR] * vec4(FragPosWorld, 1.0);\n"
+        "}\n";
+    const char* gridMultiviewVertexShaderSource =
+        "#version 430 core\n"
+        "#extension GL_OVR_multiview2 : require\n"
+        "layout(num_views = 2) in;\n"
+        "layout (location = 0) in vec3 aPos;\n"
+        "uniform mat4 model;\n"
+        "uniform mat4 view[2];\n"
+        "uniform mat4 projection[2];\n"
+        "out vec3 vWorldPos;\n"
+        "void main() {\n"
+        "    vWorldPos = (model * vec4(aPos, 1.0)).xyz;\n"
+        "    gl_Position = projection[gl_ViewID_OVR] * view[gl_ViewID_OVR] * vec4(vWorldPos, 1.0);\n"
+        "}\n";
+    const char* axisMultiviewVertexShaderSource =
+        "#version 430 core\n"
+        "#extension GL_OVR_multiview2 : require\n"
+        "layout(num_views = 2) in;\n"
+        "layout (location = 0) in vec3 aPos;\n"
+        "layout (location = 1) in vec4 aBaseColorAlpha;\n"
+        "uniform mat4 model;\n"
+        "uniform mat4 view[2];\n"
+        "uniform mat4 projection[2];\n"
+        "out vec3 vWorldPos;\n"
+        "out vec4 vBaseColor;\n"
+        "void main() {\n"
+        "    vWorldPos = (model * vec4(aPos, 1.0)).xyz;\n"
+        "    vBaseColor = aBaseColorAlpha;\n"
+        "    gl_Position = projection[gl_ViewID_OVR] * view[gl_ViewID_OVR] * vec4(vWorldPos, 1.0);\n"
+        "}\n";
+    // -- END OF MODIFICATION --
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreatePreviewBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateSplatResources()) return false; if (!CreateGhostMeshResources()) return false; if (!CreatePanelOutlineResources()) return false; glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateMultiviewShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreatePreviewBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateSplatResources()) return false; if (!CreateGhostMeshResources()) return false; if (!CreatePanelOutlineResources()) return false; glGenFramebuffers(1, &blitFBO_); glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
     
     void Renderer::RenderFrame(
@@ -513,13 +564,39 @@ namespace Urbaxio {
         const float referenceDistance = 30.0f;
         float distanceScale = distanceToCamera / referenceDistance;
         
-        // --- 1. OPAQUE PASS ---
+        // --- 1. OPAQUE PASS (REFACTORED WITH RENDER QUEUE) ---
         if (objectShaderProgram != 0 && scene && scene->getMaterialManager()) {
+            
+            // --- Step 1: Collect all draw commands ---
+            std::map<const Engine::Material*, std::vector<RenderCommand>> opaqueQueue;
+            Engine::MaterialManager* matManager = scene->getMaterialManager();
+            for (const auto* obj : scene->get_all_objects()) {
+                if (!obj || obj->vao == 0 || obj->index_count == 0) continue;
+                if (obj->get_id() == previewObjectId) continue;
+                if (!obj->isExportable() && transformOverrides.find(obj->get_id()) == transformOverrides.end()) continue;
+                for (const auto& group : obj->meshGroups) {
+                    if (group.indexCount == 0) continue;
+                    
+                    RenderCommand cmd;
+                    cmd.material = matManager->GetMaterial(group.materialName);
+                    cmd.vao = obj->vao;
+                    cmd.startIndex = group.startIndex;
+                    cmd.indexCount = group.indexCount;
+                    auto transformIt = transformOverrides.find(obj->get_id());
+                    cmd.modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : identityModel;
+                    
+                    auto unlitIt = unlitOverrides.find(obj->get_id());
+                    cmd.isUnlit = (unlitIt != unlitOverrides.end()) ? unlitIt->second : false;
+                    auto colorIt = colorOverrides.find(obj->get_id());
+                    if (colorIt != colorOverrides.end()) {
+                        cmd.colorOverride = colorIt->second;
+                    }
+                    
+                    opaqueQueue[cmd.material].push_back(cmd);
+                }
+            }
+            // --- Step 2: Execute the sorted draw commands ---
             glUseProgram(objectShaderProgram);
-
-            Urbaxio::Engine::MaterialManager* matManager = scene->getMaterialManager();
-
-            // Set uniforms that are constant per frame
             glUniformMatrix4fv(objectShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(objectShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
             glm::mat3 worldFromViewRot = glm::mat3(glm::inverse(view));
@@ -528,62 +605,38 @@ namespace Urbaxio {
             glUniform3fv(objectShaderLocs.lightDir, 1, glm::value_ptr(lightDir));
             glUniform3fv(objectShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
             glUniform1f(objectShaderLocs.ambientStrength, ambientStrength);
-
-            for (const auto* obj : scene->get_all_objects()) {
-                if (!obj || obj->vao == 0 || obj->index_count == 0) continue;
-                if (obj->get_id() == previewObjectId) continue; // Skip ghost object
-
-                // --- MODIFIED: Use the isExportable flag to filter out helper objects ---
-                auto transformIt = transformOverrides.find(obj->get_id());
-                if (!obj->isExportable()) {
-                    // This will skip markers, controllers, and any other internal visuals.
-                    // But only if they are not explicitly being rendered via an override.
-                    if (transformIt == transformOverrides.end()) {
-                        continue;
-                    }
+            glUniform1f(objectShaderLocs.overrideAlpha, 1.0f);
+            for (const auto& [material, commands] : opaqueQueue) {
+                // Set material state ONCE per material
+                if (material && material->diffuseTextureID != 0) {
+                    glUniform1i(objectShaderLocs.useTexture, 1);
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, material->diffuseTextureID);
+                    glUniform1i(objectShaderLocs.diffuseTexture, 0);
+                } else {
+                    glUniform1i(objectShaderLocs.useTexture, 0);
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, 0);
                 }
-                // --- END MODIFICATION ---
-
-                // --- Determine Transform ---
-                glm::mat4 modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : identityModel;
-                glUniformMatrix4fv(objectShaderLocs.model, 1, GL_FALSE, glm::value_ptr(modelMatrix));
-
-                // Lighting flags
-                auto unlitIt = unlitOverrides.find(obj->get_id());
-                bool isUnlit = (unlitIt != unlitOverrides.end()) ? unlitIt->second : false;
-                glUniform1i(objectShaderLocs.unlit, isUnlit);
-                glUniform1f(objectShaderLocs.overrideAlpha, 1.0f);
-
-                // Draw per-mesh group with materials
-                glBindVertexArray(obj->vao);
-                for (const auto& group : obj->meshGroups) {
-                    if (group.indexCount == 0) continue;
-
-                    Urbaxio::Engine::Material* mat = matManager->GetMaterial(group.materialName);
-
-                    if (mat && mat->diffuseTextureID != 0) {
-                        glUniform1i(objectShaderLocs.useTexture, 1);
-                        glActiveTexture(GL_TEXTURE0);
-                        glBindTexture(GL_TEXTURE_2D, mat->diffuseTextureID);
-                        glUniform1i(objectShaderLocs.diffuseTexture, 0);
-                    } else {
-                        glUniform1i(objectShaderLocs.useTexture, 0);
-                        glActiveTexture(GL_TEXTURE0);
-                        glBindTexture(GL_TEXTURE_2D, 0); // Explicitly unbind texture to avoid state leak
-
-                        // Base color: material diffuseColor or diagnostic magenta if lookup failed
-                        glm::vec3 currentColor = mat ? mat->diffuseColor : glm::vec3(1.0f, 0.0f, 1.0f);
-                        auto colorIt = colorOverrides.find(obj->get_id());
-                        if (colorIt != colorOverrides.end()) {
-                            currentColor = colorIt->second;
+                // Execute all commands for this material
+                for (const auto& cmd : commands) {
+                    // Set per-object uniforms
+                    glUniformMatrix4fv(objectShaderLocs.model, 1, GL_FALSE, glm::value_ptr(cmd.modelMatrix));
+                    glUniform1i(objectShaderLocs.unlit, cmd.isUnlit);
+                    
+                    if (!cmd.material || cmd.material->diffuseTextureID == 0) {
+                        glm::vec3 currentColor = (cmd.material) ? cmd.material->diffuseColor : glm::vec3(1.0, 0.0, 1.0);
+                        if (cmd.colorOverride) {
+                            currentColor = *cmd.colorOverride;
                         }
                         glUniform3fv(objectShaderLocs.objectColor, 1, glm::value_ptr(currentColor));
                     }
-
-                    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(group.indexCount), GL_UNSIGNED_INT, (void*)(group.startIndex * sizeof(unsigned int)));
+                    
+                    glBindVertexArray(cmd.vao);
+                    glDrawElements(GL_TRIANGLES, cmd.indexCount, GL_UNSIGNED_INT, (void*)(cmd.startIndex * sizeof(unsigned int)));
                 }
-                glBindVertexArray(0);
             }
+            glBindVertexArray(0);
         }
 
         // --- Render Ghost Mesh (as opaque object with boundary wireframe) ---
@@ -896,6 +949,159 @@ namespace Urbaxio {
         glUseProgram(0);
         if (imguiDrawData) ImGui_ImplOpenGL3_RenderDrawData(imguiDrawData);
     }
+    // -- START OF MODIFICATION --
+    void Renderer::RenderFrameMultiview(
+        const MultiviewFBO& multiviewFbo,
+        const std::vector<VRView>& views, const glm::vec3& viewPos,
+        Urbaxio::Engine::Scene* scene,
+        // Appearance
+        const glm::vec3& lightColor, float ambientStrength,
+        bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
+        const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ,
+        const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
+        // Interactive Effects
+        const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
+        // Overrides
+        const std::map<uint64_t, glm::mat4>& transformOverrides,
+        const std::map<uint64_t, glm::vec3>& colorOverrides,
+        const std::map<uint64_t, bool>& unlitOverrides
+    ) {
+        if (multiviewFbo.fbo == 0 || views.size() < 2) return;
+        glBindFramebuffer(GL_FRAMEBUFFER, multiviewFbo.fbo);
+        glViewport(0, 0, multiviewFbo.width, multiviewFbo.height);
+        
+        // Clear once for both eyes
+        // Using a slightly different clear color to distinguish from the final background
+        glClearColor(0.13f, 0.13f, 0.18f, 1.00f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        
+        glm::mat4 viewMatrices[2] = { views[0].viewMatrix, views[1].viewMatrix };
+        glm::mat4 projMatrices[2] = { views[0].projectionMatrix, views[1].projectionMatrix };
+        
+        glm::mat4 identityModel = glm::mat4(1.0f);
+        float distanceToCamera = glm::length(viewPos);
+        const float referenceDistance = 30.0f;
+        float distanceScale = distanceToCamera / referenceDistance;
+        
+        // --- Render Opaque Objects ---
+        if (objectMultiviewShaderProgram != 0 && scene && scene->getMaterialManager()) {
+            // Collect all draw commands (same logic as RenderFrame)
+            std::map<const Engine::Material*, std::vector<RenderCommand>> opaqueQueue;
+            Engine::MaterialManager* matManager = scene->getMaterialManager();
+            for (const auto* obj : scene->get_all_objects()) {
+                if (!obj || obj->vao == 0 || obj->index_count == 0) continue;
+                if (!obj->isExportable() && transformOverrides.find(obj->get_id()) == transformOverrides.end()) continue;
+                for (const auto& group : obj->meshGroups) {
+                    if (group.indexCount == 0) continue;
+                    
+                    RenderCommand cmd;
+                    cmd.material = matManager->GetMaterial(group.materialName);
+                    cmd.vao = obj->vao;
+                    cmd.startIndex = group.startIndex;
+                    cmd.indexCount = group.indexCount;
+                    auto transformIt = transformOverrides.find(obj->get_id());
+                    cmd.modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : identityModel;
+                    
+                    auto unlitIt = unlitOverrides.find(obj->get_id());
+                    cmd.isUnlit = (unlitIt != unlitOverrides.end()) ? unlitIt->second : false;
+                    auto colorIt = colorOverrides.find(obj->get_id());
+                    if (colorIt != colorOverrides.end()) {
+                        cmd.colorOverride = colorIt->second;
+                    }
+                    
+                    opaqueQueue[cmd.material].push_back(cmd);
+                }
+            }
+            // Execute the sorted draw commands
+            glUseProgram(objectMultiviewShaderProgram);
+            glUniformMatrix4fv(objectMultiviewShaderLocs.view, 2, GL_FALSE, glm::value_ptr(viewMatrices[0]));
+            glUniformMatrix4fv(objectMultiviewShaderLocs.projection, 2, GL_FALSE, glm::value_ptr(projMatrices[0]));
+            glm::mat3 worldFromViewRot = glm::mat3(glm::inverse(viewMatrices[0]));
+            glm::vec3 camForwardWS = glm::normalize(worldFromViewRot * glm::vec3(0, 0, -1));
+            glm::vec3 lightDir = -camForwardWS;
+            glUniform3fv(objectMultiviewShaderLocs.lightDir, 1, glm::value_ptr(lightDir));
+            glUniform3fv(objectMultiviewShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
+            glUniform1f(objectMultiviewShaderLocs.ambientStrength, ambientStrength);
+            glUniform1f(objectMultiviewShaderLocs.overrideAlpha, 1.0f);
+            for (const auto& [material, commands] : opaqueQueue) {
+                // Set material state ONCE per material
+                if (material && material->diffuseTextureID != 0) {
+                    glUniform1i(objectMultiviewShaderLocs.useTexture, 1);
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, material->diffuseTextureID);
+                    glUniform1i(objectMultiviewShaderLocs.diffuseTexture, 0);
+                } else {
+                    glUniform1i(objectMultiviewShaderLocs.useTexture, 0);
+                }
+                // Execute all commands for this material
+                for (const auto& cmd : commands) {
+                    // Set per-object uniforms
+                    glUniformMatrix4fv(objectMultiviewShaderLocs.model, 1, GL_FALSE, glm::value_ptr(cmd.modelMatrix));
+                    glUniform1i(objectMultiviewShaderLocs.unlit, cmd.isUnlit);
+                    
+                    if (!cmd.material || cmd.material->diffuseTextureID == 0) {
+                        glm::vec3 currentColor = (cmd.material) ? cmd.material->diffuseColor : glm::vec3(1.0, 0.0, 1.0);
+                        if (cmd.colorOverride) {
+                            currentColor = *cmd.colorOverride;
+                        }
+                        glUniform3fv(objectMultiviewShaderLocs.objectColor, 1, glm::value_ptr(currentColor));
+                    }
+                    
+                    glBindVertexArray(cmd.vao);
+                    glDrawElements(GL_TRIANGLES, cmd.indexCount, GL_UNSIGNED_INT, (void*)(cmd.startIndex * sizeof(unsigned int)));
+                }
+            }
+            glBindVertexArray(0);
+        }
+        
+        // --- TRANSPARENT / OVERLAY PASS (Multiview) ---
+        glDepthMask(GL_FALSE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        
+        if (showGrid && gridVAO != 0 && gridMultiviewShaderProgram != 0) {
+            glLineWidth(1.0f);
+            glUseProgram(gridMultiviewShaderProgram);
+            glUniformMatrix4fv(gridMultiviewShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(gridMultiviewShaderLocs.view, 2, GL_FALSE, glm::value_ptr(viewMatrices[0]));
+            glUniformMatrix4fv(gridMultiviewShaderLocs.projection, 2, GL_FALSE, glm::value_ptr(projMatrices[0]));
+            glUniform3fv(gridMultiviewShaderLocs.gridColor, 1, glm::value_ptr(gridColor));
+            glUniform3fv(gridMultiviewShaderLocs.cursorWorldPos, 1, glm::value_ptr(cursorWorldPos));
+            glUniform1f(gridMultiviewShaderLocs.cursorRadius, cursorRadius);
+            glUniform1f(gridMultiviewShaderLocs.intensity, intensity);
+            const float baseHoleStart = 0.25f, baseHoleEnd = 0.75f;
+            glUniform1f(gridMultiviewShaderLocs.holeStart, baseHoleStart * distanceScale);
+            glUniform1f(gridMultiviewShaderLocs.holeEnd, baseHoleEnd * distanceScale);
+            glBindVertexArray(gridVAO);
+            glDrawArrays(GL_LINES, 0, gridVertexCount);
+        }
+        
+        if (showAxes && axesVAO != 0 && axisMultiviewShaderProgram != 0) {
+            UpdateAxesVBO(axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor);
+            glUseProgram(axisMultiviewShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(axisMultiviewShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+            glUniformMatrix4fv(glGetUniformLocation(axisMultiviewShaderProgram, "view"), 2, GL_FALSE, glm::value_ptr(viewMatrices[0]));
+            glUniformMatrix4fv(glGetUniformLocation(axisMultiviewShaderProgram, "projection"), 2, GL_FALSE, glm::value_ptr(projMatrices[0]));
+            glUniform3fv(glGetUniformLocation(axisMultiviewShaderProgram, "u_cursorWorldPos"), 1, glm::value_ptr(cursorWorldPos));
+            glUniform1f(glGetUniformLocation(axisMultiviewShaderProgram, "u_cursorRadius"), cursorRadius);
+            glUniform1f(glGetUniformLocation(axisMultiviewShaderProgram, "u_intensity"), intensity);
+            const float baseFadeStart = 0.5f, baseFadeEnd = 4.0f, baseHoleStart = 0.25f, baseHoleEnd = 0.75f;
+            glUniform1f(glGetUniformLocation(axisMultiviewShaderProgram, "u_fadeStart"), baseFadeStart * distanceScale);
+            glUniform1f(glGetUniformLocation(axisMultiviewShaderProgram, "u_fadeEnd"), baseFadeEnd * distanceScale);
+            glUniform1f(glGetUniformLocation(axisMultiviewShaderProgram, "u_holeStart"), baseHoleStart * distanceScale);
+            glUniform1f(glGetUniformLocation(axisMultiviewShaderProgram, "u_holeEnd"), baseHoleEnd * distanceScale);
+            glUniform4fv(glGetUniformLocation(axisMultiviewShaderProgram, "u_positiveFadeColor"), 1, glm::value_ptr(positiveAxisFadeColor));
+            glUniform4fv(glGetUniformLocation(axisMultiviewShaderProgram, "u_negativeFadeColor"), 1, glm::value_ptr(negativeAxisFadeColor));
+            glBindVertexArray(axesVAO);
+            glLineWidth(negAxisLineWidth); glDrawArrays(GL_LINES, 2, 2); glDrawArrays(GL_LINES, 6, 2); glDrawArrays(GL_LINES, 10, 2);
+            glLineWidth(axisLineWidth); glDrawArrays(GL_LINES, 0, 2); glDrawArrays(GL_LINES, 4, 2); glDrawArrays(GL_LINES, 8, 2);
+        }
+        
+        glDepthMask(GL_TRUE);
+        glBindVertexArray(0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    // -- END OF MODIFICATION --
     bool Renderer::CreateShaderPrograms() {
         // Object Shader
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, objectVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, objectFragmentShaderSource); if (vs != 0 && fs != 0) objectShaderProgram = LinkShaderProgram(vs, fs); if (objectShaderProgram == 0) return false; objectShaderLocs.model = glGetUniformLocation(objectShaderProgram, "model"); objectShaderLocs.view = glGetUniformLocation(objectShaderProgram, "view"); objectShaderLocs.projection = glGetUniformLocation(objectShaderProgram, "projection"); objectShaderLocs.lightDir = glGetUniformLocation(objectShaderProgram, "lightDir"); objectShaderLocs.lightColor = glGetUniformLocation(objectShaderProgram, "lightColor"); objectShaderLocs.ambientStrength = glGetUniformLocation(objectShaderProgram, "ambientStrength"); objectShaderLocs.objectColor = glGetUniformLocation(objectShaderProgram, "objectColor"); objectShaderLocs.useTexture = glGetUniformLocation(objectShaderProgram, "u_useTexture"); objectShaderLocs.diffuseTexture = glGetUniformLocation(objectShaderProgram, "u_diffuseTexture"); objectShaderLocs.overrideAlpha = glGetUniformLocation(objectShaderProgram, "overrideAlpha"); objectShaderLocs.unlit = glGetUniformLocation(objectShaderProgram, "u_unlit"); std::cout << "Renderer: Object shader program created." << std::endl; }
@@ -918,6 +1124,67 @@ namespace Urbaxio {
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, vrMenuWidgetVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, vrMenuWidgetFragmentShaderSource); if (vs != 0 && fs != 0) vrMenuWidgetShaderProgram = LinkShaderProgram(vs, fs); if (vrMenuWidgetShaderProgram == 0) return false; std::cout << "Renderer: VR Menu Widget shader program created." << std::endl; }
         return true;
     }
+    // -- START OF MODIFICATION --
+    bool Renderer::CreateMultiviewShaderPrograms() {
+        // Object Multiview Shader
+        {
+            GLuint vs = CompileShader(GL_VERTEX_SHADER, objectMultiviewVertexShaderSource);
+            GLuint fs = CompileShader(GL_FRAGMENT_SHADER, objectFragmentShaderSource);
+            if (vs != 0 && fs != 0) objectMultiviewShaderProgram = LinkShaderProgram(vs, fs);
+            if (objectMultiviewShaderProgram == 0) return false;
+            objectMultiviewShaderLocs.model = glGetUniformLocation(objectMultiviewShaderProgram, "model");
+            objectMultiviewShaderLocs.view = glGetUniformLocation(objectMultiviewShaderProgram, "view");
+            objectMultiviewShaderLocs.projection = glGetUniformLocation(objectMultiviewShaderProgram, "projection");
+            objectMultiviewShaderLocs.lightDir = glGetUniformLocation(objectMultiviewShaderProgram, "lightDir");
+            objectMultiviewShaderLocs.lightColor = glGetUniformLocation(objectMultiviewShaderProgram, "lightColor");
+            objectMultiviewShaderLocs.ambientStrength = glGetUniformLocation(objectMultiviewShaderProgram, "ambientStrength");
+            objectMultiviewShaderLocs.objectColor = glGetUniformLocation(objectMultiviewShaderProgram, "objectColor");
+            objectMultiviewShaderLocs.useTexture = glGetUniformLocation(objectMultiviewShaderProgram, "u_useTexture");
+            objectMultiviewShaderLocs.diffuseTexture = glGetUniformLocation(objectMultiviewShaderProgram, "u_diffuseTexture");
+            objectMultiviewShaderLocs.overrideAlpha = glGetUniformLocation(objectMultiviewShaderProgram, "overrideAlpha");
+            objectMultiviewShaderLocs.unlit = glGetUniformLocation(objectMultiviewShaderProgram, "u_unlit");
+            std::cout << "Renderer: Object MULTIVIEW shader program created." << std::endl;
+        }
+        // Grid Multiview Shader
+        {
+            GLuint vs = CompileShader(GL_VERTEX_SHADER, gridMultiviewVertexShaderSource);
+            GLuint fs = CompileShader(GL_FRAGMENT_SHADER, gridFragmentShaderSource);
+            if (vs != 0 && fs != 0) gridMultiviewShaderProgram = LinkShaderProgram(vs, fs);
+            if (gridMultiviewShaderProgram == 0) return false;
+            gridMultiviewShaderLocs.model = glGetUniformLocation(gridMultiviewShaderProgram, "model");
+            gridMultiviewShaderLocs.view = glGetUniformLocation(gridMultiviewShaderProgram, "view");
+            gridMultiviewShaderLocs.projection = glGetUniformLocation(gridMultiviewShaderProgram, "projection");
+            gridMultiviewShaderLocs.gridColor = glGetUniformLocation(gridMultiviewShaderProgram, "u_gridColor");
+            gridMultiviewShaderLocs.cursorWorldPos = glGetUniformLocation(gridMultiviewShaderProgram, "u_cursorWorldPos");
+            gridMultiviewShaderLocs.cursorRadius = glGetUniformLocation(gridMultiviewShaderProgram, "u_cursorRadius");
+            gridMultiviewShaderLocs.intensity = glGetUniformLocation(gridMultiviewShaderProgram, "u_intensity");
+            gridMultiviewShaderLocs.holeStart = glGetUniformLocation(gridMultiviewShaderProgram, "u_holeStart");
+            gridMultiviewShaderLocs.holeEnd = glGetUniformLocation(gridMultiviewShaderProgram, "u_holeEnd");
+            std::cout << "Renderer: Grid MULTIVIEW shader program created." << std::endl;
+        }
+        // Axis Multiview Shader
+        {
+            GLuint vs = CompileShader(GL_VERTEX_SHADER, axisMultiviewVertexShaderSource);
+            GLuint fs = CompileShader(GL_FRAGMENT_SHADER, axisFragmentShaderSource);
+            if (vs != 0 && fs != 0) axisMultiviewShaderProgram = LinkShaderProgram(vs, fs);
+            if (axisMultiviewShaderProgram == 0) return false;
+            axisMultiviewShaderLocs.model = glGetUniformLocation(axisMultiviewShaderProgram, "model");
+            axisMultiviewShaderLocs.view = glGetUniformLocation(axisMultiviewShaderProgram, "view");
+            axisMultiviewShaderLocs.projection = glGetUniformLocation(axisMultiviewShaderProgram, "projection");
+            axisMultiviewShaderLocs.cursorWorldPos = glGetUniformLocation(axisMultiviewShaderProgram, "u_cursorWorldPos");
+            axisMultiviewShaderLocs.cursorRadius = glGetUniformLocation(axisMultiviewShaderProgram, "u_cursorRadius");
+            axisMultiviewShaderLocs.intensity = glGetUniformLocation(axisMultiviewShaderProgram, "u_intensity");
+            axisMultiviewShaderLocs.fadeStart = glGetUniformLocation(axisMultiviewShaderProgram, "u_fadeStart");
+            axisMultiviewShaderLocs.fadeEnd = glGetUniformLocation(axisMultiviewShaderProgram, "u_fadeEnd");
+            axisMultiviewShaderLocs.holeStart = glGetUniformLocation(axisMultiviewShaderProgram, "u_holeStart");
+            axisMultiviewShaderLocs.holeEnd = glGetUniformLocation(axisMultiviewShaderProgram, "u_holeEnd");
+            axisMultiviewShaderLocs.positiveFadeColor = glGetUniformLocation(axisMultiviewShaderProgram, "u_positiveFadeColor");
+            axisMultiviewShaderLocs.negativeAxisFadeColor = glGetUniformLocation(axisMultiviewShaderProgram, "u_negativeAxisFadeColor");
+            std::cout << "Renderer: Axis MULTIVIEW shader program created." << std::endl;
+        }
+        return true;
+    }
+    // -- END OF MODIFICATION --
     bool Renderer::CreateGridResources() {
         std::vector<float> gridVertices = GenerateGridVertices(gridSizeF, gridSteps);
         if (gridVertices.empty()) {
@@ -1103,6 +1370,11 @@ namespace Urbaxio {
         for (auto const& [shape, vbo] : markerVBOs) { if (vbo != 0) glDeleteBuffers(1, &vbo); } markerVBOs.clear();
         markerVertexCounts.clear();
         if (objectShaderProgram != 0) glDeleteProgram(objectShaderProgram); objectShaderProgram = 0;
+        // -- START OF MODIFICATION --
+        if (objectMultiviewShaderProgram != 0) glDeleteProgram(objectMultiviewShaderProgram); objectMultiviewShaderProgram = 0;
+        if (gridMultiviewShaderProgram != 0) glDeleteProgram(gridMultiviewShaderProgram); gridMultiviewShaderProgram = 0;
+        if (axisMultiviewShaderProgram != 0) glDeleteProgram(axisMultiviewShaderProgram); axisMultiviewShaderProgram = 0;
+        // -- END OF MODIFICATION --
         if (simpleLineShaderProgram != 0) glDeleteProgram(simpleLineShaderProgram); simpleLineShaderProgram = 0;
         if (gridShaderProgram != 0) glDeleteProgram(gridShaderProgram); gridShaderProgram = 0;
         if (axisShaderProgram != 0) glDeleteProgram(axisShaderProgram); axisShaderProgram = 0;
@@ -1117,6 +1389,7 @@ namespace Urbaxio {
         if (previewBoxVBO != 0) glDeleteBuffers(1, &previewBoxVBO); previewBoxVBO = 0;
         if (previewBoxEBO_triangles != 0) glDeleteBuffers(1, &previewBoxEBO_triangles); previewBoxEBO_triangles = 0;
         if (previewBoxEBO_lines != 0) glDeleteBuffers(1, &previewBoxEBO_lines); previewBoxEBO_lines = 0;
+        if (blitFBO_ != 0) glDeleteFramebuffers(1, &blitFBO_); blitFBO_ = 0;
         std::cout << "Renderer: Resource cleanup finished." << std::endl;
     }
 

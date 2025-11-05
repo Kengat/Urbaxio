@@ -2,6 +2,7 @@
 
 #include "snapping.h"
 #include <engine/line.h> // <--- ADDED: Fix for unknown type 'Line'
+#include <engine/Material.h> // <-- ADD THIS
 #include <cad_kernel/MeshBuffers.h> // <-- ADDED for Ghost Mesh
 #include <glad/glad.h>
 #include <glm/glm.hpp>
@@ -13,6 +14,12 @@
 #include <map>
 #include <utility> // For std::pair
 #include <set>     // <--- ADDED: Fix for 'std::set' is not a member of 'std'
+#include <optional> // <-- ADD THIS
+
+// -- START OF MODIFICATION --
+// Forward declare the multiview FBO struct from VRManager
+namespace Urbaxio { class VRManager; struct MultiviewFBO; struct VRView; }
+// -- END OF MODIFICATION --
 
 namespace Urbaxio { class Camera; namespace Engine { class SceneObject; class Scene; } }
 struct ImDrawData;
@@ -20,6 +27,17 @@ struct ImDrawData;
 namespace Urbaxio {
 
     enum class MarkerShape { CIRCLE, DIAMOND };
+
+    // --- NEW: Struct for a single draw call ---
+    struct RenderCommand {
+        const Engine::Material* material;
+        GLuint vao;
+        GLsizei indexCount;
+        size_t startIndex; // Use size_t to match MeshGroup
+        glm::mat4 modelMatrix;
+        bool isUnlit;
+        std::optional<glm::vec3> colorOverride;
+    };
 
     class Renderer {
     public:
@@ -58,6 +76,24 @@ namespace Urbaxio {
         const std::map<uint64_t, glm::vec3>& colorOverrides = {},
         const std::map<uint64_t, bool>& unlitOverrides = {}
     );
+        // -- START OF MODIFICATION --
+        void RenderFrameMultiview(
+            const MultiviewFBO& multiviewFbo,
+            const std::vector<VRView>& views, const glm::vec3& viewPos,
+            Urbaxio::Engine::Scene* scene,
+            // Appearance
+            const glm::vec3& lightColor, float ambientStrength,
+            bool showGrid, bool showAxes, float axisLineWidth, float negAxisLineWidth,
+            const glm::vec3& gridColor, const glm::vec4& axisColorX, const glm::vec4& axisColorY, const glm::vec4& axisColorZ,
+            const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
+            // Interactive Effects
+            const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
+            // Overrides
+            const std::map<uint64_t, glm::mat4>& transformOverrides = {},
+            const std::map<uint64_t, glm::vec3>& colorOverrides = {},
+            const std::map<uint64_t, bool>& unlitOverrides = {}
+        );
+        // -- END OF MODIFICATION --
         void SetViewport(int x, int y, int width, int height);
         float GetMaxLineWidth() const { return maxLineWidth; }
 
@@ -120,6 +156,8 @@ namespace Urbaxio {
         // ДОБАВЬТЕ ЭТОТ МЕТОД:
         void GetViewport(glm::vec4& outViewport) const;
 
+        GLuint GetBlitFBO() const { return blitFBO_; }
+
         GLuint vrMenuWidgetShaderProgram = 0; // For menu spheres
         glm::mat4 vrMenuWidgetShaderProgram_viewMatrix_HACK = glm::mat4(1.0f);
 
@@ -143,6 +181,21 @@ namespace Urbaxio {
             GLuint fadeStart, fadeEnd, holeStart, holeEnd, positiveFadeColor, negativeFadeColor;
         } axisShaderLocs;
 
+        // -- START OF MODIFICATION --
+        struct ObjectMultiviewShaderLocations {
+            GLuint model, view, projection, lightDir, lightColor, ambientStrength;
+            GLuint objectColor, useTexture, diffuseTexture, overrideAlpha, unlit;
+        } objectMultiviewShaderLocs;
+        struct GridMultiviewShaderLocations {
+            GLuint model, view, projection, gridColor, cursorWorldPos, cursorRadius, intensity, holeStart, holeEnd;
+        } gridMultiviewShaderLocs;
+        
+        struct AxisMultiviewShaderLocations {
+            GLuint model, view, projection, cursorWorldPos, cursorRadius, intensity;
+            GLuint fadeStart, fadeEnd, holeStart, holeEnd, positiveFadeColor, negativeAxisFadeColor;
+        } axisMultiviewShaderLocs;
+        // -- END OF MODIFICATION --
+
         struct DashedLineShaderLocations {
             GLuint model, view, projection, color, dashSize, gapSize;
         } dashedLineShaderLocs;
@@ -151,6 +204,11 @@ namespace Urbaxio {
         // --- NEW SHADERS ---
         GLuint gridShaderProgram = 0;
         GLuint axisShaderProgram = 0;
+        // -- START OF MODIFICATION --
+        GLuint objectMultiviewShaderProgram = 0;
+        GLuint gridMultiviewShaderProgram = 0;
+        GLuint axisMultiviewShaderProgram = 0;
+        // -- END OF MODIFICATION --
         // --- OLD SHADER (renamed for clarity, used for user lines and rubber band) ---
         GLuint simpleLineShaderProgram = 0; 
         GLuint unlitShaderProgram = 0; // <-- NEW SHADER for unlit objects
@@ -241,6 +299,9 @@ namespace Urbaxio {
         int currentEyeIndex_ = 0;
 
         bool CreateShaderPrograms();
+        // -- START OF MODIFICATION --
+        bool CreateMultiviewShaderPrograms();
+        // -- END OF MODIFICATION --
         bool CreateGridResources();
         bool CreateAxesResources();
         bool CreateSplatResources();
@@ -268,5 +329,9 @@ namespace Urbaxio {
         const char* dashedLineVertexShaderSource; const char* dashedLineFragmentShaderSource;
         const char* selectionBoxVertexShaderSource; const char* selectionBoxFragmentShaderSource;
         const char* vrMenuWidgetVertexShaderSource; const char* vrMenuWidgetFragmentShaderSource;
+
+        // -- START OF MODIFICATION --
+        GLuint blitFBO_ = 0; // Temporary FBO for multiview blitting
+        // -- END OF MODIFICATION --
     };
 }

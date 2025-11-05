@@ -1323,6 +1323,17 @@ int main(int argc, char* argv[]) {
                     scene_ptr->TestFaceSplitting(); 
                 }
             }
+            ImGui::SameLine();
+            if (ImGui::Button("CPU Stress Test (1k boxes)")) {
+                if (scene_ptr) {
+                    for(int i = 0; i < 1000; ++i) {
+                        float x = (rand() % 200 - 100) / 10.0f;
+                        float y = (rand() % 200 - 100) / 10.0f;
+                        float z = (rand() % 100) / 10.0f;
+                        scene_ptr->create_box_object("StressBox", 0.1, 0.1, 0.1);
+                    }
+                }
+            }
             
             // --- Tool-specific UI ---
             toolManager.RenderUI();
@@ -1460,23 +1471,19 @@ int main(int argc, char* argv[]) {
 
         ImGui::Render();
 
+        // -- START OF MODIFICATION: Replace the entire VR render path block --
         if (vr_mode && vrManager->IsInitialized()) {
             // --- VR RENDER PATH ---
-            uint32_t leftEyeImageIndex = -1; // For mirror view
 
             if (vrManager->BeginFrame()) {
-                // Poll controller state after syncing actions in BeginFrame
+                // --- Poll actions and update state (this part is unchanged) ---
                 vrManager->PollActions();
                 const auto& leftHand = vrManager->GetLeftHandVisual();
                 
-                // -- START OF MODIFICATION: A-Button click detection --
                 bool rightAButtonIsClicked = (vrManager->rightAButtonIsPressed && !rightAButtonWasPressed);
                 rightAButtonWasPressed = vrManager->rightAButtonIsPressed;
-                // -- END OF MODIFICATION --
 
-                
-                
-                // Update modifier state for VR after polling actions
+                // ... (вся логика обновления состояний, контроллеров, UI, инструментов остается здесь)
 
                 // --- NEW: Handle Undo/Redo gesture actions ---
                 if (vrManager->triggeredUndoRedoAction == Urbaxio::UndoRedoAction::TriggerUndo) {
@@ -1515,7 +1522,10 @@ int main(int argc, char* argv[]) {
                     renderer.UpdateVRPointer({}, {}, false);
                 }
 
-                glDisable(GL_FRAMEBUFFER_SRGB); // Use linear color space for rendering
+                // ... (Этот блок кода до `glDisable(GL_FRAMEBUFFER_SRGB)` остается как был)
+                
+                // --- Disable SRGB for linear rendering space ---
+                glDisable(GL_FRAMEBUFFER_SRGB);
                 
                 // --- REVISED: Prepare override maps for dynamic objects ---
                 std::map<uint64_t, glm::mat4> transformOverrides;
@@ -1875,16 +1885,6 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                // --- NEW: Calculate a stable "cyclops eye" position for billboards ---
-                glm::vec3 cyclopsEyePos(0.0f);
-                const auto& vr_views = vrManager->GetViews();
-                if (!vr_views.empty()) {
-                    glm::vec3 pos1 = glm::inverse(vr_views[0].viewMatrix)[3];
-                    glm::vec3 pos2 = (vr_views.size() > 1) ? glm::inverse(vr_views[1].viewMatrix)[3] : pos1;
-                    cyclopsEyePos = (pos1 + pos2) * 0.5f;
-                }
-                renderer.setCyclopsEyePosition(cyclopsEyePos);
-
                 // --- MODIFIED: Move line buffer update out of the loop ---
                 uint64_t previewObjId = 0;
                 if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Move) {
@@ -1893,57 +1893,76 @@ int main(int argc, char* argv[]) {
                 }
                 renderer.UpdateUserLinesBuffer(scene_ptr->GetAllLines(), *toolContext.selectedLineIDs, previewObjId, scene_ptr);
                 toolManager.RenderPreview(renderer, vrSnap);
-
-                for (uint32_t i = 0; i < vr_views.size(); ++i) {
-                    // ДОБАВЬ ЭТУ СТРОКУ
-
-                    renderer.setCurrentEyeIndex(i); // Сообщаем рендереру, для какого глаза рисуем (0=левый, 1=правый)
-
-                    const auto& swapchain = vrManager->GetSwapchain(i);
-                    uint32_t imageIndex = vrManager->AcquireSwapchainImage(i);
-                    if (i == 0) { leftEyeImageIndex = imageIndex; }
-                    
-                    // Bind pre-created FBO for this swapchain image
-                    glBindFramebuffer(GL_FRAMEBUFFER, swapchain.fbos[imageIndex]);
-                    glViewport(0, 0, swapchain.width, swapchain.height);
-                    
-                    // Clear this eye's buffer
-                    glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
-                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-                    // Get view-specific data
-                    const auto& current_view = vr_views[i];
-                    const glm::mat4& view = current_view.viewMatrix;
-                    const glm::mat4& projection = current_view.projectionMatrix;
-                    const glm::vec3 viewPos = glm::vec3(glm::inverse(view)[3]);
-                    
-                    // --- Hack to pass view matrix to UI widgets ---
-                    renderer.vrMenuWidgetShaderProgram_viewMatrix_HACK = view;
-                    // --- End Hack ---
-                    
-                    auto* selectTool = (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) 
-                        ? static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool()) 
-                        : nullptr;
-                    
-                    // Call the main render function BEFORE drawing UI elements like menus
-                    renderer.RenderFrame(
-                        swapchain.width, swapchain.height,
-                        view, projection, viewPos, scene_ptr,
+                
+                // --- 1. MULTIVIEW SCENE PASS ---
+                const auto& vr_views = vrManager->GetViews();
+                if (!vr_views.empty()) {
+                    glm::vec3 cyclopsEyePos(0.0f);
+                    glm::vec3 pos1 = glm::inverse(vr_views[0].viewMatrix)[3];
+                    glm::vec3 pos2 = (vr_views.size() > 1) ? glm::inverse(vr_views[1].viewMatrix)[3] : pos1;
+                    cyclopsEyePos = (pos1 + pos2) * 0.5f;
+                    renderer.setCyclopsEyePosition(cyclopsEyePos);
+                    glm::vec3 cursorWorldPos = vrSnap.snapped ? vrSnap.worldPoint : rayEnd;
+                    renderer.RenderFrameMultiview(
+                        vrManager->GetMultiviewFbo(),
+                        vr_views, 
+                        cyclopsEyePos,
+                        scene_ptr,
                         lightColor, ambientStrength, 
                         showGrid, showAxes, axisLineWidth, negAxisLineWidth,
                         gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
-                        vrSnap.worldPoint, cursorRadius, effectIntensity, 
+                        cursorWorldPos, cursorRadius, effectIntensity,
+                        transformOverrides, colorOverrides, unlitOverrides
+                    );
+                }
+                
+                // --- 2. PER-EYE UI & TRANSPARENCY PASS ---
+                
+                // NEW: Clear the main window framebuffer BEFORE the per-eye loop
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glViewport(0, 0, display_w, display_h);
+                glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                glm::vec3 cursorWorldPos = vrSnap.snapped ? vrSnap.worldPoint : rayEnd;
+                for (uint32_t i = 0; i < vr_views.size(); ++i) {
+                    renderer.setCurrentEyeIndex(i);
+                    const auto& swapchain = vrManager->GetSwapchain(i);
+                    uint32_t imageIndex = vrManager->AcquireSwapchainImage(i);
+                    
+                    const auto& multiviewFbo = vrManager->GetMultiviewFbo();
+                    
+                    // Correctly blit from multiview FBO to swapchain FBO for this eye
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, renderer.GetBlitFBO());
+                    glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, multiviewFbo.colorTexture, 0, i);
+                    glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, multiviewFbo.depthTexture, 0, i);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, swapchain.fbos[imageIndex]);
+                    glBlitFramebuffer(0, 0, multiviewFbo.width, multiviewFbo.height,
+                                      0, 0, swapchain.width, swapchain.height,
+                                      GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+                    
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                    // Now bind the swapchain FBO for further drawing of UI elements
+                    glBindFramebuffer(GL_FRAMEBUFFER, swapchain.fbos[imageIndex]);
+                    glViewport(0, 0, swapchain.width, swapchain.height);
+                    const auto& current_view = vr_views[i];
+                    const glm::mat4& view = current_view.viewMatrix;
+                    const glm::mat4& projection = current_view.projectionMatrix;
+                    glm::vec3 viewPos = glm::vec3(glm::inverse(view)[3]);
+                    // Render non-multiview elements (highlights, previews, lines, etc.)
+                    renderer.RenderFrame(
+                        swapchain.width, swapchain.height, view, projection, viewPos, scene_ptr,
+                        lightColor, ambientStrength, 
+                        false, false, 0, 0, {},{},{},{},{},{}, // Grid/axes already drawn
+                        cursorWorldPos, cursorRadius, effectIntensity, 
                         *toolContext.selectedObjId, *toolContext.selectedTriangleIndices, *toolContext.selectedLineIDs, selectionHighlightColor, 
                         *toolContext.hoveredObjId, *toolContext.hoveredFaceTriangleIndices, hoverHighlightColor,
-                        vrSnap,
-                        nullptr, // No ImGui data for VR eyes
-                        !selectTool || !selectTool->IsVrDragging(), // MODIFIED: Hide snap marker if dragging a 3D selection box
-                        previewObjId, glm::mat4(1.0f),
-                        transformOverrides,
-                        colorOverrides,
-                        unlitOverrides
+                        vrSnap, nullptr, !selectTool || !selectTool->IsVrDragging(),
+                        previewObjId, glm::mat4(1.0f), {}, {}, {}
                     );
                     
+                    // Render snap markers and other previews per-eye
+                    // ... (This block of code for rendering snap markers and ghost points remains the same)
+                    // Re-render snap marker per-eye
                     if (selectTool) {
                         glm::vec3 ghostPoint;
                         selectTool->GetVrGhostPoint(vrRayOrigin, vrRayDirection, ghostPoint);
@@ -1953,6 +1972,8 @@ int main(int argc, char* argv[]) {
                         renderer.RenderSnapMarker(vrSnap, view, projection, swapchain.width, swapchain.height);
                     }
                     
+                    // Render UI and Text per-eye
+                    // ... (The transparentQueue logic for rendering panels, buttons, etc. remains the same)
                     // --- NEW: Back-to-Front Sorted Rendering for Transparent UI (Final Fix) ---
                     std::vector<std::pair<float, std::function<void()>>> transparentQueue;
                     
@@ -2028,40 +2049,34 @@ int main(int argc, char* argv[]) {
                         const float textOpacity = 0.7f;
                         textRenderer.AddText(distStr, midpoint_transformed, glm::vec4(1,1,1, vrManager->zoomTextAlpha * textOpacity), finalWorldHeight, view);
                     }
-                    // MODIFIED: Render only the non-panel text (like distance text). Panel text is now rendered inside vruiManager.
+                    // IMPORTANT: You must copy your existing transparentQueue logic here
+                    
+                    // This call now clears the text buffers for the NEXT eye/frame
                     textRenderer.Render(view, projection);
-
+                    // NEW: Blit to mirror view IF this is the left eye
+                    if (i == 0) {
+                        glBindFramebuffer(GL_READ_FRAMEBUFFER, swapchain.fbos[imageIndex]);
+                        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // Window's framebuffer
+                        glBlitFramebuffer(
+                            0, 0, swapchain.width, swapchain.height,
+                            0, 0, display_w, display_h,
+                            GL_COLOR_BUFFER_BIT, GL_LINEAR
+                        );
+                    }
                     glFinish();
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                    
                     vrManager->ReleaseSwapchainImage(i);
                 }
-
                 vrManager->EndFrame();
+            
+                // We now draw ImGui on top of the already-blitted mirror view.
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glEnable(GL_FRAMEBUFFER_SRGB); // ImGui expects sRGB
+                ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             }
-
-            // Render desktop mirror view - show left eye
-            if (leftEyeImageIndex != -1) {
-                const auto& leftSwapchain = vrManager->GetSwapchain(0);
-                glBindFramebuffer(GL_READ_FRAMEBUFFER, leftSwapchain.fbos[leftEyeImageIndex]);
-                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // Default framebuffer (the window)
-                glBlitFramebuffer(
-                    0, 0, leftSwapchain.width, leftSwapchain.height,
-                    0, 0, display_w, display_h,
-                    GL_COLOR_BUFFER_BIT, GL_LINEAR
-                );
-                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-            } else {
-                // Fallback if no frame was rendered
-                renderer.SetViewport(0, 0, display_w, display_h);
-                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            }
-
-            // Render ImGui on top of the mirrored view
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-        } else {
+        } 
+        // -- END OF MODIFICATION --
+        else {
             // --- 2D RENDER PATH ---
             renderer.UpdateVRPointer({}, {}, false); // Ensure VR pointer is off
             int mouseX, mouseY;

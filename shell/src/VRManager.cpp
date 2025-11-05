@@ -84,6 +84,9 @@ bool VRManager::Initialize(SDL_Window* window) {
     if (!CreateControllerSpaces()) return false;
     if (!AttachActionSets()) return false;
     if (!CreateSwapchains()) return false;
+    // -- START OF MODIFICATION --
+    if (!CreateMultiviewFbo()) return false;
+    // -- END OF MODIFICATION --
 
     initialized = true;
     std::cout << "VRManager: Initialization successful." << std::endl;
@@ -107,6 +110,13 @@ bool VRManager::Initialize(SDL_Window* window) {
 
 void VRManager::Shutdown() {
     if (!initialized) return;
+    // -- START OF MODIFICATION --
+    // Clean up multiview FBO
+    if (multiviewFbo_.fbo != 0) { glDeleteFramebuffers(1, &multiviewFbo_.fbo); }
+    if (multiviewFbo_.colorTexture != 0) { glDeleteTextures(1, &multiviewFbo_.colorTexture); }
+    if (multiviewFbo_.depthTexture != 0) { glDeleteTextures(1, &multiviewFbo_.depthTexture); }
+    multiviewFbo_ = {};
+    // -- END OF MODIFICATION --
 
     // Clean up OpenGL resources first
     for (auto& sc : swapchains) {
@@ -320,7 +330,7 @@ bool VRManager::CreateSwapchains() {
     swapchains.resize(viewCount);
     for (uint32_t i = 0; i < viewCount; ++i) {
         XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-        swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+        swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT; // MODIFIED: Added TRANSFER_DST
         swapchainCreateInfo.format = chosenFormat;
         swapchainCreateInfo.width = viewConfigViews[i].recommendedImageRectWidth;
         swapchainCreateInfo.height = viewConfigViews[i].recommendedImageRectHeight;
@@ -370,6 +380,62 @@ bool VRManager::CreateSwapchains() {
 
     return true;
 }
+
+// -- START OF MODIFICATION --
+bool VRManager::CreateMultiviewFbo() {
+    if (swapchains.empty()) {
+        std::cerr << "VRManager Error: Cannot create multiview FBO before swapchains." << std::endl;
+        return false;
+    }
+    // Assume both eyes have the same dimensions
+    multiviewFbo_.width = swapchains[0].width;
+    multiviewFbo_.height = swapchains[0].height;
+    // 1. Create Color Texture Array
+    glGenTextures(1, &multiviewFbo_.colorTexture);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, multiviewFbo_.colorTexture);
+    // Use the same format as the swapchain (SRGB8_ALPHA8)
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_SRGB8_ALPHA8, multiviewFbo_.width, multiviewFbo_.height, 2);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    // 2. Create Depth Texture Array
+    glGenTextures(1, &multiviewFbo_.depthTexture);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, multiviewFbo_.depthTexture);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_DEPTH_COMPONENT24, multiviewFbo_.width, multiviewFbo_.height, 2);
+    
+    // 3. Create and configure FBO
+    glGenFramebuffers(1, &multiviewFbo_.fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, multiviewFbo_.fbo);
+    // Load multiview extension function if not already loaded
+    if (!glFramebufferTextureMultiviewOVR) {
+#if defined(XR_USE_PLATFORM_WIN32)
+        glFramebufferTextureMultiviewOVR = (PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC)wglGetProcAddress("glFramebufferTextureMultiviewOVR");
+#else
+        glFramebufferTextureMultiviewOVR = (PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC)glGetProcAddress((const GLubyte*)"glFramebufferTextureMultiviewOVR");
+#endif
+        if (!glFramebufferTextureMultiviewOVR) {
+            std::cerr << "VRManager Error: glFramebufferTextureMultiviewOVR is not available. GL_OVR_multiview2 extension might be missing." << std::endl;
+            return false;
+        }
+    }
+    // Attach texture array layers for multiview rendering
+    // baseViewIndex = 0, numViews = 2
+    glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, multiviewFbo_.colorTexture, 0, 0, 2);
+    glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, multiviewFbo_.depthTexture, 0, 0, 2);
+    
+    // 4. Check FBO status
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        std::cerr << "VRManager Error: Multiview FBO is not complete! Status: " << std::hex << status << std::endl;
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return false;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    std::cout << "VRManager: Multiview FBO created successfully (" << multiviewFbo_.width << "x" << multiviewFbo_.height << ")." << std::endl;
+    return true;
+}
+// -- END OF MODIFICATION --
 
 bool VRManager::CreateAppSpace() {
     XrReferenceSpaceCreateInfo spaceCreateInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};

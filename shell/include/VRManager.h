@@ -43,6 +43,17 @@ struct VRSwapchain {
     std::vector<GLuint> depthBuffers;  // One depth buffer per FBO
 };
 
+// -- START OF MODIFICATION --
+// --- NEW: Struct for the intermediate multiview FBO ---
+struct MultiviewFBO {
+    GLuint fbo = 0;
+    GLuint colorTexture = 0; // GL_TEXTURE_2D_ARRAY
+    GLuint depthTexture = 0; // GL_TEXTURE_2D_ARRAY
+    int width = 0;
+    int height = 0;
+};
+// -- END OF MODIFICATION --
+
 // --- NEW: Struct to hold controller visualization state ---
 struct HandVisual {
     bool isValid = false;
@@ -98,6 +109,9 @@ public:
     uint32_t AcquireSwapchainImage(uint32_t viewIndex);
     void ReleaseSwapchainImage(uint32_t viewIndex);
     const VRSwapchain& GetSwapchain(uint32_t viewIndex) const;
+    // -- START OF MODIFICATION --
+    const MultiviewFBO& GetMultiviewFbo() const { return multiviewFbo_; }
+    // -- END OF MODIFICATION --
 
     // --- NEW: Action Polling ---
     void PollActions();
@@ -163,6 +177,10 @@ private:
     std::vector<VRSwapchain> swapchains;
     std::vector<XrView> views; // Raw views from xrLocateViews
     std::vector<VRView> renderViews; // Processed views with matrices
+    // -- START OF MODIFICATION --
+    // --- NEW: Intermediate FBO for multiview rendering ---
+    MultiviewFBO multiviewFbo_;
+    // -- END OF MODIFICATION --
 
     // --- NEW: OpenXR Actions ---
     XrActionSet actionSet = XR_NULL_HANDLE;
@@ -202,6 +220,11 @@ private:
     // --- NEW: Private helper for haptics ---
     void TriggerHaptic(XrPath handPath);
     
+    // -- START OF MODIFICATION --
+    // Pointer to multiview extension function
+    typedef void (*PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC)(GLenum target, GLenum attachment, GLuint texture, GLint level, GLint baseViewIndex, GLsizei numViews);
+    PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC glFramebufferTextureMultiviewOVR = nullptr;
+    // -- END OF MODIFICATION --
 
     // The transform for grab locomotion, initialized to the desired starting view.
     // Place the rig at (2,2,2) and orient its local +Y (forward) to face the origin,
@@ -234,6 +257,9 @@ private:
     bool CreateActions();
     bool CreateControllerSpaces();
     bool AttachActionSets();
+    // -- START OF MODIFICATION --
+    bool CreateMultiviewFbo();
+    // -- END OF MODIFICATION --
 
     // Private per-frame methods
     void PollEvents();
