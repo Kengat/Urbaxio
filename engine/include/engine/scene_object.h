@@ -41,6 +41,10 @@ namespace Urbaxio::Engine {
         const std::string& get_name() const;
         void set_name(const std::string& name);
 
+        // --- NEW: Object Transform ---
+        void setTransform(const glm::mat4& newTransform);
+        const glm::mat4& getTransform() const;
+
         // --- NEW: Exportability flag ---
         void setExportable(bool exportable);
         bool isExportable() const;
@@ -85,6 +89,7 @@ namespace Urbaxio::Engine {
     private:
         uint64_t id_;
         std::string name_;
+        glm::mat4 transform_ = glm::mat4(1.0f);
         Urbaxio::CadKernel::OCCT_ShapeUniquePtr shape_ = nullptr;
         bool isExportable_ = true; // By default, all objects are exportable
         Urbaxio::CadKernel::MeshBuffers mesh_buffers_;

@@ -29,6 +29,7 @@ namespace Urbaxio::Engine {
     SceneObject::SceneObject(SceneObject&& other) noexcept
         : id_(other.id_),
         name_(std::move(other.name_)),
+        transform_(other.transform_),
         isExportable_(other.isExportable_),
         shape_(std::move(other.shape_)),
         mesh_buffers_(std::move(other.mesh_buffers_)),
@@ -46,6 +47,7 @@ namespace Urbaxio::Engine {
         if (this != &other) {
             id_ = other.id_;
             name_ = std::move(other.name_);
+            transform_ = other.transform_;
             isExportable_ = other.isExportable_;
             shape_ = std::move(other.shape_);
             mesh_buffers_ = std::move(other.mesh_buffers_);
@@ -62,6 +64,14 @@ namespace Urbaxio::Engine {
     uint64_t SceneObject::get_id() const { return id_; }
     const std::string& SceneObject::get_name() const { return name_; }
     void SceneObject::set_name(const std::string& name) { name_ = name; }
+
+    // --- NEW: Transform methods ---
+    void SceneObject::setTransform(const glm::mat4& newTransform) {
+        transform_ = newTransform;
+    }
+    const glm::mat4& SceneObject::getTransform() const {
+        return transform_;
+    }
 
     // --- NEW: Exportability ---
     void SceneObject::setExportable(bool exportable) { isExportable_ = exportable; }

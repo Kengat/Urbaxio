@@ -1,6 +1,7 @@
 #include "renderer.h"
 #include "camera.h"
 #include "VRManager.h"
+#include "Frustum.h"
 #include <engine/scene.h>
 #include <engine/scene_object.h>
 #include <engine/line.h>
@@ -568,12 +569,26 @@ namespace Urbaxio {
         if (objectShaderProgram != 0 && scene && scene->getMaterialManager()) {
             
             // --- Step 1: Collect all draw commands ---
+            // --- NEW: Frustum Culling Setup ---
+            Frustum frustum;
+            frustum.ExtractPlanes(projection * view);
+
             std::map<const Engine::Material*, std::vector<RenderCommand>> opaqueQueue;
             Engine::MaterialManager* matManager = scene->getMaterialManager();
             for (const auto* obj : scene->get_all_objects()) {
                 if (!obj || obj->vao == 0 || obj->index_count == 0) continue;
+                
+                // --- FIX: Get the correct model matrix for the object ---
+                auto transformIt = transformOverrides.find(obj->get_id());
+                glm::mat4 modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : obj->getTransform();
+
+                // --- FIX: Use the model matrix for the culling check ---
+                if (obj->isExportable() && obj->aabbValid && !frustum.IsAABBVisible(obj->aabbMin, obj->aabbMax, modelMatrix)) {
+                    continue;
+                }
+
                 if (obj->get_id() == previewObjectId) continue;
-                if (!obj->isExportable() && transformOverrides.find(obj->get_id()) == transformOverrides.end()) continue;
+                if (!obj->isExportable() && transformIt == transformOverrides.end()) continue;
                 for (const auto& group : obj->meshGroups) {
                     if (group.indexCount == 0) continue;
                     
@@ -582,8 +597,7 @@ namespace Urbaxio {
                     cmd.vao = obj->vao;
                     cmd.startIndex = group.startIndex;
                     cmd.indexCount = group.indexCount;
-                    auto transformIt = transformOverrides.find(obj->get_id());
-                    cmd.modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : identityModel;
+                    cmd.modelMatrix = modelMatrix;
                     
                     auto unlitIt = unlitOverrides.find(obj->get_id());
                     cmd.isUnlit = (unlitIt != unlitOverrides.end()) ? unlitIt->second : false;
@@ -985,12 +999,30 @@ namespace Urbaxio {
         
         // --- Render Opaque Objects ---
         if (objectMultiviewShaderProgram != 0 && scene && scene->getMaterialManager()) {
+            // --- NEW: Frustum Culling Setup for VR ---
+            Frustum frustumLeft, frustumRight;
+            frustumLeft.ExtractPlanes(projMatrices[0] * viewMatrices[0]);
+            frustumRight.ExtractPlanes(projMatrices[1] * viewMatrices[1]);
+
             // Collect all draw commands (same logic as RenderFrame)
             std::map<const Engine::Material*, std::vector<RenderCommand>> opaqueQueue;
             Engine::MaterialManager* matManager = scene->getMaterialManager();
             for (const auto* obj : scene->get_all_objects()) {
                 if (!obj || obj->vao == 0 || obj->index_count == 0) continue;
-                if (!obj->isExportable() && transformOverrides.find(obj->get_id()) == transformOverrides.end()) continue;
+
+                // --- FIX: Get the correct model matrix for the object ---
+                auto transformIt = transformOverrides.find(obj->get_id());
+                glm::mat4 modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : obj->getTransform();
+
+                // --- FIX: Frustum Culling Check for VR with world-space AABB ---
+                if (obj->isExportable() && obj->aabbValid) {
+                    if (!frustumLeft.IsAABBVisible(obj->aabbMin, obj->aabbMax, modelMatrix) &&
+                        !frustumRight.IsAABBVisible(obj->aabbMin, obj->aabbMax, modelMatrix)) {
+                        continue;
+                    }
+                }
+
+                if (!obj->isExportable() && transformIt == transformOverrides.end()) continue;
                 for (const auto& group : obj->meshGroups) {
                     if (group.indexCount == 0) continue;
                     
@@ -999,8 +1031,7 @@ namespace Urbaxio {
                     cmd.vao = obj->vao;
                     cmd.startIndex = group.startIndex;
                     cmd.indexCount = group.indexCount;
-                    auto transformIt = transformOverrides.find(obj->get_id());
-                    cmd.modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : identityModel;
+                    cmd.modelMatrix = modelMatrix;
                     
                     auto unlitIt = unlitOverrides.find(obj->get_id());
                     cmd.isUnlit = (unlitIt != unlitOverrides.end()) ? unlitIt->second : false;
