@@ -2,6 +2,7 @@
 #include <utility>
 #include <iostream>
 #include <map>
+#include <list>
 #include <limits> // For std::numeric_limits
 #include <TopoDS.hxx> // <-- ГЛАВНОЕ ИСПРАВЛЕНИЕ: этот инклуд был пропущен
 #include <TopoDS_Shape.hxx>
@@ -91,6 +92,9 @@ namespace Urbaxio::Engine {
         
         meshAdjacency.clear();
         meshGroups.clear();
+        // --- NEW: Clear face cache ---
+        triangleToFaceID_.clear();
+        faces_.clear();
         aabbValid = false;
         if (mesh_buffers_.isEmpty()) {
             return;
@@ -136,6 +140,80 @@ namespace Urbaxio::Engine {
             meshAdjacency[i2].insert(i0);
             meshAdjacency[i2].insert(i1);
         }
+
+        // --- NEW: Pre-calculate face adjacency for fast selection ---
+        if (mesh_buffers_.indices.empty()) {
+            return;
+        }
+        
+        // 1. Build an edge-to-triangle map for adjacency lookups ONCE.
+        std::map<std::pair<unsigned int, unsigned int>, std::vector<size_t>> edgeToTriangles;
+        for (size_t i = 0; i < mesh_buffers_.indices.size(); i += 3) {
+            unsigned int v_indices[3] = { mesh_buffers_.indices[i], mesh_buffers_.indices[i + 1], mesh_buffers_.indices[i + 2] };
+            for (int j = 0; j < 3; ++j) {
+                unsigned int v1_idx = v_indices[j];
+                unsigned int v2_idx = v_indices[(j + 1) % 3];
+                if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
+                edgeToTriangles[{v1_idx, v2_idx}].push_back(i);
+            }
+        }
+
+        // 2. Iterate through all triangles and group them into faces using BFS.
+        const size_t triCount = mesh_buffers_.indices.size() / 3;
+        triangleToFaceID_.assign(triCount, -1);
+        int currentFaceId = 0;
+        
+        for (size_t i = 0; i < mesh_buffers_.indices.size(); i += 3) {
+            size_t triIndex = i / 3;
+            if (triangleToFaceID_[triIndex] != -1) {
+                continue; // Already processed
+            }
+            std::vector<size_t> currentFaceTriangles;
+            std::list<size_t> queue;
+            
+            // Define the reference plane from the starting triangle
+            unsigned int i0 = mesh_buffers_.indices[i];
+            glm::vec3 v0(mesh_buffers_.vertices[i0*3], mesh_buffers_.vertices[i0*3+1], mesh_buffers_.vertices[i0*3+2]);
+            glm::vec3 referenceNormal(mesh_buffers_.normals[i0*3], mesh_buffers_.normals[i0*3+1], mesh_buffers_.normals[i0*3+2]);
+            float referencePlaneD = -glm::dot(referenceNormal, v0);
+
+            // Start BFS
+            queue.push_back(i);
+            triangleToFaceID_[triIndex] = currentFaceId;
+            while (!queue.empty()) {
+                size_t currentTriangleBaseIndex = queue.front();
+                queue.pop_front();
+                currentFaceTriangles.push_back(currentTriangleBaseIndex);
+                unsigned int current_v_indices[3] = { mesh_buffers_.indices[currentTriangleBaseIndex], mesh_buffers_.indices[currentTriangleBaseIndex + 1], mesh_buffers_.indices[currentTriangleBaseIndex + 2] };
+
+                // Check neighbors through all 3 edges
+                for (int j = 0; j < 3; ++j) {
+                    unsigned int v1_idx = current_v_indices[j];
+                    unsigned int v2_idx = current_v_indices[(j + 1) % 3];
+                    if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
+                    const auto& potentialNeighbors = edgeToTriangles.at({v1_idx, v2_idx});
+                    for (size_t neighborBaseIndex : potentialNeighbors) {
+                        size_t neighborTriIndex = neighborBaseIndex / 3;
+                        if (triangleToFaceID_[neighborTriIndex] == -1) {
+                             unsigned int n_i0 = mesh_buffers_.indices[neighborBaseIndex];
+                             glm::vec3 n_v0(mesh_buffers_.vertices[n_i0*3], mesh_buffers_.vertices[n_i0*3+1], mesh_buffers_.vertices[n_i0*3+2]);
+                             glm::vec3 neighborNormal(mesh_buffers_.normals[n_i0*3], mesh_buffers_.normals[n_i0*3+1], mesh_buffers_.normals[n_i0*3+2]);
+                            
+                             const float NORMAL_DOT_TOLERANCE = 0.999f;
+                             const float PLANE_DIST_TOLERANCE = 1e-4f;
+                             if (glm::abs(glm::dot(referenceNormal, neighborNormal)) > NORMAL_DOT_TOLERANCE) {
+                                 if (glm::abs(glm::dot(referenceNormal, n_v0) + referencePlaneD) < PLANE_DIST_TOLERANCE) {
+                                     queue.push_back(neighborBaseIndex);
+                                     triangleToFaceID_[neighborTriIndex] = currentFaceId;
+                                 }
+                             }
+                        }
+                    }
+                }
+            }
+            faces_[currentFaceId] = currentFaceTriangles;
+            currentFaceId++;
+        }
     }
     const Urbaxio::CadKernel::MeshBuffers& SceneObject::get_mesh_buffers() const {
         return mesh_buffers_;
@@ -143,6 +221,33 @@ namespace Urbaxio::Engine {
     bool SceneObject::has_mesh() const {
         return !mesh_buffers_.isEmpty();
     }
+
+    // --- NEW: Face cache accessors ---
+    int SceneObject::getFaceIdForTriangle(size_t triangleBaseIndex) const {
+        size_t triIndex = triangleBaseIndex / 3;
+        if (triIndex < triangleToFaceID_.size()) {
+            return triangleToFaceID_[triIndex];
+        }
+        return -1;
+    }
+
+    const std::vector<size_t>* SceneObject::getFaceTriangles(int faceId) const {
+        auto it = faces_.find(faceId);
+        if (it != faces_.end()) {
+            return &it->second;
+        }
+        return nullptr;
+    }
+
+    // --- START OF MODIFICATION ---
+    const std::vector<int>& SceneObject::getTriangleToFaceIDMap() const {
+        return triangleToFaceID_;
+    }
+
+    const std::map<int, std::vector<size_t>>& SceneObject::getFacesMap() const {
+        return faces_;
+    }
+    // --- END OF MODIFICATION ---
 
     // --- РЕАЛИЗАЦИЯ НОВЫХ МЕТОДОВ ---
     void SceneObject::buildLocationToVertexMap() {

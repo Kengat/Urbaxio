@@ -820,7 +820,8 @@ namespace { // Anonymous namespace for helpers
         toolMenu.RecalculateLayout();
     }
 
-    unsigned int LoadTextureFromFile(const std::string& path) {
+    // --- START OF MODIFICATION ---
+    unsigned int LoadTextureFromFile(const std::string& path, GLint wrapMode = GL_REPEAT) {
         int width, height, channels;
         stbi_set_flip_vertically_on_load(true);
         unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 4);
@@ -835,14 +836,15 @@ namespace { // Anonymous namespace for helpers
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
         glGenerateMipmap(GL_TEXTURE_2D);
 
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
         stbi_image_free(data);
         return textureID;
     }
+    // --- END OF MODIFICATION ---
 
 } // end anonymous namespace
 
@@ -1013,6 +1015,9 @@ int main(int argc, char* argv[]) {
     toolContext.selectedLineIDs = &selectedLineIDs;
     toolContext.hoveredObjId = &hoveredObjId;
     toolContext.hoveredFaceTriangleIndices = &hoveredFaceTriangleIndices;
+    // --- START OF MODIFICATION ---
+    toolContext.isVrMode = vr_mode;
+    // --- END OF MODIFICATION ---
     if (vrManager) {
         toolContext.worldTransform = &vrManager->GetWorldTransform();
         toolContext.rightThumbstickY = &vrManager->rightThumbstickY;
@@ -1055,7 +1060,9 @@ int main(int argc, char* argv[]) {
         if (!std::filesystem::exists(path)) {
             path = "../../../resources/" + name;
         }
-        return LoadTextureFromFile(path);
+        // --- START OF MODIFICATION ---
+        return LoadTextureFromFile(path, GL_CLAMP_TO_EDGE);
+        // --- END OF MODIFICATION ---
     };
     unsigned int dragIconTexture = load_icon("drag_icon.png");
     unsigned int selectIconTexture = load_icon("select_icon.png");

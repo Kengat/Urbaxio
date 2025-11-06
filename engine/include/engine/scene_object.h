@@ -7,7 +7,7 @@
 #include <vector>
 #include <set> // <-- ADDED for boundaryLineIDs
 #include <unordered_map> // <-- ADDED
-// #include <map> // Больше не нужен здесь
+#include <map> // <-- ADD THIS
 #include <cad_kernel/cad_kernel.h>
 #include <cad_kernel/MeshBuffers.h>
 #include <glad/glad.h>
@@ -86,6 +86,15 @@ namespace Urbaxio::Engine {
         void buildLocationToVertexMap(); // Новый метод
         const TopoDS_Vertex* findVertexAtLocation(const glm::vec3& location) const; // Новый метод
 
+        // --- NEW: Face adjacency data for fast selection ---
+        int getFaceIdForTriangle(size_t triangleBaseIndex) const;
+        const std::vector<size_t>* getFaceTriangles(int faceId) const;
+
+        // --- START OF MODIFICATION ---
+        const std::vector<int>& getTriangleToFaceIDMap() const;
+        const std::map<int, std::vector<size_t>>& getFacesMap() const;
+        // --- END OF MODIFICATION ---
+
     private:
         uint64_t id_;
         std::string name_;
@@ -93,6 +102,10 @@ namespace Urbaxio::Engine {
         Urbaxio::CadKernel::OCCT_ShapeUniquePtr shape_ = nullptr;
         bool isExportable_ = true; // By default, all objects are exportable
         Urbaxio::CadKernel::MeshBuffers mesh_buffers_;
+
+        // --- NEW: Face cache data ---
+        std::vector<int> triangleToFaceID_;
+        std::map<int, std::vector<size_t>> faces_;
 
         // Указатель на реализацию, скрывающий std::map
         std::unique_ptr<LocationToVertexMapImpl> locationToVertexMapPimpl_;

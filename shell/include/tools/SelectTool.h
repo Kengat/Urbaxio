@@ -15,15 +15,41 @@
 
 namespace Urbaxio::Tools {
 
+// --- START OF MODIFICATION ---
+// A single struct to hold all necessary data for an object in a selection job.
+struct ObjectSelectionData {
+    CadKernel::MeshBuffers mesh;
+    // Pre-calculated face data
+    std::vector<int> triangleToFaceID;
+    std::map<int, std::vector<size_t>> faces;
+    // Bounding box for broad-phase culling
+    glm::vec3 aabbMin;
+    glm::vec3 aabbMax;
+};
+
 struct SelectionJob {
+    enum JobType { BOX_3D, RECT_2D };
+
+    JobType type;
+    
+    // For BOX_3D
     glm::vec3 box_min;
     glm::vec3 box_max;
+    
+    // For RECT_2D
+    glm::mat4 view;
+    glm::mat4 projection;
+    glm::vec2 rect_min;
+    glm::vec2 rect_max;
+    int screenWidth;
+    int screenHeight;
     bool isWindowSelection;
     bool shift;
-    std::map<uint64_t, CadKernel::MeshBuffers> objectMeshes;
-    std::map<uint64_t, std::set<uint64_t>> objectLineIDs;
+    // Map of all relevant object data for the worker
+    std::map<uint64_t, ObjectSelectionData> objectData;
     std::map<uint64_t, Engine::Line> allLines;
 };
+// --- END OF MODIFICATION ---
 
 struct SelectionResult {
     bool shift;

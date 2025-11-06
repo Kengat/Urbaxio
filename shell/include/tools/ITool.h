@@ -55,6 +55,11 @@ struct ToolContext {
 
     // NEW: VR world transform for scale-aware calculations
     const glm::mat4* worldTransform = nullptr;
+
+    // --- START OF MODIFICATION ---
+    // NEW: Flag to indicate if running in VR
+    bool isVrMode = false;
+    // --- END OF MODIFICATION ---
 };
 
 // Interface for all interactive tools

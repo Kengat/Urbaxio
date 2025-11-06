@@ -23,88 +23,7 @@ namespace { // Anonymous namespace for helpers local to this file
 const float LINE_PICK_THRESHOLD_RADIUS = 0.25f;
 const float CLICK_DRAG_THRESHOLD_SQ = 25.0f; // 5x5 pixels threshold
 
-// Helper to find all coplanar and adjacent triangles, starting from a given one.
-std::vector<size_t> FindCoplanarAdjacentTriangles(
-    const Urbaxio::Engine::SceneObject& object,
-    size_t startTriangleBaseIndex)
-{
-    // Do not attempt to group faces on special marker objects
-    const auto& name = object.get_name();
-    if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") {
-        return { startTriangleBaseIndex };
-    }
-
-    const float NORMAL_DOT_TOLERANCE = 0.999f; // Cosine of angle tolerance
-    const float PLANE_DIST_TOLERANCE = 1e-4f;
-
-    const auto& mesh = object.get_mesh_buffers();
-    if (!object.has_mesh() || startTriangleBaseIndex + 2 >= mesh.indices.size()) {
-        return { startTriangleBaseIndex };
-    }
-
-    // Build an edge-to-triangle map for adjacency lookups
-    std::map<std::pair<unsigned int, unsigned int>, std::vector<size_t>> edgeToTriangles;
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-        unsigned int v_indices[3] = { mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2] };
-        for (int j = 0; j < 3; ++j) {
-            unsigned int v1_idx = v_indices[j];
-            unsigned int v2_idx = v_indices[(j + 1) % 3];
-            if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
-            edgeToTriangles[{v1_idx, v2_idx}].push_back(i);
-        }
-    }
-
-    std::vector<size_t> resultFaceTriangles;
-    std::list<size_t> queue;
-    std::set<size_t> visitedTriangles;
-
-    // Define the reference plane from the starting triangle
-    unsigned int i0 = mesh.indices[startTriangleBaseIndex];
-    glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
-    glm::vec3 referenceNormal(mesh.normals[i0*3], mesh.normals[i0*3+1], mesh.normals[i0*3+2]);
-    float referencePlaneD = -glm::dot(referenceNormal, v0);
-
-    // Start BFS
-    queue.push_back(startTriangleBaseIndex);
-    visitedTriangles.insert(startTriangleBaseIndex);
-
-    while (!queue.empty()) {
-        size_t currentTriangleIndex = queue.front();
-        queue.pop_front();
-        resultFaceTriangles.push_back(currentTriangleIndex);
-
-        unsigned int current_v_indices[3] = { mesh.indices[currentTriangleIndex], mesh.indices[currentTriangleIndex + 1], mesh.indices[currentTriangleIndex + 2] };
-
-        // Check neighbors through all 3 edges
-        for (int j = 0; j < 3; ++j) {
-            unsigned int v1_idx = current_v_indices[j];
-            unsigned int v2_idx = current_v_indices[(j + 1) % 3];
-            if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
-
-            const auto& potentialNeighbors = edgeToTriangles.at({v1_idx, v2_idx});
-            for (size_t neighborIndex : potentialNeighbors) {
-                if (neighborIndex == currentTriangleIndex) continue;
-
-                if (visitedTriangles.find(neighborIndex) == visitedTriangles.end()) {
-                    visitedTriangles.insert(neighborIndex);
-
-                    unsigned int n_i0 = mesh.indices[neighborIndex];
-                    glm::vec3 n_v0(mesh.vertices[n_i0*3], mesh.vertices[n_i0*3+1], mesh.vertices[n_i0*3+2]);
-                    glm::vec3 neighborNormal(mesh.normals[n_i0*3], mesh.normals[n_i0*3+1], mesh.normals[n_i0*3+2]);
-                    
-                    // Check for coplanarity (normal and distance from plane)
-                    if (glm::abs(glm::dot(referenceNormal, neighborNormal)) > NORMAL_DOT_TOLERANCE) {
-                        float dist = glm::abs(glm::dot(referenceNormal, n_v0) + referencePlaneD);
-                        if (dist < PLANE_DIST_TOLERANCE) {
-                            queue.push_back(neighborIndex);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    return resultFaceTriangles;
-}
+// REMOVED FindCoplanarAdjacentTriangles helper function. It's now obsolete.
 
 // Helper to find the closest line segment to a ray
 bool RayLineSegmentIntersection(
@@ -188,6 +107,13 @@ bool AABBLineSegmentIntersect(const glm::vec3& p1, const glm::vec3& p2, const gl
     return true;
 }
 
+// --- NEW: Helper for AABB vs AABB intersection test ---
+bool AABBvsAABB(const glm::vec3& minA, const glm::vec3& maxA, const glm::vec3& minB, const glm::vec3& maxB) {
+    return (minA.x <= maxB.x && maxA.x >= minB.x) &&
+           (minA.y <= maxB.y && maxA.y >= minB.y) &&
+           (minA.z <= maxB.z && maxA.z >= minB.z);
+}
+
 } // end anonymous namespace
 
 namespace Urbaxio::Tools {
@@ -231,8 +157,9 @@ void SelectTool::Deactivate() {
 }
 
 void SelectTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
-    // Check if a valid ray was passed (indicates VR path)
-    if (glm::length2(rayDirection) > 1e-9) {
+    // --- START OF MODIFICATION: Use explicit isVrMode flag ---
+    // Check if we are in VR mode
+    if (context.isVrMode) {
         isVrTriggerDown = true;
         isVrDragging = false;
         vrTriggerDownTimestamp = SDL_GetTicks();
@@ -257,6 +184,7 @@ void SelectTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, 
             context.selectedLineIDs->clear();
         }
     }
+    // --- END OF MODIFICATION ---
 }
 
 void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
@@ -301,7 +229,9 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
                     if (name == "LeftControllerVisual" || name == "RightControllerVisual") {
                         return; // Ignore controller visuals
                     }
-                    std::vector<size_t> newFace = FindCoplanarAdjacentTriangles(*hitObject, vrClickSnapResult.snappedTriangleIndex);
+                    int faceId = hitObject->getFaceIdForTriangle(vrClickSnapResult.snappedTriangleIndex);
+                    const std::vector<size_t>* faceTriangles = (faceId != -1) ? hitObject->getFaceTriangles(faceId) : nullptr;
+                    std::vector<size_t> newFace = faceTriangles ? *faceTriangles : std::vector<size_t>{vrClickSnapResult.snappedTriangleIndex};
                     if (shift) {
                         if (*context.selectedObjId == hitObjectId || *context.selectedObjId == 0) {
                             *context.selectedObjId = hitObjectId;
@@ -323,118 +253,47 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
     
     if (isDragging) {
         // --- It was a DRAG ---
-        bool isCrossingSelection = currentDragCoords.x < dragStartCoords.x;
-        
-        glm::vec2 rectMin = glm::min(dragStartCoords, currentDragCoords);
-        glm::vec2 rectMax = glm::max(dragStartCoords, currentDragCoords);
-
-        auto isPointInRect = [&](const glm::vec2& p) {
-            return p.x >= rectMin.x && p.x <= rectMax.x && p.y >= rectMin.y && p.y <= rectMax.y;
-        };
-
-        // --- Select Lines ---
-        std::set<uint64_t> newlySelectedLines;
-        for (const auto& [id, line] : context.scene->GetAllLines()) {
-            glm::vec2 p1s, p2s;
-            bool p1Visible = SnappingSystem::WorldToScreen(line.start, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, p1s);
-            bool p2Visible = SnappingSystem::WorldToScreen(line.end, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, p2s);
-
-            if (!p1Visible && !p2Visible) continue; 
-
-            if (isCrossingSelection) {
-                glm::vec2 lineMin = glm::min(p1s, p2s);
-                glm::vec2 lineMax = glm::max(p1s, p2s);
-                if (rectMax.x >= lineMin.x && rectMin.x <= lineMax.x && rectMax.y >= lineMin.y && rectMin.y <= lineMax.y) {
-                    newlySelectedLines.insert(id);
-                }
-            } else { // Window selection
-                if (isPointInRect(p1s) && isPointInRect(p2s)) {
-                    newlySelectedLines.insert(id);
-                }
-            }
-        }
-
-        // --- Select Faces ---
-        std::vector<size_t> newlySelectedTriangles;
-        uint64_t newlySelectedObjId = 0;
-
+        // --- NEW: Asynchronous Desktop Selection ---
+        SelectionJob job;
+        job.type = SelectionJob::JobType::RECT_2D;
+        job.isWindowSelection = currentDragCoords.x >= dragStartCoords.x;
+        job.rect_min = glm::min(dragStartCoords, currentDragCoords);
+        job.rect_max = glm::max(dragStartCoords, currentDragCoords);
+        job.shift = shift;
+        // Capture context for the worker
+        job.view = context.camera->GetViewMatrix();
+        job.projection = context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h);
+        job.screenWidth = *context.display_w;
+        job.screenHeight = *context.display_h;
+        // Gather data for the worker
         for (auto* obj : context.scene->get_all_objects()) {
             if (!obj || !obj->has_mesh()) continue;
             const auto& name = obj->get_name();
             if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
             
-            std::set<size_t> processedTrianglesInObject;
-            const auto& mesh = obj->get_mesh_buffers();
-            for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-                if(processedTrianglesInObject.count(i)) continue;
-
-                std::vector<size_t> currentFace = FindCoplanarAdjacentTriangles(*obj, i);
-                for(size_t tri_idx : currentFace) processedTrianglesInObject.insert(tri_idx);
-
-                bool shouldSelectFace = false;
-                if(isCrossingSelection) {
-                    bool anyVertexInRect = false;
-                    for(size_t tri_idx : currentFace) {
-                        unsigned int i0 = mesh.indices[tri_idx], i1 = mesh.indices[tri_idx+1], i2 = mesh.indices[tri_idx+2];
-                        glm::vec3 v_world[] = {
-                            {mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]},
-                            {mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]},
-                            {mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]}
-                        };
-                        glm::vec2 v_screen[3];
-                        bool v_vis[] = {
-                            SnappingSystem::WorldToScreen(v_world[0], context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen[0]),
-                            SnappingSystem::WorldToScreen(v_world[1], context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen[1]),
-                            SnappingSystem::WorldToScreen(v_world[2], context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen[2])
-                        };
-                        if((v_vis[0] && isPointInRect(v_screen[0])) || (v_vis[1] && isPointInRect(v_screen[1])) || (v_vis[2] && isPointInRect(v_screen[2]))) {
-                            anyVertexInRect = true; break;
-                        }
-                    }
-                    if(anyVertexInRect) shouldSelectFace = true;
-                } else { // Window selection
-                    bool allVerticesInRect = true;
-                    for(size_t tri_idx : currentFace) {
-                        unsigned int i0 = mesh.indices[tri_idx], i1 = mesh.indices[tri_idx+1], i2 = mesh.indices[tri_idx+2];
-                        glm::vec3 v_world[] = {
-                            {mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]},
-                            {mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]},
-                            {mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]}
-                        };
-                        glm::vec2 v_screen[3];
-                        bool v_vis[] = {
-                             SnappingSystem::WorldToScreen(v_world[0], context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen[0]),
-                             SnappingSystem::WorldToScreen(v_world[1], context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen[1]),
-                             SnappingSystem::WorldToScreen(v_world[2], context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, v_screen[2])
-                        };
-                        if(!v_vis[0] || !isPointInRect(v_screen[0]) || !v_vis[1] || !isPointInRect(v_screen[1]) || !v_vis[2] || !isPointInRect(v_screen[2])) { 
-                            allVerticesInRect = false; break;
-                        }
-                    }
-                    if(allVerticesInRect) shouldSelectFace = true;
-                }
-
-                if(shouldSelectFace) {
-                    if (newlySelectedObjId == 0) newlySelectedObjId = obj->get_id();
-                    if (obj->get_id() == newlySelectedObjId) {
-                        newlySelectedTriangles.insert(newlySelectedTriangles.end(), currentFace.begin(), currentFace.end());
-                    }
-                }
-            }
-            if (newlySelectedObjId != 0) break;
+            // --- START OF MODIFICATION: Gather all data for worker (2D version) ---
+            job.objectData[obj->get_id()] = {
+                obj->get_mesh_buffers(),
+                obj->getTriangleToFaceIDMap(),
+                obj->getFacesMap(),
+                obj->aabbMin,
+                obj->aabbMax
+            };
+            // --- END OF MODIFICATION ---
         }
-
-        // --- Apply Selection ---
-        if (shift) {
-            for (uint64_t id : newlySelectedLines) { if (context.selectedLineIDs->count(id)) context.selectedLineIDs->erase(id); else context.selectedLineIDs->insert(id); }
-            if (newlySelectedObjId != 0 && (*context.selectedObjId == 0 || *context.selectedObjId == newlySelectedObjId)) {
-                *context.selectedObjId = newlySelectedObjId;
-                std::set<size_t> currentSelection(context.selectedTriangleIndices->begin(), context.selectedTriangleIndices->end());
-                for(size_t tri_idx : newlySelectedTriangles) { if (currentSelection.count(tri_idx)) currentSelection.erase(tri_idx); else currentSelection.insert(tri_idx); }
-                context.selectedTriangleIndices->assign(currentSelection.begin(), currentSelection.end());
-            }
-        } else {
-            *context.selectedLineIDs = newlySelectedLines; *context.selectedObjId = newlySelectedObjId; *context.selectedTriangleIndices = newlySelectedTriangles;
+        job.allLines = context.scene->GetAllLines();
+        // Send job to worker thread
+        {
+            std::unique_lock<std::mutex> lock(jobMutex_);
+            jobQueue_.push(std::move(job));
+        }
+        jobCondition_.notify_one();
+        
+        // Clear current selection immediately for responsiveness
+        if (!shift) {
+            *context.selectedLineIDs = {};
+            *context.selectedObjId = 0;
+            *context.selectedTriangleIndices = {};
         }
 
     } else {
@@ -485,7 +344,17 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
                 } else {
                     Urbaxio::Engine::SceneObject* hitObject = context.scene->get_object_by_id(hitObjectId);
                     if (hitObject) {
-                        std::vector<size_t> newFace = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex);
+                        // --- START OF MODIFICATION: Use pre-calculated faces ---
+                        int faceId = hitObject->getFaceIdForTriangle(hitTriangleBaseIndex);
+                        const std::vector<size_t>* faceTriangles = (faceId != -1) ? hitObject->getFaceTriangles(faceId) : nullptr;
+                        
+                        std::vector<size_t> newFace;
+                        if (faceTriangles) {
+                            newFace = *faceTriangles;
+                        } else {
+                            newFace = { hitTriangleBaseIndex }; // Fallback for objects without face data
+                        }
+                        // --- END OF MODIFICATION ---
                         if (shift) {
                             if (*context.selectedObjId == hitObjectId) {
                                 std::set<size_t> currentSelection(context.selectedTriangleIndices->begin(), context.selectedTriangleIndices->end());
@@ -517,18 +386,28 @@ void SelectTool::FinalizeVrDragSelection(const glm::mat4& centerEyeViewMatrix, b
     bool isWindowSelection = (startVisible && endVisible) ? (endScreen.x > startScreen.x) : true;
     
     SelectionJob job;
+    // --- NEW: Set Job Type ---
+    job.type = SelectionJob::JobType::BOX_3D;
     job.box_min = glm::min(vrDragStartPoint, vrDragEndPoint);
     job.box_max = glm::max(vrDragStartPoint, vrDragEndPoint);
     job.isWindowSelection = isWindowSelection;
     job.shift = shift;
 
+    // --- START OF MODIFICATION: Gather all data for worker ---
     for (auto* obj : context.scene->get_all_objects()) {
         if (!obj || !obj->has_mesh()) continue;
         const auto& name = obj->get_name();
         if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
-        job.objectMeshes[obj->get_id()] = obj->get_mesh_buffers();
-        job.objectLineIDs[obj->get_id()] = obj->boundaryLineIDs;
+        
+        job.objectData[obj->get_id()] = {
+            obj->get_mesh_buffers(),
+            obj->getTriangleToFaceIDMap(),
+            obj->getFacesMap(),
+            obj->aabbMin,
+            obj->aabbMax
+        };
     }
+    // --- END OF MODIFICATION ---
     job.allLines = context.scene->GetAllLines();
 
     {
@@ -702,78 +581,146 @@ void SelectTool::worker_thread_main() {
 
         SelectionResult result;
         result.shift = job.shift;
-        auto is_point_in_box = [&](const glm::vec3& p) {
-            return (p.x >= job.box_min.x && p.x <= job.box_max.x) &&
-                   (p.y >= job.box_min.y && p.y <= job.box_max.y) &&
-                   (p.z >= job.box_min.z && p.z <= job.box_max.z);
-        };
+        if (job.type == SelectionJob::JobType::BOX_3D) {
+            // --- VR 3D BOX SELECTION LOGIC (Unchanged, but benefits from faster face grouping) ---
+            auto is_point_in_box = [&](const glm::vec3& p) {
+                return (p.x >= job.box_min.x && p.x <= job.box_max.x) &&
+                       (p.y >= job.box_min.y && p.y <= job.box_max.y) &&
+                       (p.z >= job.box_min.z && p.z <= job.box_max.z);
+            };
 
-        // Select Lines
-        for (const auto& [id, line] : job.allLines) {
-            bool start_in = is_point_in_box(line.start);
-            bool end_in = is_point_in_box(line.end);
-            if (job.isWindowSelection) {
-                if (start_in && end_in) result.lineIDs.insert(id);
-            } else {
-                if (start_in || end_in || AABBLineSegmentIntersect(line.start, line.end, job.box_min, job.box_max)) {
-                    result.lineIDs.insert(id);
+            // Select Lines
+            for (const auto& [id, line] : job.allLines) {
+                bool start_in = is_point_in_box(line.start);
+                bool end_in = is_point_in_box(line.end);
+                if (job.isWindowSelection) {
+                    if (start_in && end_in) result.lineIDs.insert(id);
+                } else {
+                    if (start_in || end_in || AABBLineSegmentIntersect(line.start, line.end, job.box_min, job.box_max)) {
+                        result.lineIDs.insert(id);
+                    }
                 }
             }
-        }
 
-        // Select Faces
-        for (const auto& [objId, mesh] : job.objectMeshes) {
-            if (result.objectId != 0) break;
-
-            std::set<size_t> processedTriangles;
-            for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-                if (processedTriangles.count(i)) continue;
-
-                Engine::SceneObject tempObj(objId, "");
-                tempObj.set_mesh_buffers(mesh);
-                std::vector<size_t> currentFace = FindCoplanarAdjacentTriangles(tempObj, i);
-                for (size_t tri_idx : currentFace) processedTriangles.insert(tri_idx);
-
-                std::set<unsigned int> uniqueVertIndices;
-                for (size_t tri_idx : currentFace) {
-                    uniqueVertIndices.insert(mesh.indices[tri_idx]);
-                    uniqueVertIndices.insert(mesh.indices[tri_idx+1]);
-                    uniqueVertIndices.insert(mesh.indices[tri_idx+2]);
+            // Select Faces
+            // --- START OF MODIFICATION: Optimized worker logic ---
+            for (const auto& [objId, data] : job.objectData) {
+                if (result.objectId != 0) break; // Only select from one object at a time
+                // Optimization: Broad-phase check on the object's AABB
+                if (!AABBvsAABB(job.box_min, job.box_max, data.aabbMin, data.aabbMax)) {
+                    continue;
                 }
-
-                bool all_in = true, any_in = false;
-                for (unsigned int v_idx : uniqueVertIndices) {
-                    glm::vec3 v_pos(mesh.vertices[v_idx*3], mesh.vertices[v_idx*3+1], mesh.vertices[v_idx*3+2]);
-                    if (is_point_in_box(v_pos)) any_in = true;
-                    else all_in = false;
-                }
-
-                bool shouldSelectFace = false;
-                if (job.isWindowSelection) {
-                    shouldSelectFace = all_in;
-                } else {
-                    if (any_in) {
-                        shouldSelectFace = true;
-                    } else {
-                        // If no vertices are inside, check for edge intersections
-                        for(size_t tri_idx : currentFace) {
-                            unsigned int i0 = mesh.indices[tri_idx], i1 = mesh.indices[tri_idx+1], i2 = mesh.indices[tri_idx+2];
-                            glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
-                            glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
-                            glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
-                            if (AABBLineSegmentIntersect(v0, v1, job.box_min, job.box_max) ||
-                                AABBLineSegmentIntersect(v1, v2, job.box_min, job.box_max) ||
-                                AABBLineSegmentIntersect(v2, v0, job.box_min, job.box_max)) {
-                                shouldSelectFace = true;
-                                break;
+                
+                const auto& mesh = data.mesh;
+                const size_t triCount = mesh.indices.size() / 3;
+                std::vector<char> visited(triCount, 0);
+                for (size_t i = 0; i < mesh.indices.size(); i += 3) {
+                    if (visited[i / 3]) continue;
+                    int faceId = data.triangleToFaceID[i / 3];
+                    if (faceId == -1) { continue; } // Should not happen
+                    
+                    const auto& currentFace = data.faces.at(faceId);
+                    for (size_t tri_idx : currentFace) visited[tri_idx / 3] = 1;
+                    std::set<unsigned int> uniqueVertIndices;
+                    for (size_t tri_idx : currentFace) {
+                        uniqueVertIndices.insert(mesh.indices[tri_idx]);
+                        uniqueVertIndices.insert(mesh.indices[tri_idx+1]);
+                        uniqueVertIndices.insert(mesh.indices[tri_idx+2]);
+                    }
+                    bool all_in = true, any_in = false;
+                    for (unsigned int v_idx : uniqueVertIndices) {
+                        glm::vec3 v_pos(mesh.vertices[v_idx*3], mesh.vertices[v_idx*3+1], mesh.vertices[v_idx*3+2]);
+                        if (is_point_in_box(v_pos)) any_in = true;
+                        else all_in = false;
+                    }
+                    bool shouldSelectFace = false;
+                    if (job.isWindowSelection) {
+                        shouldSelectFace = all_in;
+                    } else { // Crossing selection
+                        if (any_in) {
+                            shouldSelectFace = true;
+                        } else {
+                            // If no vertices are inside, check for edge intersections with the box
+                            for(size_t tri_idx : currentFace) {
+                                if (shouldSelectFace) break;
+                                unsigned int i0 = mesh.indices[tri_idx], i1 = mesh.indices[tri_idx+1], i2 = mesh.indices[tri_idx+2];
+                                glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+                                glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+                                glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+                                if (AABBLineSegmentIntersect(v0, v1, job.box_min, job.box_max) ||
+                                    AABBLineSegmentIntersect(v1, v2, job.box_min, job.box_max) ||
+                                    AABBLineSegmentIntersect(v2, v0, job.box_min, job.box_max)) {
+                                    shouldSelectFace = true;
+                                }
                             }
                         }
                     }
+                    
+                    if (shouldSelectFace) {
+                        if (result.objectId == 0) result.objectId = objId;
+                        result.triangleIndices.insert(result.triangleIndices.end(), currentFace.begin(), currentFace.end());
+                    }
                 }
+            }
+        } else if (job.type == SelectionJob::JobType::RECT_2D) {
+            // --- NEW: 2D RECTANGLE SELECTION LOGIC ---
+            auto is_point_in_rect = [&](const glm::vec2& p) {
+                return p.x >= job.rect_min.x && p.x <= job.rect_max.x && p.y >= job.rect_min.y && p.y <= job.rect_max.y;
+            };
+            
+            // Select Lines
+            for (const auto& [id, line] : job.allLines) {
+                glm::vec2 p1s, p2s;
+                bool p1Visible = Urbaxio::SnappingSystem::WorldToScreen(line.start, job.view, job.projection, job.screenWidth, job.screenHeight, p1s);
+                bool p2Visible = Urbaxio::SnappingSystem::WorldToScreen(line.end, job.view, job.projection, job.screenWidth, job.screenHeight, p2s);
+                if (!p1Visible && !p2Visible) continue;
+                if (job.isWindowSelection) {
+                    if (is_point_in_rect(p1s) && is_point_in_rect(p2s)) result.lineIDs.insert(id);
+                } else {
+                    glm::vec2 lineMin = glm::min(p1s, p2s);
+                    glm::vec2 lineMax = glm::max(p1s, p2s);
+                    if (job.rect_max.x >= lineMin.x && job.rect_min.x <= lineMax.x && job.rect_max.y >= lineMin.y && job.rect_min.y <= lineMax.y) {
+                         result.lineIDs.insert(id);
+                    }
+                }
+            }
+
+            // Select Faces
+            for (const auto& [objId, data] : job.objectData) {
+                if (result.objectId != 0) break;
                 
-                if (shouldSelectFace) {
-                    if (result.objectId == 0) result.objectId = objId;
-                    result.triangleIndices.insert(result.triangleIndices.end(), currentFace.begin(), currentFace.end());
+                // Broad-phase (optional for 2D but can help) could go here
+                
+                const auto& mesh = data.mesh;
+                const size_t triCount = mesh.indices.size() / 3;
+                std::vector<char> visited(triCount, 0);
+                for (size_t i = 0; i < mesh.indices.size(); i += 3) {
+                    if (visited[i / 3]) continue;
+                    
+                    int faceId = data.triangleToFaceID[i / 3];
+                    if (faceId == -1) { continue; }
+                    
+                    const auto& currentFace = data.faces.at(faceId);
+                    for (size_t tri_idx : currentFace) visited[tri_idx / 3] = 1;
+                    std::set<unsigned int> uniqueVertIndices;
+                    for (size_t tri_idx : currentFace) {
+                        uniqueVertIndices.insert(mesh.indices[tri_idx]);
+                        uniqueVertIndices.insert(mesh.indices[tri_idx+1]);
+                        uniqueVertIndices.insert(mesh.indices[tri_idx+2]);
+                    }
+                    bool all_in = true, any_in = false;
+                    for (unsigned int v_idx : uniqueVertIndices) {
+                        glm::vec3 v_world(mesh.vertices[v_idx*3], mesh.vertices[v_idx*3+1], mesh.vertices[v_idx*3+2]);
+                        glm::vec2 v_screen;
+                        if (Urbaxio::SnappingSystem::WorldToScreen(v_world, job.view, job.projection, job.screenWidth, job.screenHeight, v_screen)) {
+                            if (is_point_in_rect(v_screen)) any_in = true; else all_in = false;
+                        } else { all_in = false; }
+                    }
+                    
+                    if (job.isWindowSelection ? all_in : any_in) {
+                        if (result.objectId == 0) result.objectId = objId;
+                        result.triangleIndices.insert(result.triangleIndices.end(), currentFace.begin(), currentFace.end());
+                    }
                 }
             }
         }
