@@ -13,6 +13,9 @@ extern "C" {
 #include <engine/scene_object.h>
 #include <engine/MaterialManager.h>
 #include <engine/geometry/MeshGeometry.h>
+// --- NEW: Include volumetric geometry headers ---
+#include <engine/geometry/VoxelGrid.h>
+#include <engine/geometry/VolumetricGeometry.h>
 #include <cad_kernel/cad_kernel.h>
 #include <tools/ToolManager.h>
 #include <tools/SelectTool.h>
@@ -1354,6 +1357,40 @@ int main(int argc, char* argv[]) {
             ImGui::Text("App avg %.3f ms/f (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::Separator();
             if (ImGui::Button("Create Box Object")) { object_counter++; std::string box_name = "Box_" + std::to_string(object_counter); scene_ptr->create_box_object(box_name, 10.0, 20.0, 5.0); }
+            // --- ADD THIS BUTTON ---
+            ImGui::SameLine();
+            if (ImGui::Button("Create Voxel Sphere")) {
+                object_counter++;
+                std::string name = "VoxelSphere_" + std::to_string(object_counter);
+
+                // 1. Define grid properties
+                glm::uvec3 dims(64, 64, 64);
+                float voxelSize = 0.2f;
+                glm::vec3 origin = glm::vec3(-((float)dims.x * voxelSize) / 2.0f, -((float)dims.y * voxelSize) / 2.0f, 0.0f);
+                auto grid = std::make_unique<Urbaxio::Engine::VoxelGrid>(dims, origin, voxelSize);
+
+                // 2. Procedurally generate a sphere SDF
+                glm::vec3 sphereCenter = origin + glm::vec3(dims) * voxelSize * 0.5f;
+                sphereCenter.z += 1.0f; // Lift it a bit
+                float sphereRadius = 4.0f;
+
+                for (unsigned int z = 0; z < dims.z; ++z) {
+                    for (unsigned int y = 0; y < dims.y; ++y) {
+                        for (unsigned int x = 0; x < dims.x; ++x) {
+                            glm::vec3 voxelPos = origin + glm::vec3(x, y, z) * voxelSize;
+                            float dist = glm::distance(voxelPos, sphereCenter) - sphereRadius;
+                            grid->at(x, y, z) = dist;
+                        }
+                    }
+                }
+                
+                // 3. Create SceneObject with VolumetricGeometry
+                Urbaxio::Engine::SceneObject* new_obj = scene_ptr->create_object(name);
+                if (new_obj) {
+                    auto vol_geom = std::make_unique<Urbaxio::Engine::VolumetricGeometry>(std::move(grid));
+                    new_obj->setGeometry(std::move(vol_geom));
+                }
+            }
             
             ImGui::Separator();
             ImGui::Text("File:");

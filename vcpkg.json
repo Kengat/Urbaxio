@@ -8,6 +8,7 @@
     "glad",
     "imgui",
     "glm",
-    "openxr-loader"
+    "openxr-loader",
+    "libigl"
   ]
 }

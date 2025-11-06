@@ -5,6 +5,7 @@ add_library(engine STATIC
     src/scene_object.cpp
     src/geometry/BRepGeometry.cpp
     src/geometry/MeshGeometry.cpp
+    src/geometry/VolumetricGeometry.cpp
     src/MaterialManager.cpp
     # --- Undo/Redo System ---
     src/commands/CommandManager.cpp
@@ -25,10 +26,18 @@ target_include_directories(engine PUBLIC
 find_package(fmt CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 
+# --- NEW: Find libigl and its dependencies (Eigen) ---
+find_package(libigl CONFIG REQUIRED)
+find_package(Eigen3 CONFIG REQUIRED)
+message(STATUS "Found libigl and Eigen3 via vcpkg.")
+
 # Подключаем библиотеки. PUBLIC означает, что любой, кто использует "engine",
 # также автоматически получит пути к fmt и glm. Это решит проблему с линковкой fmt.
 target_link_libraries(engine PUBLIC
     cad_kernel # Наша обертка над OCCT
     fmt::fmt
     glm::glm
+    # --- NEW: Link against libigl and Eigen3 (FIXED) ---
+    igl::igl_core
+    Eigen3::Eigen
 )
