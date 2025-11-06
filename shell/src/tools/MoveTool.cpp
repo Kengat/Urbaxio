@@ -44,8 +44,8 @@ namespace { // Anonymous namespace for helpers
     {
         const float NORMAL_DOT_TOLERANCE = 0.999f;
         const float PLANE_DIST_TOLERANCE = 1e-4f;
-        const auto& mesh = object.get_mesh_buffers();
-        if (!object.has_mesh() || startTriangleBaseIndex + 2 >= mesh.indices.size()) { return { startTriangleBaseIndex }; }
+        const auto& mesh = object.getMeshBuffers();
+        if (!object.hasMesh() || startTriangleBaseIndex + 2 >= mesh.indices.size()) { return { startTriangleBaseIndex }; }
         std::map<std::pair<unsigned int, unsigned int>, std::vector<size_t>> edgeToTriangles;
         for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
             unsigned int v_indices[3] = { mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2] };
@@ -151,8 +151,8 @@ void MoveTool::determineTargetFromSelection() {
         currentTarget.type = MoveTarget::TargetType::FACE;
         currentTarget.objectId = *context.selectedObjId;
         Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
-        if (obj && obj->has_mesh()) {
-            const auto& mesh = obj->get_mesh_buffers();
+        if (obj && obj->hasMesh()) {
+            const auto& mesh = obj->getMeshBuffers();
             for (size_t triBaseIndex : *context.selectedTriangleIndices) {
                 currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
                 currentTarget.movingVertices.insert(mesh.indices[triBaseIndex + 1]);
@@ -163,8 +163,8 @@ void MoveTool::determineTargetFromSelection() {
         currentTarget.type = MoveTarget::TargetType::OBJECT;
         currentTarget.objectId = *context.selectedObjId;
         Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
-        if (obj && obj->has_mesh()) {
-            size_t vertexCount = obj->get_mesh_buffers().vertices.size() / 3;
+        if (obj && obj->hasMesh()) {
+            size_t vertexCount = obj->getMeshBuffers().vertices.size() / 3;
             currentTarget.movingVertices.clear();
             std::vector<unsigned int> all_indices(vertexCount);
             std::iota(all_indices.begin(), all_indices.end(), 0);
@@ -175,21 +175,15 @@ void MoveTool::determineTargetFromSelection() {
 
 void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
     reset();
-
     const SnapResult& snap = lastSnapResult;
-
-    // --- FINAL LOGIC: Explicitly ignore non-geometric snaps for picking a target ---
     if (!snap.snapped || snap.type == SnapType::AXIS_X || snap.type == SnapType::AXIS_Y || snap.type == SnapType::AXIS_Z || snap.type == SnapType::GRID) {
-        // Fallback to generic face-pick if no valid geometric snap is available.
         glm::vec3 rayOrigin, rayDir;
         Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin, rayDir);
-        uint64_t hitObjectId = 0;
-        size_t hitTriangleBaseIndex = 0;
-        float closestHitDistance = std::numeric_limits<float>::max();
+        uint64_t hitObjectId = 0; size_t hitTriangleBaseIndex = 0; float closestHitDistance = std::numeric_limits<float>::max();
         for (auto* obj : context.scene->get_all_objects()) {
             const auto& name = obj->get_name();
-            if (!obj || !obj->has_mesh() || name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") continue;
-            const auto& mesh = obj->get_mesh_buffers();
+            if (!obj || !obj->hasMesh() || name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") continue;
+            const auto& mesh = obj->getMeshBuffers();
             for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                 unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
                 glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
@@ -197,9 +191,7 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
                 glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
                 float t;
                 if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDistance) {
-                    closestHitDistance = t;
-                    hitObjectId = obj->get_id();
-                    hitTriangleBaseIndex = i;
+                    closestHitDistance = t; hitObjectId = obj->get_id(); hitTriangleBaseIndex = i;
                 }
             }
         }
@@ -209,7 +201,7 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
             currentTarget.objectId = hitObjectId;
             std::vector<size_t> faceTriangles = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex);
             for(size_t triBaseIndex : faceTriangles) {
-                const auto& mesh = hitObject->get_mesh_buffers();
+                const auto& mesh = hitObject->getMeshBuffers();
                 currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
                 currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+1]);
                 currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+2]);
@@ -239,7 +231,7 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
     }
 
     auto findVertexIndex = [&](const Engine::SceneObject& obj, const glm::vec3& pos) -> int {
-        const auto& mesh = obj.get_mesh_buffers();
+        const auto& mesh = obj.getMeshBuffers();
         for (size_t i = 0; i < mesh.vertices.size() / 3; ++i) {
             glm::vec3 v_pos(mesh.vertices[i*3], mesh.vertices[i*3+1], mesh.vertices[i*3+2]);
             if (glm::distance2(v_pos, pos) < 1e-8f) { return static_cast<int>(i); }
@@ -252,7 +244,7 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
         case SnapType::ORIGIN: {
             if (!snappedObject) {
                  for (auto* obj : context.scene->get_all_objects()) {
-                    if (!obj || !obj->has_mesh()) continue;
+                    if (!obj || !obj->hasMesh()) continue;
                     int v_idx = findVertexIndex(*obj, snap.worldPoint);
                     if (v_idx != -1) { snappedObject = obj; break; }
                 }
@@ -290,7 +282,7 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
                 Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin, rayDir);
                 float closestHitDist = std::numeric_limits<float>::max();
                 size_t hitTriangle = -1;
-                const auto& mesh = snappedObject->get_mesh_buffers();
+                const auto& mesh = snappedObject->getMeshBuffers();
                 for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                      unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
                      glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
@@ -323,12 +315,11 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
 void MoveTool::startMove(const SnapResult& snap) {
     if (currentTarget.type == MoveTarget::TargetType::NONE) return;
 
-    Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
-    if (!obj || !obj->has_mesh()) return;
+        Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
+        if (!obj || !obj->hasMesh()) return;
 
-    const auto& originalMesh = obj->get_mesh_buffers();
+    const auto& originalMesh = obj->getMeshBuffers();
 
-    // --- sticky logic ---
     std::map<glm::vec3, std::vector<unsigned int>, Vec3Comparator> positionToIndices;
     for (size_t i = 0; i < originalMesh.vertices.size() / 3; ++i) {
         glm::vec3 pos(originalMesh.vertices[i*3], originalMesh.vertices[i*3+1], originalMesh.vertices[i*3+2]);
@@ -345,7 +336,6 @@ void MoveTool::startMove(const SnapResult& snap) {
         expandedMovingVertices.insert(indices.begin(), indices.end());
     }
     currentTarget.movingVertices = expandedMovingVertices;
-    // --- end sticky logic ---
 
     basePoint = glm::dvec3(snap.worldPoint);
     currentState = MoveToolState::MOVING_PREVIEW;
@@ -353,9 +343,8 @@ void MoveTool::startMove(const SnapResult& snap) {
     lengthInputBuf[0] = '\0';
 
     ghostMeshActive = true;
-    ghostMesh = originalMesh; // Full copy for deformation
+    ghostMesh = originalMesh;
 
-    // Build the ghost wireframe indices
     ghostWireframeIndices.clear();
     std::map<glm::vec3, unsigned int, Vec3Comparator> positionToIndexMap;
     for (size_t i = 0; i < originalMesh.vertices.size() / 3; ++i) {
@@ -484,9 +473,9 @@ void MoveTool::updateGhostMeshDeformation() {
     if (!ghostMeshActive) return;
 
     Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
-    if (!obj || !obj->has_mesh()) return;
+    if (!obj || !obj->hasMesh()) return;
 
-    ghostMesh = obj->get_mesh_buffers();
+    ghostMesh = obj->getMeshBuffers();
 
     for (unsigned int v_idx : currentTarget.movingVertices) {
         if (v_idx * 3 + 2 < ghostMesh.vertices.size()) {
@@ -508,8 +497,8 @@ void MoveTool::finalizeMove() {
             context.scene->getCommandManager()->ExecuteCommand(std::move(command));
         } else {
             Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
-            if(obj && obj->has_mesh()) {
-                const auto& mesh = obj->get_mesh_buffers();
+            if(obj && obj->hasMesh()) {
+                const auto& mesh = obj->getMeshBuffers();
                 std::vector<glm::vec3> initialPositions;
                 initialPositions.reserve(currentTarget.movingVertices.size());
                 for (unsigned int v_idx : currentTarget.movingVertices) {

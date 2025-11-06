@@ -776,7 +776,7 @@ namespace Urbaxio {
                 highlightCounts.clear();
                 highlightIndices.clear();
                 for (size_t baseIndex : indices) {
-                    if (baseIndex + 2 < obj->get_mesh_buffers().indices.size()) {
+                    if (baseIndex + 2 < obj->getMeshBuffers().indices.size()) {
                         highlightCounts.push_back(3);
                         highlightIndices.push_back((const void*)(baseIndex * sizeof(unsigned int)));
                     }
@@ -1502,11 +1502,11 @@ namespace Urbaxio {
         // 2. Gather data and create commands
         for (const auto* obj : scene->get_all_objects()) {
             // Only compile static, renderable objects
-            if (!obj || !obj->has_mesh() || !obj->isExportable() || obj->get_mesh_buffers().isEmpty()) {
+            if (!obj || !obj->hasMesh() || !obj->isExportable() || obj->getMeshBuffers().isEmpty()) {
                 continue;
             }
             
-            const auto& mesh = obj->get_mesh_buffers();
+            const auto& mesh = obj->getMeshBuffers();
             
             // --- FIX: This is the correct logic for handling multiple materials per object ---
             
@@ -1704,8 +1704,8 @@ namespace Urbaxio {
             previewOutlineVertexCount = 0;
             return;
         }
-        const auto& mesh = object.get_mesh_buffers();
-        if (!object.has_mesh()) {
+        const auto& mesh = object.getMeshBuffers();
+        if (!object.hasMesh()) {
             previewVertexCount = 0;
             previewOutlineVertexCount = 0;
             return;

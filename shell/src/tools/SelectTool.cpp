@@ -188,29 +188,19 @@ void SelectTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, 
 }
 
 void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
-    // NOTE: This function no longer handles VR drag finalization. It's done in FinalizeVrDragSelection.
-    // It ONLY handles VR quick clicks and all desktop interactions.
-    
     if (isVrDragging) {
-        // This case is now handled by FinalizeVrDragSelection, so do nothing here.
-        // We reset the state there.
         return;
     }
 
     if (isVrTriggerDown) {
-        // This was a QUICK VR CLICK because the drag state was never initiated.
         isVrTriggerDown = false;
-
-        // Perform single selection logic using the snap result we saved at MouseDown
         if (!shift) {
             *context.selectedObjId = 0;
             context.selectedTriangleIndices->clear();
             context.selectedLineIDs->clear();
         }
-
         if (vrClickSnapResult.snapped) {
             SnapType type = vrClickSnapResult.type;
-
             if (type == SnapType::ON_EDGE || type == SnapType::ENDPOINT || type == SnapType::MIDPOINT) {
                 uint64_t lineId = vrClickSnapResult.snappedEntityId;
                 if (lineId != 0) {
@@ -227,7 +217,7 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
                 if (hitObject) {
                     const auto& name = hitObject->get_name();
                     if (name == "LeftControllerVisual" || name == "RightControllerVisual") {
-                        return; // Ignore controller visuals
+                        return;
                     }
                     int faceId = hitObject->getFaceIdForTriangle(vrClickSnapResult.snappedTriangleIndex);
                     const std::vector<size_t>* faceTriangles = (faceId != -1) ? hitObject->getFaceTriangles(faceId) : nullptr;
@@ -248,48 +238,38 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
                 }
             }
         }
-        return; // End of VR click logic
+        return;
     }
     
     if (isDragging) {
-        // --- It was a DRAG ---
-        // --- NEW: Asynchronous Desktop Selection ---
         SelectionJob job;
         job.type = SelectionJob::JobType::RECT_2D;
         job.isWindowSelection = currentDragCoords.x >= dragStartCoords.x;
         job.rect_min = glm::min(dragStartCoords, currentDragCoords);
         job.rect_max = glm::max(dragStartCoords, currentDragCoords);
         job.shift = shift;
-        // Capture context for the worker
         job.view = context.camera->GetViewMatrix();
         job.projection = context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h);
         job.screenWidth = *context.display_w;
         job.screenHeight = *context.display_h;
-        // Gather data for the worker
         for (auto* obj : context.scene->get_all_objects()) {
-            if (!obj || !obj->has_mesh()) continue;
+            if (!obj || !obj->hasMesh()) continue;
             const auto& name = obj->get_name();
             if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
-            
-            // --- START OF MODIFICATION: Gather all data for worker (2D version) ---
             job.objectData[obj->get_id()] = {
-                obj->get_mesh_buffers(),
+                obj->getMeshBuffers(),
                 obj->getTriangleToFaceIDMap(),
                 obj->getFacesMap(),
                 obj->aabbMin,
                 obj->aabbMax
             };
-            // --- END OF MODIFICATION ---
         }
         job.allLines = context.scene->GetAllLines();
-        // Send job to worker thread
         {
             std::unique_lock<std::mutex> lock(jobMutex_);
             jobQueue_.push(std::move(job));
         }
         jobCondition_.notify_one();
-        
-        // Clear current selection immediately for responsiveness
         if (!shift) {
             *context.selectedLineIDs = {};
             *context.selectedObjId = 0;
@@ -297,7 +277,6 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
         }
 
     } else {
-        // --- It was a CLICK ---
         if (!context.scene || !context.camera || !context.display_w || !context.display_h) return;
 
         glm::vec3 rayOrigin, rayDir;
@@ -323,8 +302,8 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
         } else {
              for (Urbaxio::Engine::SceneObject* obj_ptr : context.scene->get_all_objects()) {
                 const auto& name = obj_ptr->get_name();
-                if (obj_ptr && obj_ptr->has_mesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m" && name != "LeftControllerVisual" && name != "RightControllerVisual") {
-                    const auto& mesh = obj_ptr->get_mesh_buffers();
+                if (obj_ptr && obj_ptr->hasMesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m" && name != "LeftControllerVisual" && name != "RightControllerVisual") {
+                    const auto& mesh = obj_ptr->getMeshBuffers();
                     for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                         glm::vec3 v0(mesh.vertices[mesh.indices[i] * 3], mesh.vertices[mesh.indices[i] * 3 + 1], mesh.vertices[mesh.indices[i] * 3 + 2]);
                         glm::vec3 v1(mesh.vertices[mesh.indices[i + 1] * 3], mesh.vertices[mesh.indices[i + 1] * 3 + 1], mesh.vertices[mesh.indices[i + 1] * 3 + 2]);
@@ -344,17 +323,9 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
                 } else {
                     Urbaxio::Engine::SceneObject* hitObject = context.scene->get_object_by_id(hitObjectId);
                     if (hitObject) {
-                        // --- START OF MODIFICATION: Use pre-calculated faces ---
                         int faceId = hitObject->getFaceIdForTriangle(hitTriangleBaseIndex);
                         const std::vector<size_t>* faceTriangles = (faceId != -1) ? hitObject->getFaceTriangles(faceId) : nullptr;
-                        
-                        std::vector<size_t> newFace;
-                        if (faceTriangles) {
-                            newFace = *faceTriangles;
-                        } else {
-                            newFace = { hitTriangleBaseIndex }; // Fallback for objects without face data
-                        }
-                        // --- END OF MODIFICATION ---
+                        std::vector<size_t> newFace = faceTriangles ? *faceTriangles : std::vector<size_t>{ hitTriangleBaseIndex };
                         if (shift) {
                             if (*context.selectedObjId == hitObjectId) {
                                 std::set<size_t> currentSelection(context.selectedTriangleIndices->begin(), context.selectedTriangleIndices->end());
@@ -377,37 +348,32 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
 void SelectTool::FinalizeVrDragSelection(const glm::mat4& centerEyeViewMatrix, bool shift) {
     if (!isVrDragging) return;
 
-    // --- VR 3D Box Selection Logic using the CORRECT view matrix ---
     glm::vec2 startScreen, endScreen;
     bool startVisible = SnappingSystem::WorldToScreen(vrDragStartPoint, centerEyeViewMatrix, context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, startScreen);
     bool endVisible = SnappingSystem::WorldToScreen(vrDragEndPoint, centerEyeViewMatrix, context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), *context.display_w, *context.display_h, endScreen);
     
-    // The direction check is now reliable
     bool isWindowSelection = (startVisible && endVisible) ? (endScreen.x > startScreen.x) : true;
     
     SelectionJob job;
-    // --- NEW: Set Job Type ---
     job.type = SelectionJob::JobType::BOX_3D;
     job.box_min = glm::min(vrDragStartPoint, vrDragEndPoint);
     job.box_max = glm::max(vrDragStartPoint, vrDragEndPoint);
     job.isWindowSelection = isWindowSelection;
     job.shift = shift;
 
-    // --- START OF MODIFICATION: Gather all data for worker ---
     for (auto* obj : context.scene->get_all_objects()) {
-        if (!obj || !obj->has_mesh()) continue;
+        if (!obj || !obj->hasMesh()) continue;
         const auto& name = obj->get_name();
         if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
         
         job.objectData[obj->get_id()] = {
-            obj->get_mesh_buffers(),
+            obj->getMeshBuffers(),
             obj->getTriangleToFaceIDMap(),
             obj->getFacesMap(),
             obj->aabbMin,
             obj->aabbMax
         };
     }
-    // --- END OF MODIFICATION ---
     job.allLines = context.scene->GetAllLines();
 
     {
@@ -416,11 +382,7 @@ void SelectTool::FinalizeVrDragSelection(const glm::mat4& centerEyeViewMatrix, b
     }
     jobCondition_.notify_one();
     
-    // --- Apply Selection ---
-    if (shift) {
-        // This is now handled asynchronously
-    } else {
-        // This is now handled asynchronously, but we can clear the current selection immediately for responsiveness
+    if (!shift) {
         *context.selectedLineIDs = {};
         *context.selectedObjId = 0;
         *context.selectedTriangleIndices = {};
@@ -582,14 +544,11 @@ void SelectTool::worker_thread_main() {
         SelectionResult result;
         result.shift = job.shift;
         if (job.type == SelectionJob::JobType::BOX_3D) {
-            // --- VR 3D BOX SELECTION LOGIC (Unchanged, but benefits from faster face grouping) ---
             auto is_point_in_box = [&](const glm::vec3& p) {
                 return (p.x >= job.box_min.x && p.x <= job.box_max.x) &&
                        (p.y >= job.box_min.y && p.y <= job.box_max.y) &&
                        (p.z >= job.box_min.z && p.z <= job.box_max.z);
             };
-
-            // Select Lines
             for (const auto& [id, line] : job.allLines) {
                 bool start_in = is_point_in_box(line.start);
                 bool end_in = is_point_in_box(line.end);
@@ -601,24 +560,18 @@ void SelectTool::worker_thread_main() {
                     }
                 }
             }
-
-            // Select Faces
-            // --- START OF MODIFICATION: Optimized worker logic ---
             for (const auto& [objId, data] : job.objectData) {
-                if (result.objectId != 0) break; // Only select from one object at a time
-                // Optimization: Broad-phase check on the object's AABB
+                if (result.objectId != 0) break;
                 if (!AABBvsAABB(job.box_min, job.box_max, data.aabbMin, data.aabbMax)) {
                     continue;
                 }
-                
                 const auto& mesh = data.mesh;
                 const size_t triCount = mesh.indices.size() / 3;
                 std::vector<char> visited(triCount, 0);
                 for (size_t i = 0; i < mesh.indices.size(); i += 3) {
                     if (visited[i / 3]) continue;
-                    int faceId = data.triangleToFaceID[i / 3];
-                    if (faceId == -1) { continue; } // Should not happen
-                    
+                    int faceId = (i/3 < data.triangleToFaceID.size()) ? data.triangleToFaceID[i / 3] : -1;
+                    if (faceId == -1) { continue; }
                     const auto& currentFace = data.faces.at(faceId);
                     for (size_t tri_idx : currentFace) visited[tri_idx / 3] = 1;
                     std::set<unsigned int> uniqueVertIndices;
@@ -636,11 +589,10 @@ void SelectTool::worker_thread_main() {
                     bool shouldSelectFace = false;
                     if (job.isWindowSelection) {
                         shouldSelectFace = all_in;
-                    } else { // Crossing selection
+                    } else {
                         if (any_in) {
                             shouldSelectFace = true;
                         } else {
-                            // If no vertices are inside, check for edge intersections with the box
                             for(size_t tri_idx : currentFace) {
                                 if (shouldSelectFace) break;
                                 unsigned int i0 = mesh.indices[tri_idx], i1 = mesh.indices[tri_idx+1], i2 = mesh.indices[tri_idx+2];
@@ -655,7 +607,6 @@ void SelectTool::worker_thread_main() {
                             }
                         }
                     }
-                    
                     if (shouldSelectFace) {
                         if (result.objectId == 0) result.objectId = objId;
                         result.triangleIndices.insert(result.triangleIndices.end(), currentFace.begin(), currentFace.end());
@@ -663,12 +614,9 @@ void SelectTool::worker_thread_main() {
                 }
             }
         } else if (job.type == SelectionJob::JobType::RECT_2D) {
-            // --- NEW: 2D RECTANGLE SELECTION LOGIC ---
             auto is_point_in_rect = [&](const glm::vec2& p) {
                 return p.x >= job.rect_min.x && p.x <= job.rect_max.x && p.y >= job.rect_min.y && p.y <= job.rect_max.y;
             };
-            
-            // Select Lines
             for (const auto& [id, line] : job.allLines) {
                 glm::vec2 p1s, p2s;
                 bool p1Visible = Urbaxio::SnappingSystem::WorldToScreen(line.start, job.view, job.projection, job.screenWidth, job.screenHeight, p1s);
@@ -684,22 +632,15 @@ void SelectTool::worker_thread_main() {
                     }
                 }
             }
-
-            // Select Faces
             for (const auto& [objId, data] : job.objectData) {
                 if (result.objectId != 0) break;
-                
-                // Broad-phase (optional for 2D but can help) could go here
-                
                 const auto& mesh = data.mesh;
                 const size_t triCount = mesh.indices.size() / 3;
                 std::vector<char> visited(triCount, 0);
                 for (size_t i = 0; i < mesh.indices.size(); i += 3) {
                     if (visited[i / 3]) continue;
-                    
-                    int faceId = data.triangleToFaceID[i / 3];
+                    int faceId = (i/3 < data.triangleToFaceID.size()) ? data.triangleToFaceID[i / 3] : -1;
                     if (faceId == -1) { continue; }
-                    
                     const auto& currentFace = data.faces.at(faceId);
                     for (size_t tri_idx : currentFace) visited[tri_idx / 3] = 1;
                     std::set<unsigned int> uniqueVertIndices;
@@ -716,7 +657,6 @@ void SelectTool::worker_thread_main() {
                             if (is_point_in_rect(v_screen)) any_in = true; else all_in = false;
                         } else { all_in = false; }
                     }
-                    
                     if (job.isWindowSelection ? all_in : any_in) {
                         if (result.objectId == 0) result.objectId = objId;
                         result.triangleIndices.insert(result.triangleIndices.end(), currentFace.begin(), currentFace.end());

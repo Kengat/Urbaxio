@@ -1,4 +1,6 @@
 #include "engine/scene_object.h"
+#include "engine/geometry/BRepGeometry.h"
+#include "engine/geometry/MeshGeometry.h"
 #include <utility>
 #include <iostream>
 #include <map>
@@ -21,43 +23,52 @@ namespace Urbaxio::Engine {
     };
 
     SceneObject::SceneObject(uint64_t id, std::string name)
-        : id_(id), name_(std::move(name)), shape_(nullptr), locationToVertexMapPimpl_(std::make_unique<LocationToVertexMapImpl>()) {
+        : id_(id), name_(std::move(name)), locationToVertexMapPimpl_(std::make_unique<LocationToVertexMapImpl>()) {
     }
 
     SceneObject::~SceneObject() = default;
 
-    // Конструктор перемещения
+    // Move constructor
     SceneObject::SceneObject(SceneObject&& other) noexcept
         : id_(other.id_),
         name_(std::move(other.name_)),
         transform_(other.transform_),
         isExportable_(other.isExportable_),
-        shape_(std::move(other.shape_)),
-        mesh_buffers_(std::move(other.mesh_buffers_)),
+        geometry_(std::move(other.geometry_)),
+        mesh_buffers_cache_(std::move(other.mesh_buffers_cache_)),
+        is_mesh_cache_dirty_(other.is_mesh_cache_dirty_),
         meshGroups(std::move(other.meshGroups)),
         aabbMin(other.aabbMin), aabbMax(other.aabbMax), aabbValid(other.aabbValid),
-        boundaryLineIDs(std::move(other.boundaryLineIDs)), // <-- ДОБАВИТЬ
+        boundaryLineIDs(std::move(other.boundaryLineIDs)),
         meshAdjacency(std::move(other.meshAdjacency)),
-        locationToVertexMapPimpl_(std::move(other.locationToVertexMapPimpl_)) // <-- ИЗМЕНИТЬ
+        triangleToFaceID_(std::move(other.triangleToFaceID_)),
+        faces_(std::move(other.faces_)),
+        locationToVertexMapPimpl_(std::move(other.locationToVertexMapPimpl_))
     {
         other.id_ = 0;
+        other.is_mesh_cache_dirty_ = true;
     }
 
-    // Оператор присваивания перемещением
+    // Move assignment operator
     SceneObject& SceneObject::operator=(SceneObject&& other) noexcept {
         if (this != &other) {
             id_ = other.id_;
             name_ = std::move(other.name_);
             transform_ = other.transform_;
             isExportable_ = other.isExportable_;
-            shape_ = std::move(other.shape_);
-            mesh_buffers_ = std::move(other.mesh_buffers_);
+            geometry_ = std::move(other.geometry_);
+            mesh_buffers_cache_ = std::move(other.mesh_buffers_cache_);
+            is_mesh_cache_dirty_ = other.is_mesh_cache_dirty_;
             meshGroups = std::move(other.meshGroups);
             aabbMin = other.aabbMin; aabbMax = other.aabbMax; aabbValid = other.aabbValid;
-            boundaryLineIDs = std::move(other.boundaryLineIDs); // <-- ДОБАВИТЬ
+            boundaryLineIDs = std::move(other.boundaryLineIDs);
             meshAdjacency = std::move(other.meshAdjacency);
-            locationToVertexMapPimpl_ = std::move(other.locationToVertexMapPimpl_); // <-- ИЗМЕНИТЬ
+            triangleToFaceID_ = std::move(other.triangleToFaceID_);
+            faces_ = std::move(other.faces_);
+            locationToVertexMapPimpl_ = std::move(other.locationToVertexMapPimpl_);
+            
             other.id_ = 0;
+            other.is_mesh_cache_dirty_ = true;
         }
         return *this;
     }
@@ -78,148 +89,170 @@ namespace Urbaxio::Engine {
     void SceneObject::setExportable(bool exportable) { isExportable_ = exportable; }
     bool SceneObject::isExportable() const { return isExportable_; }
 
-    // --- B-Rep Shape ---
-    void SceneObject::set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr shape) {
-        shape_ = std::move(shape);
-        buildLocationToVertexMap(); // Обновляем карту при смене формы
-    }
-    const TopoDS_Shape* SceneObject::get_shape() const { return shape_.get(); }
-    bool SceneObject::has_shape() const { return shape_ != nullptr; }
+    // --- Geometry & Mesh ---
+    void SceneObject::setGeometry(std::unique_ptr<IGeometry> geometry) {
+        geometry_ = std::move(geometry);
+        invalidateMeshCache();
 
-    // --- Visual Mesh ---
-    void SceneObject::set_mesh_buffers(Urbaxio::CadKernel::MeshBuffers buffers) {
-        mesh_buffers_ = std::move(buffers);
-        
-        meshAdjacency.clear();
-        meshGroups.clear();
-        // --- NEW: Clear face cache ---
+        buildLocationToVertexMap(); // Rebuild map, it might be a B-Rep shape
+    }
+
+
+
+    IGeometry* SceneObject::getGeometry() const {
+        return geometry_.get();
+    }
+
+
+
+    bool SceneObject::hasGeometry() const {
+        return geometry_ != nullptr;
+    }
+
+
+
+    void SceneObject::invalidateMeshCache() {
+        is_mesh_cache_dirty_ = true;
+        // Also clear dependent data
+        mesh_buffers_cache_.clear();
+        meshGroups.clear(); // This IS part of the cache and MUST be cleared.
         triangleToFaceID_.clear();
         faces_.clear();
         aabbValid = false;
-        if (mesh_buffers_.isEmpty()) {
-            return;
-        }
-        
-        // --- Calculate AABB ---
-        if (!mesh_buffers_.vertices.empty()) {
-            aabbMin = glm::vec3(std::numeric_limits<float>::max());
-            aabbMax = glm::vec3(std::numeric_limits<float>::lowest());
-            for (size_t i = 0; i < mesh_buffers_.vertices.size(); i += 3) {
-                aabbMin.x = std::min(aabbMin.x, mesh_buffers_.vertices[i]);
-                aabbMin.y = std::min(aabbMin.y, mesh_buffers_.vertices[i+1]);
-                aabbMin.z = std::min(aabbMin.z, mesh_buffers_.vertices[i+2]);
-                aabbMax.x = std::max(aabbMax.x, mesh_buffers_.vertices[i]);
-                aabbMax.y = std::max(aabbMax.y, mesh_buffers_.vertices[i+1]);
-                aabbMax.z = std::max(aabbMax.z, mesh_buffers_.vertices[i+2]);
+        vao = 0; // Mark for GPU re-upload
+    }
+
+
+
+    // This is now the central point for getting renderable mesh data.
+    // It uses a cache for performance.
+    const CadKernel::MeshBuffers& SceneObject::getMeshBuffers() const {
+        if (is_mesh_cache_dirty_) {
+            // Recalculate mesh from the source geometry
+            if (geometry_) {
+                mesh_buffers_cache_ = geometry_->getRenderMesh();
+            } else {
+                mesh_buffers_cache_.clear();
             }
-            aabbValid = true;
-        }
-        
-        // --- REVERTED/FIXED: This function MUST create a default material group ---
-        // Create a single default group that covers the entire mesh.
-        // This ensures the object is always renderable.
-        // Importers (like OBJ) can overwrite this with more specific groups.
-        MeshGroup defaultGroup;
-        defaultGroup.materialName = "Default";
-        defaultGroup.startIndex = 0;
-        defaultGroup.indexCount = mesh_buffers_.indices.size();
-        if (defaultGroup.indexCount > 0) {
-            meshGroups.push_back(defaultGroup);
-        }
-        for (size_t i = 0; i + 2 < mesh_buffers_.indices.size(); i += 3) {
-            unsigned int i0 = mesh_buffers_.indices[i];
-            unsigned int i1 = mesh_buffers_.indices[i+1];
-            unsigned int i2 = mesh_buffers_.indices[i+2];
-            // Add edges to the map. (i0, i1), (i1, i2), (i2, i0)
-            meshAdjacency[i0].insert(i1);
-            meshAdjacency[i0].insert(i2);
-            
-            meshAdjacency[i1].insert(i0);
-            meshAdjacency[i1].insert(i2);
-            
-            meshAdjacency[i2].insert(i0);
-            meshAdjacency[i2].insert(i1);
-        }
 
-        // --- NEW: Pre-calculate face adjacency for fast selection ---
-        if (mesh_buffers_.indices.empty()) {
-            return;
-        }
-        
-        // 1. Build an edge-to-triangle map for adjacency lookups ONCE.
-        std::map<std::pair<unsigned int, unsigned int>, std::vector<size_t>> edgeToTriangles;
-        for (size_t i = 0; i < mesh_buffers_.indices.size(); i += 3) {
-            unsigned int v_indices[3] = { mesh_buffers_.indices[i], mesh_buffers_.indices[i + 1], mesh_buffers_.indices[i + 2] };
-            for (int j = 0; j < 3; ++j) {
-                unsigned int v1_idx = v_indices[j];
-                unsigned int v2_idx = v_indices[(j + 1) % 3];
-                if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
-                edgeToTriangles[{v1_idx, v2_idx}].push_back(i);
+
+
+            // --- Post-processing after getting a new mesh ---
+            meshAdjacency.clear();
+            // --- MODIFICATION START: Preserve existing mesh groups ---
+            bool hasExternalMeshGroups = !meshGroups.empty();
+            if (!hasExternalMeshGroups) {
+                meshGroups.clear();
             }
-        }
+            // --- MODIFICATION END ---
+            triangleToFaceID_.clear();
+            faces_.clear();
+            aabbValid = false;
 
-        // 2. Iterate through all triangles and group them into faces using BFS.
-        const size_t triCount = mesh_buffers_.indices.size() / 3;
-        triangleToFaceID_.assign(triCount, -1);
-        int currentFaceId = 0;
-        
-        for (size_t i = 0; i < mesh_buffers_.indices.size(); i += 3) {
-            size_t triIndex = i / 3;
-            if (triangleToFaceID_[triIndex] != -1) {
-                continue; // Already processed
-            }
-            std::vector<size_t> currentFaceTriangles;
-            std::list<size_t> queue;
-            
-            // Define the reference plane from the starting triangle
-            unsigned int i0 = mesh_buffers_.indices[i];
-            glm::vec3 v0(mesh_buffers_.vertices[i0*3], mesh_buffers_.vertices[i0*3+1], mesh_buffers_.vertices[i0*3+2]);
-            glm::vec3 referenceNormal(mesh_buffers_.normals[i0*3], mesh_buffers_.normals[i0*3+1], mesh_buffers_.normals[i0*3+2]);
-            float referencePlaneD = -glm::dot(referenceNormal, v0);
 
-            // Start BFS
-            queue.push_back(i);
-            triangleToFaceID_[triIndex] = currentFaceId;
-            while (!queue.empty()) {
-                size_t currentTriangleBaseIndex = queue.front();
-                queue.pop_front();
-                currentFaceTriangles.push_back(currentTriangleBaseIndex);
-                unsigned int current_v_indices[3] = { mesh_buffers_.indices[currentTriangleBaseIndex], mesh_buffers_.indices[currentTriangleBaseIndex + 1], mesh_buffers_.indices[currentTriangleBaseIndex + 2] };
 
-                // Check neighbors through all 3 edges
-                for (int j = 0; j < 3; ++j) {
-                    unsigned int v1_idx = current_v_indices[j];
-                    unsigned int v2_idx = current_v_indices[(j + 1) % 3];
-                    if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
-                    const auto& potentialNeighbors = edgeToTriangles.at({v1_idx, v2_idx});
-                    for (size_t neighborBaseIndex : potentialNeighbors) {
-                        size_t neighborTriIndex = neighborBaseIndex / 3;
-                        if (triangleToFaceID_[neighborTriIndex] == -1) {
-                             unsigned int n_i0 = mesh_buffers_.indices[neighborBaseIndex];
-                             glm::vec3 n_v0(mesh_buffers_.vertices[n_i0*3], mesh_buffers_.vertices[n_i0*3+1], mesh_buffers_.vertices[n_i0*3+2]);
-                             glm::vec3 neighborNormal(mesh_buffers_.normals[n_i0*3], mesh_buffers_.normals[n_i0*3+1], mesh_buffers_.normals[n_i0*3+2]);
-                            
-                             const float NORMAL_DOT_TOLERANCE = 0.999f;
-                             const float PLANE_DIST_TOLERANCE = 1e-4f;
-                             if (glm::abs(glm::dot(referenceNormal, neighborNormal)) > NORMAL_DOT_TOLERANCE) {
-                                 if (glm::abs(glm::dot(referenceNormal, n_v0) + referencePlaneD) < PLANE_DIST_TOLERANCE) {
-                                     queue.push_back(neighborBaseIndex);
-                                     triangleToFaceID_[neighborTriIndex] = currentFaceId;
-                                 }
-                             }
-                        }
+            if (!mesh_buffers_cache_.isEmpty()) {
+                // Calculate AABB, Mesh Groups, Adjacency, and Face Cache
+                // (This is the logic moved from the old set_mesh_buffers)
+                aabbMin = glm::vec3(std::numeric_limits<float>::max());
+                aabbMax = glm::vec3(std::numeric_limits<float>::lowest());
+                for (size_t i = 0; i < mesh_buffers_cache_.vertices.size(); i += 3) {
+                    aabbMin.x = std::min(aabbMin.x, mesh_buffers_cache_.vertices[i]);
+                    aabbMin.y = std::min(aabbMin.y, mesh_buffers_cache_.vertices[i+1]);
+                    aabbMin.z = std::min(aabbMin.z, mesh_buffers_cache_.vertices[i+2]);
+                    aabbMax.x = std::max(aabbMax.x, mesh_buffers_cache_.vertices[i]);
+                    aabbMax.y = std::max(aabbMax.y, mesh_buffers_cache_.vertices[i+1]);
+                    aabbMax.z = std::max(aabbMax.z, mesh_buffers_cache_.vertices[i+2]);
+                }
+                aabbValid = true;
+
+
+
+                // --- MODIFICATION START: Create default group only if needed ---
+                if (!hasExternalMeshGroups) {
+                    MeshGroup defaultGroup;
+                    defaultGroup.materialName = "Default";
+                    defaultGroup.startIndex = 0;
+                    defaultGroup.indexCount = mesh_buffers_cache_.indices.size();
+                    if (defaultGroup.indexCount > 0) {
+                        meshGroups.push_back(defaultGroup);
                     }
                 }
+                // --- MODIFICATION END ---
+                
+                for (size_t i = 0; i + 2 < mesh_buffers_cache_.indices.size(); i += 3) {
+                    unsigned int i0 = mesh_buffers_cache_.indices[i];
+                    unsigned int i1 = mesh_buffers_cache_.indices[i+1];
+                    unsigned int i2 = mesh_buffers_cache_.indices[i+2];
+                    meshAdjacency[i0].insert(i1); meshAdjacency[i0].insert(i2);
+                    meshAdjacency[i1].insert(i0); meshAdjacency[i1].insert(i2);
+                    meshAdjacency[i2].insert(i0); meshAdjacency[i2].insert(i1);
+                }
+
+
+
+                // Pre-calculate face adjacency
+                const size_t triCount = mesh_buffers_cache_.indices.size() / 3;
+                triangleToFaceID_.assign(triCount, -1);
+                int currentFaceId = 0;
+                std::map<std::pair<unsigned int, unsigned int>, std::vector<size_t>> edgeToTriangles;
+                for (size_t i = 0; i < mesh_buffers_cache_.indices.size(); i += 3) {
+                    unsigned int v_indices[3] = { mesh_buffers_cache_.indices[i], mesh_buffers_cache_.indices[i + 1], mesh_buffers_cache_.indices[i + 2] };
+                    for (int j = 0; j < 3; ++j) {
+                        unsigned int v1_idx = v_indices[j];
+                        unsigned int v2_idx = v_indices[(j + 1) % 3];
+                        if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
+                        edgeToTriangles[{v1_idx, v2_idx}].push_back(i);
+                    }
+                }
+                
+                for (size_t i = 0; i < mesh_buffers_cache_.indices.size(); i += 3) {
+                    size_t triIndex = i / 3;
+                    if (triangleToFaceID_[triIndex] != -1) continue;
+                    
+                    std::vector<size_t> currentFaceTriangles;
+                    std::list<size_t> queue;
+                    
+                    unsigned int i0_start = mesh_buffers_cache_.indices[i];
+                    glm::vec3 v0_start(mesh_buffers_cache_.vertices[i0_start*3], mesh_buffers_cache_.vertices[i0_start*3+1], mesh_buffers_cache_.vertices[i0_start*3+2]);
+                    glm::vec3 refNormal(mesh_buffers_cache_.normals[i0_start*3], mesh_buffers_cache_.normals[i0_start*3+1], mesh_buffers_cache_.normals[i0_start*3+2]);
+                    float refPlaneD = -glm::dot(refNormal, v0_start);
+                    
+                    queue.push_back(i);
+                    triangleToFaceID_[triIndex] = currentFaceId;
+                    while (!queue.empty()) {
+                         size_t currentTriBaseIdx = queue.front();
+                         queue.pop_front();
+                         currentFaceTriangles.push_back(currentTriBaseIdx);
+                         unsigned int current_v[3] = { mesh_buffers_cache_.indices[currentTriBaseIdx], mesh_buffers_cache_.indices[currentTriBaseIdx + 1], mesh_buffers_cache_.indices[currentTriBaseIdx + 2] };
+                         for (int j = 0; j < 3; ++j) {
+                            unsigned int v1 = current_v[j], v2 = current_v[(j+1)%3];
+                            if (v1 > v2) std::swap(v1, v2);
+                            const auto& neighbors = edgeToTriangles.at({v1, v2});
+                            for (size_t neighborBaseIdx : neighbors) {
+                                size_t neighborTriIdx = neighborBaseIdx / 3;
+                                if (triangleToFaceID_[neighborTriIdx] == -1) {
+                                    unsigned int n_i0 = mesh_buffers_cache_.indices[neighborBaseIdx];
+                                    glm::vec3 n_v0(mesh_buffers_cache_.vertices[n_i0*3], mesh_buffers_cache_.vertices[n_i0*3+1], mesh_buffers_cache_.vertices[n_i0*3+2]);
+                                    glm::vec3 neighborNorm(mesh_buffers_cache_.normals[n_i0*3], mesh_buffers_cache_.normals[n_i0*3+1], mesh_buffers_cache_.normals[n_i0*3+2]);
+                                    if (glm::abs(glm::dot(refNormal, neighborNorm)) > 0.999f && glm::abs(glm::dot(refNormal, n_v0) + refPlaneD) < 1e-4f) {
+                                        queue.push_back(neighborBaseIdx);
+                                        triangleToFaceID_[neighborTriIdx] = currentFaceId;
+                                    }
+                                }
+                            }
+                         }
+                    }
+                    faces_[currentFaceId] = currentFaceTriangles;
+                    currentFaceId++;
+                }
             }
-            faces_[currentFaceId] = currentFaceTriangles;
-            currentFaceId++;
+
+
+
+            is_mesh_cache_dirty_ = false;
         }
-    }
-    const Urbaxio::CadKernel::MeshBuffers& SceneObject::get_mesh_buffers() const {
-        return mesh_buffers_;
-    }
-    bool SceneObject::has_mesh() const {
-        return !mesh_buffers_.isEmpty();
+        return mesh_buffers_cache_;
     }
 
     // --- NEW: Face cache accessors ---
@@ -252,14 +285,22 @@ namespace Urbaxio::Engine {
     // --- РЕАЛИЗАЦИЯ НОВЫХ МЕТОДОВ ---
     void SceneObject::buildLocationToVertexMap() {
         locationToVertexMapPimpl_->theMap.clear();
-        if (!has_shape()) return;
+        if (!hasGeometry()) return;
 
-        TopExp_Explorer explorer(*shape_, TopAbs_VERTEX);
-        for (; explorer.More(); explorer.Next()) {
-            TopoDS_Vertex vertex = TopoDS::Vertex(explorer.Current());
-            gp_Pnt p = BRep_Tool::Pnt(vertex);
-            glm::vec3 location(p.X(), p.Y(), p.Z());
-            locationToVertexMapPimpl_->theMap[location] = vertex;
+
+
+        // Try to cast geometry to BRepGeometry
+        if (auto* brepGeom = dynamic_cast<BRepGeometry*>(geometry_.get())) {
+            const TopoDS_Shape* shape = brepGeom->getShape();
+            if (shape) {
+                TopExp_Explorer explorer(*shape, TopAbs_VERTEX);
+                for (; explorer.More(); explorer.Next()) {
+                    TopoDS_Vertex vertex = TopoDS::Vertex(explorer.Current());
+                    gp_Pnt p = BRep_Tool::Pnt(vertex);
+                    glm::vec3 location(p.X(), p.Y(), p.Z());
+                    locationToVertexMapPimpl_->theMap[location] = vertex;
+                }
+            }
         }
     }
 
@@ -269,6 +310,13 @@ namespace Urbaxio::Engine {
             return &it->second;
         }
         return nullptr;
+    }
+
+    bool SceneObject::hasMesh() const {
+        // This ensures the cache is populated before checking if it's empty.
+        // It calls the main caching getter first.
+        getMeshBuffers(); 
+        return !mesh_buffers_cache_.isEmpty();
     }
 
 } // namespace Urbaxio::Engine

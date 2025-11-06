@@ -12,6 +12,7 @@ extern "C" {
 #include <engine/scene.h>
 #include <engine/scene_object.h>
 #include <engine/MaterialManager.h>
+#include <engine/geometry/MeshGeometry.h>
 #include <cad_kernel/cad_kernel.h>
 #include <tools/ToolManager.h>
 #include <tools/SelectTool.h>
@@ -396,7 +397,8 @@ namespace { // Anonymous namespace for helpers
                 std::string objectName = handPrefix + "_" + name;
                 Urbaxio::Engine::SceneObject* newPart = scene->create_object(objectName);
                 if (newPart) {
-                    newPart->set_mesh_buffers(partMesh);
+                    // NEW: Use the new geometry system for mesh-only objects
+                    newPart->setGeometry(std::make_unique<Urbaxio::Engine::MeshGeometry>(std::move(partMesh)));
                     newPart->setExportable(false);
                     *(data.second) = newPart; // Assign the created object pointer to the struct member
                 }
@@ -698,18 +700,18 @@ namespace { // Anonymous namespace for helpers
         // Center Marker
         Urbaxio::Engine::SceneObject* center_sphere = scene->create_object("CenterMarker");
         if (center_sphere) {
-            center_sphere->set_mesh_buffers(CreateIcoSphereMesh(0.25f, 2));
+            center_sphere->setGeometry(std::make_unique<Urbaxio::Engine::MeshGeometry>(CreateIcoSphereMesh(0.25f, 2)));
             center_sphere->setExportable(false); // Do not export this
         }
         // Capsule Markers
         Urbaxio::Engine::SceneObject* cap10 = scene->create_object("UnitCapsuleMarker10m");
         if (cap10) {
-            cap10->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight10m));
+            cap10->setGeometry(std::make_unique<Urbaxio::Engine::MeshGeometry>(CreateCapsuleMesh(capsuleRadius, capsuleHeight10m)));
             cap10->setExportable(false); // Do not export this
         }
         Urbaxio::Engine::SceneObject* cap5 = scene->create_object("UnitCapsuleMarker5m");
         if (cap5) {
-            cap5->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight5m));
+            cap5->setGeometry(std::make_unique<Urbaxio::Engine::MeshGeometry>(CreateCapsuleMesh(capsuleRadius, capsuleHeight5m)));
             cap5->setExportable(false); // Do not export this
         }
     }
@@ -920,7 +922,8 @@ namespace { // Anonymous namespace for helpers
 
 // --- GPU Mesh Upload Helper ---
 bool UploadMeshToGPU(Urbaxio::Engine::SceneObject& object) {
-    const Urbaxio::CadKernel::MeshBuffers& mesh = object.get_mesh_buffers();
+    // NEW: Use the caching getter
+    const Urbaxio::CadKernel::MeshBuffers& mesh = object.getMeshBuffers();
     if (mesh.isEmpty() || mesh.normals.empty()) {
         if (mesh.normals.empty() && !mesh.vertices.empty()) {
             std::cerr << "UploadMeshToGPU: Mesh for object " << object.get_id() << " is missing normals!" << std::endl;
@@ -1285,9 +1288,9 @@ int main(int argc, char* argv[]) {
         if (scene_ptr) {
             std::vector<Urbaxio::Engine::SceneObject*> all_objects = scene_ptr->get_all_objects();
             for (Urbaxio::Engine::SceneObject* obj : all_objects) {
-                if (obj && obj->has_mesh() && obj->vao == 0) { // Has mesh, but not yet on GPU
+                if (obj && obj->hasGeometry() && obj->vao == 0) {
                     if (!UploadMeshToGPU(*obj)) {
-                        std::cerr << "Shell: Main loop failed to upload mesh for object " << obj->get_id() << std::endl;
+                        // This might fail legitimately if mesh is empty, so we don't log an error.
                     }
                 }
             }
@@ -1479,7 +1482,7 @@ int main(int argc, char* argv[]) {
             if (!selectedLineIDs.empty()) ImGui::Text("Selected Line IDs: %zu", selectedLineIDs.size());
 
             const char* snapTypeName = "None"; if (currentSnap.snapped) { switch (currentSnap.type) { case Urbaxio::SnapType::ENDPOINT: snapTypeName = "Endpoint"; break; case Urbaxio::SnapType::ORIGIN:   snapTypeName = "Origin"; break; case Urbaxio::SnapType::AXIS_X:   snapTypeName = "On Axis X"; break; case Urbaxio::SnapType::AXIS_Y:   snapTypeName = "On Axis Y"; break; case Urbaxio::SnapType::AXIS_Z:   snapTypeName = "On Axis Z"; break; default: snapTypeName = "Unknown"; break; } } ImGui::Text("Current Snap: %s (%.2f, %.2f, %.2f)", snapTypeName, currentSnap.worldPoint.x, currentSnap.worldPoint.y, currentSnap.worldPoint.z);
-            ImGui::Text("Scene Objects:"); if (scene_ptr) { std::vector<Urbaxio::Engine::SceneObject*> objects = scene_ptr->get_all_objects(); if (objects.empty()) { ImGui::TextDisabled("(No objects yet)"); } else { ImGui::BeginChild("ObjectList", ImVec2(0, 100), true, ImGuiWindowFlags_HorizontalScrollbar); for (const auto* obj : objects) { if (obj) { ImGui::BulletText("%s (ID:%llu)%s%s%s", obj->get_name().c_str(), obj->get_id(), obj->has_shape() ? " [Geo]" : "", obj->has_mesh() ? " [Mesh]" : "", (obj->vao != 0) ? " [GPU]" : ""); } } ImGui::EndChild(); } } else { ImGui::TextDisabled("(Scene pointer is null)"); }
+            ImGui::Text("Scene Objects:"); if (scene_ptr) { std::vector<Urbaxio::Engine::SceneObject*> objects = scene_ptr->get_all_objects(); if (objects.empty()) { ImGui::TextDisabled("(No objects yet)"); } else { ImGui::BeginChild("ObjectList", ImVec2(0, 100), true, ImGuiWindowFlags_HorizontalScrollbar); for (const auto* obj : objects) { if (obj) { ImGui::BulletText("%s (ID:%llu)%s%s", obj->get_name().c_str(), obj->get_id(), obj->hasGeometry() ? " [Geo]" : "", (obj->vao != 0) ? " [GPU]" : ""); } } ImGui::EndChild(); } } else { ImGui::TextDisabled("(Scene pointer is null)"); }
             ImGui::End();
         }
 
@@ -1501,11 +1504,9 @@ int main(int argc, char* argv[]) {
                 bool height5m_changed = ImGui::SliderFloat("5m Capsule Height", &capsuleHeight5m, 0.2f, 5.0f);
 
                 if (radius_changed || height10m_changed) {
-                    // This is tricky as we don't store the IDs. Easiest is to find by name.
                     for (auto* obj : scene_ptr->get_all_objects()) {
                         if (obj && obj->get_name() == "UnitCapsuleMarker10m") {
-                            obj->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight10m));
-                            obj->vao = 0;
+                            obj->setGeometry(std::make_unique<Urbaxio::Engine::MeshGeometry>(CreateCapsuleMesh(capsuleRadius, capsuleHeight10m)));
                             break;
                         }
                     }
@@ -1513,8 +1514,7 @@ int main(int argc, char* argv[]) {
                 if (radius_changed || height5m_changed) {
                     for (auto* obj : scene_ptr->get_all_objects()) {
                          if (obj && obj->get_name() == "UnitCapsuleMarker5m") {
-                            obj->set_mesh_buffers(CreateCapsuleMesh(capsuleRadius, capsuleHeight5m));
-                            obj->vao = 0;
+                            obj->setGeometry(std::make_unique<Urbaxio::Engine::MeshGeometry>(CreateCapsuleMesh(capsuleRadius, capsuleHeight5m)));
                             break;
                         }
                     }

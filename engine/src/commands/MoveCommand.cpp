@@ -2,6 +2,7 @@
 #include "engine/scene.h"
 #include "engine/scene_object.h"
 #include "engine/line.h"
+#include "engine/geometry/BRepGeometry.h"
 #include "cad_kernel/MeshBuffers.h" // <-- FIX: Include full definition
 #include "cad_kernel/cad_kernel.h"   // <-- FIX: Include full definition
 
@@ -42,39 +43,30 @@ void MoveCommand::applyTransform(const glm::vec3& vector) {
         return;
     }
 
-    // --- 1. Transform the CAD B-Rep shape (if it exists) ---
-    if (object->has_shape()) {
-        try {
-            gp_Trsf occtTransform;
-            occtTransform.SetTranslation(gp_Vec(vector.x, vector.y, vector.z));
-            
-            BRepBuilderAPI_Transform transformer(*object->get_shape(), occtTransform);
-            transformer.Build();
-
-            if (transformer.IsDone()) {
-                // Update the B-Rep shape
-                object->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(transformer.Shape())));
-                // Re-triangulate from the new shape to update the mesh buffers
-                object->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*object->get_shape()));
-                object->vao = 0; // Mark for re-upload if it's dynamic
-            } else {
-                std::cerr << "MoveCommand Warning: OCCT transformation failed for object " << objectId_ << std::endl;
+    // --- 1. Transform the geometry source (if it's a B-Rep) ---
+    if (auto* brepGeom = dynamic_cast<BRepGeometry*>(object->getGeometry())) {
+        const TopoDS_Shape* shape = brepGeom->getShape();
+        if (shape) {
+            try {
+                gp_Trsf occtTransform;
+                occtTransform.SetTranslation(gp_Vec(vector.x, vector.y, vector.z));
+                BRepBuilderAPI_Transform transformer(*shape, occtTransform);
+                transformer.Build();
+                if (transformer.IsDone()) {
+                    brepGeom->setShape(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(transformer.Shape())));
+                    object->invalidateMeshCache();
+                } else {
+                    std::cerr << "MoveCommand Warning: OCCT transformation failed for object " << objectId_ << std::endl;
+                }
+            } catch(...) {
+                std::cerr << "MoveCommand Warning: OCCT exception during transformation for object " << objectId_ << std::endl;
             }
-        } catch(...) {
-            std::cerr << "MoveCommand Warning: OCCT exception during transformation for object " << objectId_ << std::endl;
         }
-    } else if (object->has_mesh()) {
-        // Fallback for non-BRep objects: manually transform vertices
-        Urbaxio::CadKernel::MeshBuffers& mesh = const_cast<Urbaxio::CadKernel::MeshBuffers&>(object->get_mesh_buffers());
-        for (size_t i = 0; i < mesh.vertices.size(); i += 3) {
-            mesh.vertices[i] += vector.x;
-            mesh.vertices[i+1] += vector.y;
-            mesh.vertices[i+2] += vector.z;
-        }
-        object->vao = 0;
     }
+    // Note: Moving pure mesh or volumetric objects is not supported by this command yet.
+    // It would require manually transforming vertices in their respective geometry classes.
 
-    // --- 2. Update the boundary lines based on the new shape/mesh ---
+    // --- 2. Update the boundary lines based on the new shape ---
     scene_->UpdateObjectBoundary(object);
 
     // --- 3. Mark the static scene as dirty to trigger recompilation ---

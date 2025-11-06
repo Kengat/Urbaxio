@@ -35,8 +35,8 @@ namespace Urbaxio {
         bool hit = false;
         
         for (const auto* obj : scene.get_all_objects()) {
-            if (obj && obj->has_mesh()) {
-                const auto& mesh = obj->get_mesh_buffers();
+            if (obj && obj->hasMesh()) { // Use new hasMesh()
+                const auto& mesh = obj->getMeshBuffers(); // Use new getter
                 for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                     unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
                     glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
@@ -92,8 +92,8 @@ namespace Urbaxio {
         bool hit = false;
         
         for (const auto* obj : scene.get_all_objects()) {
-            if (obj && obj->has_mesh()) {
-                const auto& mesh = obj->get_mesh_buffers();
+            if (obj && obj->hasMesh()) { // Use new hasMesh()
+                const auto& mesh = obj->getMeshBuffers(); // Use new getter
                 for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                     unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
                     glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);

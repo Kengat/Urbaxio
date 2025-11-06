@@ -2,8 +2,9 @@
 #include "../include/file_io.h"
 #include <engine/scene.h>
 #include <engine/scene_object.h>
+#include <engine/geometry/MeshGeometry.h>
+#include <engine/geometry/BRepGeometry.h>
 #include <engine/MaterialManager.h>
-#include <engine/MeshGroup.h>
 #include <engine/MeshGroup.h>
 #include <cad_kernel/MeshBuffers.h>
 #include <fstream>
@@ -56,7 +57,7 @@ bool ExportSceneToObj(const std::string& filepath, const Engine::Scene& scene) {
     file << "# Urbaxio OBJ Export\n";
 
     // --- NEW: Transformation from our Z-Up to standard Y-Up for export ---
-    const float exportScale = 100.0f; // Scale up (e.g., from meters to cm)
+    const float exportScale = 1.0f; // Changed to 1.0, scale should be handled by user
     glm::mat4 z_up_to_y_up = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
     glm::mat3 normal_transform = glm::mat3(z_up_to_y_up);
 
@@ -66,11 +67,12 @@ bool ExportSceneToObj(const std::string& filepath, const Engine::Scene& scene) {
 
     for (const auto* obj : scene.get_all_objects()) {
         // We only export objects that are marked as exportable and have a mesh
-        if (!obj || !obj->isExportable() || !obj->has_mesh() || obj->get_mesh_buffers().isEmpty()) {
+        if (!obj || !obj->isExportable() || !obj->hasMesh()) {
             continue;
         }
 
-        const auto& mesh = obj->get_mesh_buffers();
+        const auto& mesh = obj->getMeshBuffers(); // Use the caching getter
+        if (mesh.isEmpty()) continue;
         file << "o " << obj->get_name() << "_" << obj->get_id() << "\n";
 
         // Write vertices
@@ -96,20 +98,22 @@ bool ExportSceneToObj(const std::string& filepath, const Engine::Scene& scene) {
             }
         }
 
-        // Write faces
-        for (size_t i = 0; i < mesh.indices.size(); i += 3) {
-            file << "f";
-            for (int j = 0; j < 3; ++j) {
-                unsigned int v_idx = mesh.indices[i+j] + vertex_offset;
-                unsigned int n_idx = mesh.indices[i+j] + normal_offset;
-                file << " " << v_idx;
-                if (!mesh.uvs.empty()) {
-                    unsigned int uv_idx = mesh.indices[i+j] + uv_offset;
-                    file << "/" << uv_idx;
+        for (const auto& group : obj->meshGroups) {
+            file << "usemtl " << group.materialName << "\n";
+            for (size_t i = group.startIndex; i < group.startIndex + group.indexCount; i += 3) {
+                file << "f";
+                for (int j = 0; j < 3; ++j) {
+                    unsigned int v_idx = mesh.indices[i+j] + vertex_offset;
+                    unsigned int n_idx = mesh.indices[i+j] + normal_offset;
+                    file << " " << v_idx;
+                    if (!mesh.uvs.empty()) {
+                        unsigned int uv_idx = mesh.indices[i+j] + uv_offset;
+                        file << "/" << uv_idx;
+                    }
+                    file << "/" << n_idx;
                 }
-                file << "/" << n_idx;
+                file << "\n";
             }
-            file << "\n";
         }
 
         vertex_offset += mesh.vertices.size() / 3;
@@ -246,10 +250,15 @@ void ApplyLoadedDataToScene(const LoadedSceneData& data, Engine::Scene& scene) {
     for (const auto& objectData : data.objects) {
         Engine::SceneObject* new_obj = scene.create_object(objectData.name);
         if (new_obj) {
-            CadKernel::MeshBuffers temp_mesh = objectData.mesh;
-            new_obj->set_mesh_buffers(std::move(temp_mesh));
+            // Step 1: Set the geometry. This will call invalidateMeshCache() internally,
+            // which now correctly clears the meshGroups vector.
+            auto mesh_geom = std::make_unique<Engine::MeshGeometry>(objectData.mesh);
+            new_obj->setGeometry(std::move(mesh_geom));
+            
+            // Step 2: NOW, after the geometry is set and the old groups are cleared,
+            // we assign the correct mesh groups that we loaded from the OBJ file.
+            // The next call to getMeshBuffers() will use these correct groups.
             new_obj->meshGroups = objectData.meshGroups;
-            new_obj->vao = 0;
         }
     }
 

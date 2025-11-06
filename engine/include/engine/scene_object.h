@@ -7,13 +7,13 @@
 #include <vector>
 #include <set> // <-- ADDED for boundaryLineIDs
 #include <unordered_map> // <-- ADDED
-#include <map> // <-- ADD THIS
-#include <cad_kernel/cad_kernel.h>
-#include <cad_kernel/MeshBuffers.h>
+#include <map>
 #include <glad/glad.h>
-#include <glm/glm.hpp>      // <-- ДОБАВИТЬ ЭТОТ ИНКЛУД
-#include "engine/scene.h"   // <-- ДОБАВИТЬ ЭТОТ ИНКЛУД ДЛЯ Vec3Comparator //     GLuint
-#include "engine/MeshGroup.h" // <-- ADD THIS INCLUDE
+#include <glm/glm.hpp>
+#include "engine/scene.h"   // For Vec3Comparator
+#include "engine/MeshGroup.h"
+#include "engine/geometry/IGeometry.h" // <-- NEW
+#include <cad_kernel/MeshBuffers.h>    // <-- Keep for cache member
 
 class TopoDS_Shape;
 class TopoDS_Vertex;
@@ -49,23 +49,20 @@ namespace Urbaxio::Engine {
         void setExportable(bool exportable);
         bool isExportable() const;
 
-        //           BRep
-        void set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr shape);
-        const TopoDS_Shape* get_shape() const;
-        bool has_shape() const;
-
-        //                (CPU)
-        void set_mesh_buffers(Urbaxio::CadKernel::MeshBuffers buffers);
-        const Urbaxio::CadKernel::MeshBuffers& get_mesh_buffers() const;
-        bool has_mesh() const;
+        // --- NEW: Geometry Handling with Polymorphism ---
+        void setGeometry(std::unique_ptr<IGeometry> geometry);
+        IGeometry* getGeometry() const;
+        bool hasGeometry() const;
+        const CadKernel::MeshBuffers& getMeshBuffers() const; // Caching version
+        void invalidateMeshCache();
 
         // --- NEW: Mesh Groups for Materials ---
-        std::vector<MeshGroup> meshGroups;
+        mutable std::vector<MeshGroup> meshGroups;
 
         // --- NEW: Axis-Aligned Bounding Box ---
-        glm::vec3 aabbMin = glm::vec3(0.0f);
-        glm::vec3 aabbMax = glm::vec3(0.0f);
-        bool aabbValid = false;
+        mutable glm::vec3 aabbMin = glm::vec3(0.0f);
+        mutable glm::vec3 aabbMax = glm::vec3(0.0f);
+        mutable bool aabbValid = false;
 
         //                       (GPU)
         GLuint vao = 0;
@@ -80,7 +77,7 @@ namespace Urbaxio::Engine {
 
         // --- NEW: Adjacency map for mesh vertices ("sticky geometry" support) ---
         // Maps a vertex index to a set of indices of its direct neighbors.
-        std::unordered_map<unsigned int, std::set<unsigned int>> meshAdjacency;
+        mutable std::unordered_map<unsigned int, std::set<unsigned int>> meshAdjacency;
 
         // --- PIMPL for the location map ---
         void buildLocationToVertexMap(); // Новый метод
@@ -90,24 +87,29 @@ namespace Urbaxio::Engine {
         int getFaceIdForTriangle(size_t triangleBaseIndex) const;
         const std::vector<size_t>* getFaceTriangles(int faceId) const;
 
-        // --- START OF MODIFICATION ---
         const std::vector<int>& getTriangleToFaceIDMap() const;
         const std::map<int, std::vector<size_t>>& getFacesMap() const;
-        // --- END OF MODIFICATION ---
+
+        bool hasMesh() const; // Helper to check if cache is valid and not empty
 
     private:
         uint64_t id_;
         std::string name_;
         glm::mat4 transform_ = glm::mat4(1.0f);
-        Urbaxio::CadKernel::OCCT_ShapeUniquePtr shape_ = nullptr;
-        bool isExportable_ = true; // By default, all objects are exportable
-        Urbaxio::CadKernel::MeshBuffers mesh_buffers_;
+        bool isExportable_ = true;
+        
+        // --- NEW: Polymorphic geometry representation ---
+        std::unique_ptr<IGeometry> geometry_ = nullptr;
+        
+        // --- NEW: Render mesh cache ---
+        mutable CadKernel::MeshBuffers mesh_buffers_cache_;
+        mutable bool is_mesh_cache_dirty_ = true;
 
-        // --- NEW: Face cache data ---
-        std::vector<int> triangleToFaceID_;
-        std::map<int, std::vector<size_t>> faces_;
+        // --- Face cache data (depends on mesh_buffers_cache_) ---
+        mutable std::vector<int> triangleToFaceID_;
+        mutable std::map<int, std::vector<size_t>> faces_;
 
-        // Указатель на реализацию, скрывающий std::map
+        // PIMPL for vertex map (depends on BRepGeometry)
         std::unique_ptr<LocationToVertexMapImpl> locationToVertexMapPimpl_;
     };
 

@@ -3,6 +3,8 @@ add_library(engine STATIC
     src/engine_main.cpp
     src/scene.cpp
     src/scene_object.cpp
+    src/geometry/BRepGeometry.cpp
+    src/geometry/MeshGeometry.cpp
     src/MaterialManager.cpp
     # --- Undo/Redo System ---
     src/commands/CommandManager.cpp

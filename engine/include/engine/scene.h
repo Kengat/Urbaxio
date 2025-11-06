@@ -21,10 +21,12 @@ class gp_Pln;
 class gp_Pnt;
 class TopoDS_Shape;
 class TopoDS_Face;
-class TopoDS_Edge;
-class TopoDS_Vertex; // <-- Добавим сюда, чтобы не включать в scene_object.h
 
-namespace Urbaxio::Engine { class SceneObject; }
+// Forward declare internal engine types
+namespace Urbaxio::Engine { 
+    class SceneObject; 
+    class BRepGeometry; // <-- NEW
+}
 
 namespace Urbaxio {
     const float SCENE_POINT_EQUALITY_TOLERANCE = 1e-4f;
@@ -98,9 +100,7 @@ namespace Urbaxio::Engine {
         glm::vec3 SplitLineAtPoint(uint64_t lineId, const glm::vec3& splitPoint);
 
         // --- Geometry Modification ---
-        // Old version for direct calls (e.g. from tests or tools not using commands)
-        bool ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance, bool disableMerge = false);
-        // NEW robust version for commands, using geometric data. This will be the main implementation.
+        // Main implementation for extrusion, using geometric data.
         bool ExtrudeFace(uint64_t objectId, const std::vector<glm::vec3>& faceVertices, const glm::vec3& direction, float distance, bool disableMerge = false);
 
         // --- Geometry Synchronization ---
@@ -156,7 +156,6 @@ namespace Urbaxio::Engine {
         void RemoveLine(uint64_t lineId);
         glm::vec3 MergeOrAddVertex(const glm::vec3& p);
         
-        std::vector<std::pair<glm::vec3, glm::vec3>> ExtractEdgesFromShape(const TopoDS_Shape& shape);
         
         static bool LineSegmentIntersection(
             const glm::vec3& p1, const glm::vec3& p2,
@@ -179,8 +178,7 @@ namespace Urbaxio::Engine {
         void CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane);
         
         TopoDS_Face FindOriginalFace(
-            SceneObject* obj, // <-- ДОБАВИТЬ ЭТОТ АРГУМЕНТ
-            const TopoDS_Shape& shape, 
+            SceneObject* obj,
             const std::vector<glm::vec3>& faceVertices, 
             const glm::vec3& guideNormal
         );

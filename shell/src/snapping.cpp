@@ -162,8 +162,7 @@ namespace Urbaxio {
 
 
 SnapResult SnappingSystem::FindSnapPoint(
-    int mouseX, int mouseY,
-    int screenWidth, int screenHeight,
+    int mouseX, int mouseY, int screenWidth, int screenHeight,
     const Camera& camera,
     const Engine::Scene& scene,
     float snapThresholdPixels)
@@ -187,7 +186,6 @@ SnapResult SnappingSystem::FindSnapPoint(
     finalSnap.worldPoint = planeHit ? pointOnPlane : camera.Position + rayDirection * 10.0f;
 
     std::vector<SnapCandidate> candidates;
-    // --- STEP 1: BROAD-PHASE OCCLUSION PASS ---
     std::vector<std::pair<float, const Engine::SceneObject*>> intersectedObjects;
     for (const auto* obj : scene.get_all_objects()) {
         if (obj && obj->aabbValid) {
@@ -202,30 +200,29 @@ SnapResult SnappingSystem::FindSnapPoint(
     float min_hit_distance = std::numeric_limits<float>::max();
     SnapCandidate faceSnapCandidate;
     bool faceWasHit = false;
-    // --- STEP 2: NARROW-PHASE OCCLUSION & GATHERING ---
+
     for (const auto& [dist, obj] : intersectedObjects) {
-        if (dist > min_hit_distance) break; // No need to check objects that are further away
-        if (!obj->has_mesh()) continue;
+        if (dist > min_hit_distance) break;
+        if (!obj->hasMesh()) continue;
 
-            const auto& name = obj->get_name();
-            if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
+        const auto& name = obj->get_name();
+        if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
 
-        // --- NARROW-PHASE: Per-triangle hit test for occlusion ---
-            const auto& mesh = obj->get_mesh_buffers();
-            for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-                unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
-                glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
-                glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
-                glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
-                float t;
-                if (RayTriangleIntersect(rayOrigin, rayDirection, v0, v1, v2, t) && t > 0 && t < min_hit_distance) {
-                    min_hit_distance = t;
-                    faceSnapCandidate.snapped = true;
-                    faceSnapCandidate.type = SnapType::ON_FACE;
-                    faceSnapCandidate.worldPoint = rayOrigin + rayDirection * t;
-                    faceSnapCandidate.snappedEntityId = obj->get_id();
+        const auto& mesh = obj->getMeshBuffers();
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
+            glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+            glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+            glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+            float t;
+            if (RayTriangleIntersect(rayOrigin, rayDirection, v0, v1, v2, t) && t > 0 && t < min_hit_distance) {
+                min_hit_distance = t;
+                faceSnapCandidate.snapped = true;
+                faceSnapCandidate.type = SnapType::ON_FACE;
+                faceSnapCandidate.worldPoint = rayOrigin + rayDirection * t;
+                faceSnapCandidate.snappedEntityId = obj->get_id();
                 faceSnapCandidate.snappedTriangleIndex = i;
-                    faceWasHit = true;
+                faceWasHit = true;
             }
         }
     }
@@ -237,15 +234,11 @@ SnapResult SnappingSystem::FindSnapPoint(
         }
     }
 
-    // --- STEP 3: GATHER OTHER CANDIDATES (Lines, Vertices, Axes) ---
-    // Only check lines/vertices of intersected objects + free lines
-    
     std::set<uint64_t> processedObjects;
     for (const auto& [dist, obj] : intersectedObjects) {
         if (obj) processedObjects.insert(obj->get_id());
     }
 
-    // Collect ignored line IDs from controller visuals
     std::vector<const Engine::SceneObject*> objects = scene.get_all_objects();
     std::set<uint64_t> ignoredLineIDs;
     for (const auto* obj : objects) {
@@ -257,7 +250,6 @@ SnapResult SnappingSystem::FindSnapPoint(
         }
     }
 
-    // Origin
     glm::vec2 originScreenPos;
     if (WorldToScreen(glm::vec3(0.0f), view, proj, screenWidth, screenHeight, originScreenPos)) {
         float dist_along_ray = glm::dot(glm::vec3(0.0f) - rayOrigin, rayDirection);
@@ -269,11 +261,9 @@ SnapResult SnappingSystem::FindSnapPoint(
         }
     }
 
-    // User Lines
     const auto& lines = scene.GetAllLines();
     for (const auto& [lineId, line] : lines) {
         if (ignoredLineIDs.count(lineId)) { continue; }
-        // Endpoints
         for (const auto& endpoint : {line.start, line.end}) {
             float dist_along_ray = glm::dot(endpoint - rayOrigin, rayDirection);
             if (dist_along_ray < min_hit_distance + DEPTH_TOLERANCE) {
@@ -284,7 +274,6 @@ SnapResult SnappingSystem::FindSnapPoint(
                 }
             }
         }
-        // Midpoint
         glm::vec3 midpoint = (line.start + line.end) * 0.5f;
         float dist_along_ray_mid = glm::dot(midpoint - rayOrigin, rayDirection);
         if (dist_along_ray_mid < min_hit_distance + DEPTH_TOLERANCE) {
@@ -294,7 +283,6 @@ SnapResult SnappingSystem::FindSnapPoint(
                 if (dSq < pointThresholdSq) { candidates.push_back({{true, midpoint, SnapType::MIDPOINT, lineId}, dSq}); }
             }
         }
-        // On Edge
         glm::vec3 closestPointOnRay, closestPointOnSegment;
         if (ClosestPointsRaySegment(rayOrigin, rayDirection, line.start, line.end, closestPointOnRay, closestPointOnSegment)) {
              float dist_along_ray_edge = glm::dot(closestPointOnSegment - rayOrigin, rayDirection);
@@ -310,22 +298,21 @@ SnapResult SnappingSystem::FindSnapPoint(
         }
     }
 
-    // Object Vertices
     for (const auto* obj : objects) {
         if (processedObjects.count(obj->get_id())) {
-        if (obj && obj->has_mesh()) {
-            const auto& name = obj->get_name();
-            if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
-            
-            const auto& vertices_obj = obj->get_mesh_buffers().vertices;
-            for (size_t i = 0; i < vertices_obj.size(); i += 3) {
-                glm::vec3 vertexPos(vertices_obj[i], vertices_obj[i+1], vertices_obj[i+2]);
-                float dist_along_ray = glm::dot(vertexPos - rayOrigin, rayDirection);
-                if (dist_along_ray < min_hit_distance + DEPTH_TOLERANCE) {
-                    glm::vec2 scrPos;
-                    if (WorldToScreen(vertexPos, view, proj, screenWidth, screenHeight, scrPos)) {
-                        float dSq = glm::length2(mousePosScreen - scrPos);
-                        if (dSq < pointThresholdSq) { candidates.push_back({{true, vertexPos, SnapType::ENDPOINT, obj->get_id()}, dSq}); }
+            if (obj && obj->hasMesh()) {
+                const auto& name = obj->get_name();
+                if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
+                
+                const auto& vertices_obj = obj->getMeshBuffers().vertices;
+                for (size_t i = 0; i < vertices_obj.size(); i += 3) {
+                    glm::vec3 vertexPos(vertices_obj[i], vertices_obj[i+1], vertices_obj[i+2]);
+                    float dist_along_ray = glm::dot(vertexPos - rayOrigin, rayDirection);
+                    if (dist_along_ray < min_hit_distance + DEPTH_TOLERANCE) {
+                        glm::vec2 scrPos;
+                        if (WorldToScreen(vertexPos, view, proj, screenWidth, screenHeight, scrPos)) {
+                            float dSq = glm::length2(mousePosScreen - scrPos);
+                            if (dSq < pointThresholdSq) { candidates.push_back({{true, vertexPos, SnapType::ENDPOINT, obj->get_id()}, dSq}); }
                         }
                     }
                 }
@@ -333,7 +320,6 @@ SnapResult SnappingSystem::FindSnapPoint(
         }
     }
 
-    // Axes
     struct AxisInfo { glm::vec3 origin; glm::vec3 dir; SnapType type; };
     std::vector<AxisInfo> axes = {
         {glm::vec3(0.0f), glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f)), SnapType::AXIS_X},
@@ -342,9 +328,7 @@ SnapResult SnappingSystem::FindSnapPoint(
     };
     for (const auto& axis : axes) {
         glm::vec3 pointOnAxis3D;
-        // --- FIX: Use ClosestPointLineLine for infinite axes ---
         if (ClosestPointLineLine(axis.origin, axis.dir, rayOrigin, rayDirection, pointOnAxis3D)) {
-            // Check if axis point is in front of geometry
             float dist_along_ray = glm::dot(pointOnAxis3D - rayOrigin, rayDirection);
             if (dist_along_ray > 0 && dist_along_ray < min_hit_distance + DEPTH_TOLERANCE) {
                 glm::vec2 axisPointScreenPos;
@@ -358,7 +342,6 @@ SnapResult SnappingSystem::FindSnapPoint(
         }
     }
     
-    // --- FINAL STEP: SELECT BEST CANDIDATE ---
     if (!candidates.empty()) {
         std::sort(candidates.begin(), candidates.end(), [](const SnapCandidate& a, const SnapCandidate& b) {
             int priorityA = GetSnapPriority(a.type);
@@ -371,7 +354,6 @@ SnapResult SnappingSystem::FindSnapPoint(
     return finalSnap;
 }
 
-// VR ray-based snapping
 SnapResult SnappingSystem::FindSnapPointFromRay(
     const glm::vec3& rayOrigin, const glm::vec3& rayDirection,
     const Engine::Scene& scene,
@@ -381,7 +363,6 @@ SnapResult SnappingSystem::FindSnapPointFromRay(
     SnapResult finalSnap; finalSnap.snapped = false; finalSnap.type = SnapType::NONE;
     float pickThresholdRadiusSq = pickThresholdRadius * pickThresholdRadius;
 
-    // Step 1: Broad-phase to find candidate objects
     std::vector<std::pair<float, const Engine::SceneObject*>> intersectedObjects;
     for (const auto* obj : scene.get_all_objects()) {
         if (obj && obj->aabbValid) {
@@ -393,12 +374,10 @@ SnapResult SnappingSystem::FindSnapPointFromRay(
     }
     std::sort(intersectedObjects.begin(), intersectedObjects.end(), [](const auto& a, const auto& b){ return a.first < b.first; });
     
-    // Step 2: Narrow-phase for occlusion
     float min_hit_distance = std::numeric_limits<float>::max();
     VRSnapCandidate faceSnapCandidate; bool faceWasHit = false;
     std::vector<VRSnapCandidate> candidates;
     
-    // Step 0: add z=0 plane as lowest-priority GRID candidate
     {
         glm::vec3 planeNormal(0.0f, 0.0f, 1.0f);
         float denom = glm::dot(rayDirection, planeNormal);
@@ -413,23 +392,23 @@ SnapResult SnappingSystem::FindSnapPointFromRay(
     
     for (const auto& [dist, obj] : intersectedObjects) {
         if (dist > min_hit_distance) break;
-        if (!obj->has_mesh()) continue;
+        if (!obj->hasMesh()) continue;
         
-            const auto& name = obj->get_name();
-            if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
-        
-            const auto& mesh = obj->get_mesh_buffers();
-            for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-                unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
-                glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
-                glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
-                glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
-                float t;
-                if (RayTriangleIntersect(rayOrigin, rayDirection, v0, v1, v2, t) && t > 0 && t < min_hit_distance) {
-                    min_hit_distance = t; faceWasHit = true;
-                    faceSnapCandidate.snapped = true; faceSnapCandidate.type = SnapType::ON_FACE;
-                    faceSnapCandidate.worldPoint = rayOrigin + rayDirection * t;
-                    faceSnapCandidate.snappedEntityId = obj->get_id();
+        const auto& name = obj->get_name();
+        if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
+    
+        const auto& mesh = obj->getMeshBuffers();
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
+            glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+            glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+            glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+            float t;
+            if (RayTriangleIntersect(rayOrigin, rayDirection, v0, v1, v2, t) && t > 0 && t < min_hit_distance) {
+                min_hit_distance = t; faceWasHit = true;
+                faceSnapCandidate.snapped = true; faceSnapCandidate.type = SnapType::ON_FACE;
+                faceSnapCandidate.worldPoint = rayOrigin + rayDirection * t;
+                faceSnapCandidate.snappedEntityId = obj->get_id();
                 faceSnapCandidate.snappedTriangleIndex = i;
             }
         }
@@ -438,7 +417,6 @@ SnapResult SnappingSystem::FindSnapPointFromRay(
     if (faceWasHit) { faceSnapCandidate.distanceAlongRay = min_hit_distance; candidates.push_back(faceSnapCandidate); }
     finalSnap.worldPoint = faceWasHit ? faceSnapCandidate.worldPoint : (rayOrigin + rayDirection * 100.0f);
 
-    // Collect ignored line IDs from controller visuals
     std::vector<const Engine::SceneObject*> objects = scene.get_all_objects();
     std::set<uint64_t> ignoredLineIDs;
     for (const auto* obj : objects) {
@@ -459,10 +437,8 @@ SnapResult SnappingSystem::FindSnapPointFromRay(
         }
     };
 
-    // Origin
     addPointCandidate(glm::vec3(0.0f), SnapType::ORIGIN, 0);
 
-    // Lines from scene
     const auto& lines = scene.GetAllLines();
     for (const auto& [lineId, line] : lines) {
         if (ignoredLineIDs.count(lineId)) { continue; }
@@ -482,7 +458,6 @@ SnapResult SnappingSystem::FindSnapPointFromRay(
         }
     }
 
-    // Axes
     struct AxisInfo { glm::vec3 origin; glm::vec3 dir; SnapType type; };
     std::vector<AxisInfo> axes = {
         {glm::vec3(0.0f), glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f)), SnapType::AXIS_X},

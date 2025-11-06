@@ -48,8 +48,8 @@ std::vector<size_t> FindCoplanarAdjacentTriangles_ForPushPull(
     }
     const float NORMAL_DOT_TOLERANCE = 0.999f;
     const float PLANE_DIST_TOLERANCE = 1e-4f;
-    const auto& mesh = object.get_mesh_buffers();
-    if (!object.has_mesh() || startTriangleBaseIndex + 2 >= mesh.indices.size()) { return { startTriangleBaseIndex }; }
+    const auto& mesh = object.getMeshBuffers();
+    if (!object.hasMesh() || startTriangleBaseIndex + 2 >= mesh.indices.size()) { return { startTriangleBaseIndex }; }
     std::map<std::pair<unsigned int, unsigned int>, std::vector<size_t>> edgeToTriangles;
     for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
         unsigned int v_indices[3] = { mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2] };
@@ -141,21 +141,21 @@ void PushPullTool::reset() {
     if(context.hoveredFaceTriangleIndices) context.hoveredFaceTriangleIndices->clear();
 }
 
-// -- START OF MODIFICATION --
 void PushPullTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
     if (isPushPullActive) {
         finalizePushPull(ctrl);
-    } else { // Start a new Push/Pull operation
+    } else {
         if (*context.hoveredObjId != 0 && !context.hoveredFaceTriangleIndices->empty()) {
             isPushPullActive = true;
             pushPull_objId = *context.hoveredObjId;
             pushPull_faceIndices = *context.hoveredFaceTriangleIndices;
             
             Urbaxio::Engine::SceneObject* obj = context.scene->get_object_by_id(pushPull_objId);
-            if (!obj) { reset(); return; }
+            if (!obj || !obj->hasMesh()) { reset(); return; }
 
-            // Calculate the average normal of the selected face
-            const auto& mesh = obj->get_mesh_buffers();
+            const auto& mesh = obj->getMeshBuffers();
+            if (mesh.isEmpty()) { reset(); return; }
+
             std::set<unsigned int> uniqueVertIndices;
             for (size_t baseIdx : pushPull_faceIndices) {
                 uniqueVertIndices.insert(mesh.indices[baseIdx]);
@@ -170,21 +170,19 @@ void PushPullTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl
             }
             if (glm::length2(averagedNormal) > 1e-9f) {
                 pushPull_faceNormal = glm::normalize(averagedNormal);
-            } else { // Fallback for safety
+            } else {
                 unsigned int firstIdx = mesh.indices[pushPull_faceIndices[0]];
                 pushPull_faceNormal = glm::normalize(glm::vec3(mesh.normals[firstIdx*3], mesh.normals[firstIdx*3+1], mesh.normals[firstIdx*3+2]));
             }
             
-            // Determine the ray to use
             glm::vec3 currentRayOrigin, currentRayDir;
-            if (glm::length2(rayDirection) > 1e-9) { // Ray was provided (VR)
+            if (glm::length2(rayDirection) > 1e-9) {
                 currentRayOrigin = rayOrigin;
                 currentRayDir = rayDirection;
-            } else { // Ray not provided (2D), get from mouse
+            } else {
                  Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w/(float)*context.display_h), currentRayOrigin, currentRayDir);
             }
             
-            // Find the starting point on the extrusion plane using the correct ray
             float hitDist;
             glm::vec3 facePoint = glm::vec3(mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+1], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+2]);
             glm::intersectRayPlane(currentRayOrigin, currentRayDir, facePoint, pushPull_faceNormal, hitDist);
@@ -193,13 +191,11 @@ void PushPullTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl
             pushPullCurrentLength = 0.0f;
             lengthInputBuf[0] = '\0';
 
-            // Clear any previous selection
             *context.selectedObjId = 0;
             context.selectedTriangleIndices->clear();
         }
     }
 }
-// -- END OF MODIFICATION --
 
 void PushPullTool::OnRightMouseDown() {
     if (isPushPullActive) {
@@ -325,7 +321,7 @@ void PushPullTool::finalizePushPull(bool ctrl) {
             Urbaxio::Engine::SceneObject* obj = context.scene->get_object_by_id(pushPull_objId);
             if (!obj) { reset(); return; }
             
-            const auto& mesh = obj->get_mesh_buffers();
+            const auto& mesh = obj->getMeshBuffers();
             std::set<unsigned int> uniqueVertIndices;
             for (size_t baseIdx : pushPull_faceIndices) {
                 uniqueVertIndices.insert(mesh.indices[baseIdx]);
@@ -355,75 +351,40 @@ void PushPullTool::finalizePushPull(bool ctrl) {
     reset();
 }
 
-// -- START OF MODIFICATION --
-
 void PushPullTool::updateHover(const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
-
     *context.hoveredObjId = 0;
-
     context.hoveredFaceTriangleIndices->clear();
-
     
-
     uint64_t currentHoveredObjId = 0;
-
     size_t currentHoveredTriangleIdx = 0;
-
     float closestHitDist = std::numeric_limits<float>::max();
 
     for (Urbaxio::Engine::SceneObject* obj_ptr : context.scene->get_all_objects()) {
-
         const auto& name = obj_ptr->get_name();
-
-        // -- START OF MODIFICATION --
-        if (obj_ptr && obj_ptr->has_mesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m" && name != "LeftControllerVisual" && name != "RightControllerVisual") {
-        // -- END OF MODIFICATION --
-
-            const auto& mesh = obj_ptr->get_mesh_buffers();
-
+        if (obj_ptr && obj_ptr->hasMesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m" && name != "LeftControllerVisual" && name != "RightControllerVisual") {
+            const auto& mesh = obj_ptr->getMeshBuffers();
             for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-
                 glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]);
-
                 glm::vec3 v1(mesh.vertices[mesh.indices[i+1]*3], mesh.vertices[mesh.indices[i+1]*3+1], mesh.vertices[mesh.indices[i+1]*3+2]);
-
                 glm::vec3 v2(mesh.vertices[mesh.indices[i+2]*3], mesh.vertices[mesh.indices[i+2]*3+1], mesh.vertices[mesh.indices[i+2]*3+2]);
-
                 float t;
-
                 if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDirection, v0, v1, v2, t) && t > 0 && t < closestHitDist) {
-
                     closestHitDist = t;
-
                     currentHoveredObjId = obj_ptr->get_id();
-
                     currentHoveredTriangleIdx = i;
-
                 }
-
             }
-
         }
-
     }
 
     if (currentHoveredObjId != 0) {
-
         Urbaxio::Engine::SceneObject* hitObject = context.scene->get_object_by_id(currentHoveredObjId);
-
         if (hitObject) {
-
             *context.hoveredFaceTriangleIndices = FindCoplanarAdjacentTriangles_ForPushPull(*hitObject, currentHoveredTriangleIdx);
-
             *context.hoveredObjId = currentHoveredObjId;
-
         }
-
     }
-
 }
-
-// -- END OF MODIFICATION --
 
 void PushPullTool::RenderUI() {
     if (isPushPullActive) {

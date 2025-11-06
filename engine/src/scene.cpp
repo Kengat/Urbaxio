@@ -2,6 +2,9 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "engine/scene.h"
 #include "engine/scene_object.h"
+#include "engine/geometry/IGeometry.h"
+#include "engine/geometry/BRepGeometry.h"
+#include "engine/geometry/MeshGeometry.h"
 #include "engine/MaterialManager.h"
 #include <cad_kernel/cad_kernel.h>
 #include <cad_kernel/MeshBuffers.h> // Required for TriangulateShape return type
@@ -294,9 +297,28 @@ namespace { // Anonymous namespace for utility functions
     }
     // --- END OF MODIFIED HELPER FUNCTION ---
 
-}
+    // --- ДОБАВЬ ЭТОТ НОВЫЙ ХЕЛПЕР ---
+    std::vector<std::pair<glm::vec3, glm::vec3>> ExtractEdgesFromBRepShape(const TopoDS_Shape& shape) {
+        std::vector<std::pair<glm::vec3, glm::vec3>> edges;
+        TopExp_Explorer explorer(shape, TopAbs_EDGE);
+        for (; explorer.More(); explorer.Next()) {
+            const TopoDS_Edge& edge = TopoDS::Edge(explorer.Current());
+            TopoDS_Vertex v1, v2;
+            TopExp::Vertices(edge, v1, v2);
+            if (v1.IsNull() || v2.IsNull()) continue;
+            gp_Pnt p1 = BRep_Tool::Pnt(v1);
+            gp_Pnt p2 = BRep_Tool::Pnt(v2);
+            edges.push_back({
+                { (float)p1.X(), (float)p1.Y(), (float)p1.Z() },
+                { (float)p2.X(), (float)p2.Y(), (float)p2.Z() }
+            });
+        }
+        return edges;
+    }
 
-namespace Urbaxio::Engine {
+} // конец анонимного namespace
+
+namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
 
     const float COPLANARITY_TOLERANCE_SCENE = 1e-4f;
     const int MAX_DFS_DEPTH = 50; // Max recursion depth for DFS to prevent stack overflow
@@ -330,11 +352,18 @@ namespace Urbaxio::Engine {
         state->nextLineId = this->next_line_id_;
         
         for (const auto& [id, obj_ptr] : this->objects_) {
+            // --- MODIFICATION: Only capture exportable objects ---
+            if (!obj_ptr->isExportable()) {
+                continue;
+            }
+
             ObjectState objState;
             objState.id = id;
             objState.name = obj_ptr->get_name();
-            if (obj_ptr->has_shape()) {
-                const TopoDS_Shape* shape = obj_ptr->get_shape();
+            
+            // NEW: Check if the geometry is a BRepGeometry before serializing
+            if (auto* brepGeom = dynamic_cast<BRepGeometry*>(obj_ptr->getGeometry())) {
+                const TopoDS_Shape* shape = brepGeom->getShape();
                 if (shape && !shape->IsNull()) {
                     std::stringstream ss;
                     try {
@@ -360,18 +389,24 @@ namespace Urbaxio::Engine {
             newStateObjectIds.insert(id);
         }
 
+        // --- MODIFICATION: Remove only EXPORTABLE objects that are not in the new state ---
         for (auto it = this->objects_.begin(); it != this->objects_.end(); ) {
-            if (newStateObjectIds.find(it->first) == newStateObjectIds.end()) {
+            bool isExportable = it->second->isExportable();
+            bool isInNewState = (newStateObjectIds.find(it->first) != newStateObjectIds.end());
+            
+            if (isExportable && !isInNewState) {
                 it = this->objects_.erase(it);
-            } else { ++it; }
+            } else {
+                ++it;
+            }
         }
         
+        // Update or create objects from the state (this part is correct as it only touches exportable objects)
         for (const auto& [id, objState] : state.objects) {
             SceneObject* obj = this->get_object_by_id(id);
             if (!obj) {
-                obj = this->create_object(objState.name);
-                // Note: create_object assigns a new ID, but for undo/redo we want to preserve the original ID.
-                // This would require a custom object creation for full fidelity, but for now we ensure the object exists.
+                obj = this->create_object_with_id(id, objState.name);
+                obj->setExportable(true); // Ensure newly created objects from state are exportable
             }
 
             if (!objState.serializedShape.empty()) {
@@ -379,18 +414,16 @@ namespace Urbaxio::Engine {
                 std::stringstream ss(std::string(objState.serializedShape.begin(), objState.serializedShape.end()));
                 try {
                     BinTools::Read(restoredShape, ss);
-                    obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(restoredShape)));
-                    obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*obj->get_shape()));
-                    obj->vao = 0;
+                    auto brepGeom = std::make_unique<BRepGeometry>(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(restoredShape)));
+                    obj->setGeometry(std::move(brepGeom));
                     this->UpdateObjectBoundary(obj);
                 } catch(...) { /* error */ }
-            } else if (obj->has_shape()) {
-                obj->set_shape(nullptr);
-                obj->set_mesh_buffers({});
-                obj->vao = 0;
+            } else if (dynamic_cast<BRepGeometry*>(obj->getGeometry())) {
+                // If the object in the state has no shape, remove BRep geometry from the live object.
+                obj->setGeometry(nullptr);
             }
         }
-        MarkStaticGeometryDirty(); // --- NEW: Mark as dirty after undo/redo
+        MarkStaticGeometryDirty();
     }
 
     SceneObject* Scene::create_object(const std::string& name) { 
@@ -426,25 +459,26 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         if (!new_obj) {
             return nullptr;
         }
+        
         Urbaxio::CadKernel::OCCT_ShapeUniquePtr box_shape_ptr = Urbaxio::CadKernel::create_box(dx, dy, dz);
-        if (!box_shape_ptr) {
+        if (!box_shape_ptr || box_shape_ptr->IsNull()) {
+            // If creation fails, we should remove the empty object to avoid clutter.
+            DeleteObject(new_obj->get_id());
             return nullptr;
         }
-        const TopoDS_Shape* shape_to_triangulate = box_shape_ptr.get();
-        if (!shape_to_triangulate || shape_to_triangulate->IsNull()) {
-            return nullptr;
-        }
-        new_obj->set_shape(std::move(box_shape_ptr));
+
+        // NEW: Wrap the shape in our BRepGeometry class
+        auto geometry = std::make_unique<BRepGeometry>(std::move(box_shape_ptr));
+        
+        // NEW: Set the polymorphic geometry on the object
+        new_obj->setGeometry(std::move(geometry));
+
+        // The rest of the logic remains the same
         UpdateObjectBoundary(new_obj);
-        Urbaxio::CadKernel::MeshBuffers mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_obj->get_shape());
-        if (!mesh_data.isEmpty()) {
-            // --- SIMPLIFIED: Rely on set_mesh_buffers to create the default group ---
-            new_obj->set_mesh_buffers(std::move(mesh_data));
-        } else {
-            std::cerr << "Scene: Warning - Triangulation failed for box '" << name << "'." << std::endl;
-        }
-        new_obj->setExportable(true); // --- FIX: Explicitly mark as static/exportable
-        MarkStaticGeometryDirty(); // --- NEW: Mark as dirty
+        new_obj->setExportable(true);
+        MarkStaticGeometryDirty();
+        
+        // Note: Triangulation is now lazy, it will happen when getMeshBuffers() is first called.
         return new_obj;
     }
     SceneObject* Scene::get_object_by_id(uint64_t id) { auto it = objects_.find(id); if (it != objects_.end()) { return it->second.get(); } return nullptr; }
@@ -467,10 +501,13 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         for (uint64_t lineId : lines_to_remove) {
             RemoveLine(lineId);
         }
+        
+        // Clear geometry which will also invalidate mesh cache
+        obj->setGeometry(nullptr);
 
         // Erase the object from the map, which will call its destructor and free memory
         objects_.erase(it);
-        MarkStaticGeometryDirty(); // --- NEW: Mark as dirty
+        MarkStaticGeometryDirty();
         std::cout << "Scene: Deleted object " << id << std::endl;
     }
 
@@ -799,20 +836,15 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
 
     void Scene::CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane) {
         if (orderedVertices.size() < 3) return;
+        
         BRepBuilderAPI_MakeWire wireMaker;
-        std::vector<TopoDS_Edge> edges;
         try {
             for (size_t i = 0; i < orderedVertices.size(); ++i) {
                 gp_Pnt p1_occt(orderedVertices[i].x, orderedVertices[i].y, orderedVertices[i].z);
                 gp_Pnt p2_occt(orderedVertices[(i + 1) % orderedVertices.size()].x, orderedVertices[(i + 1) % orderedVertices.size()].y, orderedVertices[(i + 1) % orderedVertices.size()].z);
                 if (p1_occt.IsEqual(p2_occt, SCENE_POINT_EQUALITY_TOLERANCE)) continue;
-                TopoDS_Vertex v1 = BRepBuilderAPI_MakeVertex(p1_occt);
-                TopoDS_Vertex v2 = BRepBuilderAPI_MakeVertex(p2_occt);
-                TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(v1, v2);
-                if (edge.IsNull()) { std::cerr << "OCCT Error: Failed to create edge for face." << std::endl; return; }
-                edges.push_back(edge);
+                wireMaker.Add(BRepBuilderAPI_MakeEdge(p1_occt, p2_occt));
             }
-            for(const auto& edge : edges) wireMaker.Add(edge);
         } catch (const Standard_Failure& e) { std::cerr << "OCCT Exception during edge/vertex creation for face: " << e.GetMessageString() << std::endl; return; }
 
         if (wireMaker.IsDone() && !wireMaker.Wire().IsNull()) {
@@ -823,14 +855,12 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                 std::string face_name = "AutoFace_" + std::to_string(next_face_id_++);
                 SceneObject* new_face_obj = create_object(face_name);
                 if (new_face_obj) {
-                    TopoDS_Shape* shape_copy = new TopoDS_Shape(face);
-                    new_face_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(shape_copy));
+                    // NEW: Use the new geometry system
+                    auto geometry = std::make_unique<BRepGeometry>(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(face)));
+                    new_face_obj->setGeometry(std::move(geometry));
+                    
                     UpdateObjectBoundary(new_face_obj); // <-- Sync lines
-                    Urbaxio::CadKernel::MeshBuffers mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_face_obj->get_shape());
-                    if (!mesh_data.isEmpty()) {
-                        new_face_obj->set_mesh_buffers(std::move(mesh_data));
-                        std::cout << "Scene: Auto-created Face object: " << face_name << ". Mesh ready for GPU." << std::endl;
-                    } else { std::cerr << "Scene: Triangulation failed for auto-face " << new_face_obj->get_id() << std::endl; }
+                    std::cout << "Scene: Auto-created Face object: " << face_name << std::endl;
                 }
             } else { std::cerr << "OCCT Error: Failed to create face from wire. Error: " << faceMaker.Error() << std::endl; }
         } else { std::cerr << "OCCT Error: Failed to create wire for face. Error: " << wireMaker.Error() << std::endl; }
@@ -876,8 +906,8 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             glm::vec3 loopNormal(normalDir.X(), normalDir.Y(), normalDir.Z());
             
             for (const auto& [id, obj_ptr] : objects_) {
-                if (obj_ptr && obj_ptr->has_shape()) {
-                    TopoDS_Face foundFace = FindOriginalFace(obj_ptr.get(), *obj_ptr->get_shape(), finalOrderedVertices, loopNormal);
+                if (obj_ptr && dynamic_cast<BRepGeometry*>(obj_ptr->getGeometry())) {
+                    TopoDS_Face foundFace = FindOriginalFace(obj_ptr.get(), finalOrderedVertices, loopNormal);
                     if (!foundFace.IsNull()) {
                         hostObject = obj_ptr.get();
                         originalHostFace = foundFace;
@@ -890,12 +920,15 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         if (hostObject && !originalHostFace.IsNull()) {
             std::cout << "Scene: Detected new loop on existing face of object " << hostObject->get_id() << ". Attempting PARAMETRIC split." << std::endl;
             try {
-                // --- Step 1: Heal the host shape to ensure it's valid for boolean operations ---
-                ShapeFix_Shape shapeFixer(*hostObject->get_shape());
+                // NEW: Get shape from BRepGeometry
+                auto* brepGeom = static_cast<BRepGeometry*>(hostObject->getGeometry());
+                const TopoDS_Shape* hostShape = brepGeom->getShape();
+                if (!hostShape) throw Standard_Failure("Host object has no B-Rep shape.");
+
+                ShapeFix_Shape shapeFixer(*hostShape);
                 shapeFixer.Perform();
                 TopoDS_Shape healedShape = shapeFixer.Shape();
                 AnalyzeShape(healedShape, "Healed Host Shape BEFORE split");
-                // Re-find the face on the healed shape using the context
                 Handle(ShapeBuild_ReShape) context = shapeFixer.Context();
                 TopoDS_Shape healedFaceShape = context->Apply(originalHostFace);
                 if (healedFaceShape.IsNull() || healedFaceShape.ShapeType() != TopAbs_FACE) {
@@ -908,7 +941,6 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                     throw Standard_Failure("Host face has no underlying surface.");
                 }
                 Handle(ShapeAnalysis_Surface) analysis = new ShapeAnalysis_Surface(hostSurface);
-                // --- Step 2: Create a list of topologically sound edges from the loop vertices ---
                 TopTools_ListOfShape edgeList;
                 Standard_Real umin, umax, vmin, vmax;
                 hostSurface->Bounds(umin, umax, vmin, vmax);
@@ -955,7 +987,6 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                 if (cuttingWire.IsNull() || !BRep_Tool::IsClosed(cuttingWire)) {
                     throw Standard_Failure("The final wire created by ShapeFix_Wire is not a single, closed loop.");
                 }
-                // --- Step 4: Perform the Split operation ---
                 BOPAlgo_Splitter splitter;
                 TopTools_ListOfShape arguments;
                 arguments.Append(healedShape);
@@ -963,27 +994,18 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                 TopTools_ListOfShape tools;
                 tools.Append(cuttingWire);
                 splitter.SetTools(tools);
-                splitter.Perform();
-                // Count faces before for validation
                 TopExp_Explorer faceExpBefore(healedShape, TopAbs_FACE);
                 int faceCountBefore = 0;
                 for (; faceExpBefore.More(); faceExpBefore.Next()) faceCountBefore++;
-
                 splitter.Perform();
-
-                // ROBUSTNESS: Check for errors from the boolean operation itself.
                 if (splitter.HasErrors()) {
                     splitter.GetReport()->Dump(std::cout);
                     throw Standard_Failure("BOPAlgo_Splitter failed to perform operation.");
                 }
-                
                 TopoDS_Shape splitShape = splitter.Shape();
-
-                // --- NEW: Validate that the split actually happened ---
                 TopExp_Explorer faceExpAfter(splitShape, TopAbs_FACE);
                 int faceCountAfter = 0;
                 for (; faceExpAfter.More(); faceExpAfter.Next()) faceCountAfter++;
-
                 if (faceCountAfter <= faceCountBefore) {
                     throw Standard_Failure("BOPAlgo_Splitter completed without errors but failed to split the face. This can indicate a degenerate cutting wire or tolerance issues.");
                 }
@@ -992,17 +1014,16 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                 finalFixer.Perform();
                 TopoDS_Shape finalShape = finalFixer.Shape();
                 AnalyzeShape(finalShape, "Final Shape AFTER ShapeFix_Shape");
-                hostObject->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
+                
+                // NEW: Update geometry through the new system
+                brepGeom->setShape(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
+                hostObject->invalidateMeshCache();
                 UpdateObjectBoundary(hostObject);
-                hostObject->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*hostObject->get_shape()));
-                hostObject->vao = 0;
                 std::cout << "Scene: Object " << hostObject->get_id() << " was successfully split and updated." << std::endl;
             } catch (const Standard_Failure& e) {
                 std::cerr << "OCCT Exception during parametric split: " << e.GetMessageString() << std::endl;
             }
         } else {
-            // Fallback: This loop was not on an existing face. Create a new one.
-            // This is the logic for creating faces from sketches in empty space.
             std::cout << "FindAndCreateFaces: Loop detected, but no suitable host face found. Creating a new independent face object." << std::endl;
             CreateOCCTFace(finalOrderedVertices, cyclePlane);
             lines_.at(newLineId).usedInFace = true;
@@ -1013,55 +1034,46 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
     }
     
     // --- HELPER FUNCTIONS ---
-    std::vector<std::pair<glm::vec3, glm::vec3>> Scene::ExtractEdgesFromShape(const TopoDS_Shape& shape) {
-        std::vector<std::pair<glm::vec3, glm::vec3>> edges;
-        TopExp_Explorer explorer(shape, TopAbs_EDGE);
-        for (; explorer.More(); explorer.Next()) {
-            const TopoDS_Edge& edge = TopoDS::Edge(explorer.Current());
-            TopoDS_Vertex v1, v2;
-            TopExp::Vertices(edge, v1, v2);
-            if (v1.IsNull() || v2.IsNull()) continue;
-            gp_Pnt p1 = BRep_Tool::Pnt(v1);
-            gp_Pnt p2 = BRep_Tool::Pnt(v2);
-            edges.push_back({
-                { (float)p1.X(), (float)p1.Y(), (float)p1.Z() },
-                { (float)p2.X(), (float)p2.Y(), (float)p2.Z() }
-            });
-        }
-        return edges;
-    }
-
     void Scene::UpdateObjectBoundary(SceneObject* obj) {
-        if (!obj || !obj->has_shape()) return;
+        if (!obj || !obj->hasGeometry()) return;
         
-        // --- MODIFIED LOGIC ---
         // 1. Remove all old lines associated with this object.
-        // This is crucial for rebuilding vertex adjacency correctly.
         for (uint64_t oldLineId : obj->boundaryLineIDs) {
             RemoveLine(oldLineId);
         }
         obj->boundaryLineIDs.clear();
         
-        // 2. Extract fresh edges from the shape.
-        auto new_edges = ExtractEdgesFromShape(*obj->get_shape());
-        
-        // 3. Add the new edges as lines and update the object's boundary set.
-        for (const auto& edge : new_edges) {
-            uint64_t line_id = AddSingleLineSegment(edge.first, edge.second);
-            if (line_id != 0) {
-                lines_[line_id].usedInFace = true;
-                obj->boundaryLineIDs.insert(line_id);
+        // 2. Extract fresh edges if it's a BRep shape.
+        if (auto* brepGeom = dynamic_cast<BRepGeometry*>(obj->getGeometry())) {
+            const TopoDS_Shape* shape = brepGeom->getShape();
+            if (shape) {
+                auto new_edges = ExtractEdgesFromBRepShape(*shape);
+                
+                // 3. Add the new edges as lines and update the object's boundary set.
+                for (const auto& edge : new_edges) {
+                    uint64_t line_id = AddSingleLineSegment(edge.first, edge.second);
+                    if (line_id != 0) {
+                        lines_[line_id].usedInFace = true;
+                        obj->boundaryLineIDs.insert(line_id);
+                    }
+                }
             }
         }
+        // Note: For other geometry types like MeshGeometry or VolumetricGeometry,
+        // this function does nothing, which is correct as they don't define B-Rep boundaries.
     }
     
 
 
-    // --- УНИВЕРСАЛЬНЫЙ ГИБРИДНЫЙ ПОДХОД ---
-    TopoDS_Face Scene::FindOriginalFace(SceneObject* obj, const TopoDS_Shape& shape, const std::vector<glm::vec3>& faceVertices, const glm::vec3& guideNormal) {
+    TopoDS_Face Scene::FindOriginalFace(SceneObject* obj, const std::vector<glm::vec3>& faceVertices, const glm::vec3& guideNormal) {
         if (faceVertices.empty() || !obj) return TopoDS_Face();
+        
+        // NEW: The shape now comes from the IGeometry interface
+        auto* brepGeom = dynamic_cast<BRepGeometry*>(obj->getGeometry());
+        if (!brepGeom) return TopoDS_Face();
+        const TopoDS_Shape* shape = brepGeom->getShape();
+        if (!shape) return TopoDS_Face();
 
-        // --- ШАГ 1: НАДЕЖНЫЙ ТОПОЛОГИЧЕСКИЙ ПОИСК (для MoveTool) ---
         std::unordered_set<TopoDS_Vertex, TopTools_ShapeMapHasher> targetVertices;
         for (const auto& pos : faceVertices) {
             const TopoDS_Vertex* v = obj->findVertexAtLocation(pos);
@@ -1072,7 +1084,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
 
         std::vector<TopoDS_Face> candidates;
         if (!targetVertices.empty()) {
-            TopExp_Explorer faceExplorer(shape, TopAbs_FACE);
+            TopExp_Explorer faceExplorer(*shape, TopAbs_FACE);
             for (; faceExplorer.More(); faceExplorer.Next()) {
                 TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
                 std::unordered_set<TopoDS_Vertex, TopTools_ShapeMapHasher> faceVerticesSet;
@@ -1094,10 +1106,8 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             }
         }
         
-        // --- ШАГ 2: ГИБКИЙ ГЕОМЕТРИЧЕСКИЙ ОТКАТ (для LineTool и PushPull) ---
-        // Если топологический поиск не дал точного совпадения, используем старый метод, основанный на геометрии.
         if (candidates.empty()) {
-            TopExp_Explorer faceExplorer(shape, TopAbs_FACE);
+            TopExp_Explorer faceExplorer(*shape, TopAbs_FACE);
             for (; faceExplorer.More(); faceExplorer.Next()) {
                 TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
                 try {
@@ -1121,8 +1131,8 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                 }
             }
         }
-
-        // 3. Логика выбора лучшего кандидата (остается без изменений)
+        
+        // Remainder of the function is unchanged, copy it as is.
         if (candidates.empty()) {
             return TopoDS_Face();
         }
@@ -1266,39 +1276,25 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
     // --- END OF MODIFIED AnalyzeShape FUNCTION ---
 
     
-    bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<size_t>& faceTriangleIndices, const glm::vec3& direction, float distance, bool disableMerge) {
-        SceneObject* obj = get_object_by_id(objectId);
-        if (!obj || !obj->has_shape() || faceTriangleIndices.empty()) {
-            return false;
-        }
-
-        const auto& mesh = obj->get_mesh_buffers();
-        std::set<unsigned int> faceVertexIndicesSet;
-        for (size_t baseIdx : faceTriangleIndices) {
-            faceVertexIndicesSet.insert(mesh.indices[baseIdx]);
-            faceVertexIndicesSet.insert(mesh.indices[baseIdx + 1]);
-            faceVertexIndicesSet.insert(mesh.indices[baseIdx + 2]);
-        }
-        std::vector<glm::vec3> faceVertices;
-        for (unsigned int idx : faceVertexIndicesSet) {
-            faceVertices.push_back({mesh.vertices[idx * 3], mesh.vertices[idx * 3 + 1], mesh.vertices[idx * 3 + 2]});
-        }
-        
-        return ExtrudeFace(objectId, faceVertices, direction, distance, disableMerge);
-    }
-
     bool Scene::ExtrudeFace(uint64_t objectId, const std::vector<glm::vec3>& faceVertices, const glm::vec3& direction, float distance, bool disableMerge) {
         SceneObject* obj = get_object_by_id(objectId);
-        if (!obj || !obj->has_shape() || faceVertices.empty()) {
+        if (!obj || !obj->hasGeometry() || faceVertices.empty()) {
             return false;
         }
+        
+        auto* brepGeom = dynamic_cast<BRepGeometry*>(obj->getGeometry());
+        if (!brepGeom) {
+            std::cerr << "ExtrudeFace Error: Operation is only supported on B-Rep geometry." << std::endl;
+            return false;
+        }
+        const TopoDS_Shape* originalShape = brepGeom->getShape();
+        if (!originalShape) return false;
+        
         if (std::abs(distance) < 1e-4) {
             return true;
         }
-
-        const TopoDS_Shape* originalShape = obj->get_shape();
         
-        TopoDS_Face faceToExtrude = FindOriginalFace(obj, *originalShape, faceVertices, direction);
+        TopoDS_Face faceToExtrude = FindOriginalFace(obj, faceVertices, direction);
         if (faceToExtrude.IsNull()) {
             std::cerr << "ExtrudeFace Error: Could not find corresponding B-Rep face." << std::endl;
             return false;
@@ -1323,13 +1319,9 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             extrudeVector *= distance;
             
             BRepPrimAPI_MakePrism prismMaker(faceToExtrude, extrudeVector);
+            if (!prismMaker.IsDone()) { std::cerr << "OCCT Error: Failed to create prism from face." << std::endl; return false; }
             
-            if (!prismMaker.IsDone()) {
-                std::cerr << "OCCT Error: Failed to create prism from face." << std::endl;
-                return false;
-            }
             TopoDS_Shape prismShape = prismMaker.Shape();
-            
             TopoDS_Shape finalShape;
             
             bool is3DBody = (originalShape->ShapeType() == TopAbs_SOLID || originalShape->ShapeType() == TopAbs_COMPSOLID);
@@ -1352,55 +1344,64 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             } else {
                 finalShape = prismShape;
             }
-            
-            obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
 
-            if (obj->has_shape()) {
-                ShapeFix_Shape shapeFixer(*obj->get_shape());
-                shapeFixer.Perform();
-                TopoDS_Shape healedShape = shapeFixer.Shape();
-                if (!disableMerge) {
-                    ShapeUpgrade_UnifySameDomain Unifier;
-                    Unifier.Initialize(healedShape);
-                    Unifier.SetLinearTolerance(1e-4); 
-                    Unifier.SetAngularTolerance(1e-4); 
-                    Unifier.AllowInternalEdges(Standard_True);
-                    Unifier.Build();
-                    healedShape = Unifier.Shape();
-                }
-                obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(healedShape)));
-                UpdateObjectBoundary(obj);
-                obj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*obj->get_shape()));
-                obj->vao = 0;
-            }
+        ShapeFix_Shape shapeFixer(finalShape);
+        shapeFixer.Perform();
+        TopoDS_Shape healedShape = shapeFixer.Shape();
+        if (!disableMerge) {
+            ShapeUpgrade_UnifySameDomain Unifier;
+            Unifier.Initialize(healedShape);
+            Unifier.SetLinearTolerance(1e-4); 
+            Unifier.SetAngularTolerance(1e-4); 
+            Unifier.AllowInternalEdges(Standard_True);
+            Unifier.Build();
+            healedShape = Unifier.Shape();
+        }
+        
+        // NEW: Update geometry through the new system
+        brepGeom->setShape(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(healedShape)));
+        obj->invalidateMeshCache();
+        UpdateObjectBoundary(obj);
+        
         } catch (const Standard_Failure& e) {
             std::cerr << "OCCT Exception during ExtrudeFace: " << e.GetMessageString() << std::endl;
             return false;
         }
-        // --- START OF MODIFICATION ---
-        // Mark the scene as dirty so the renderer will re-compile the static batch.
+        
         MarkStaticGeometryDirty();
-        // --- END OF MODIFICATION ---
         return true;
     }
 
     // --- NEW: Testing Infrastructure ---
     
     void Scene::ClearScene() { // This is now private
-        // This clears the engine's state. The shell is responsible for cleaning up GPU resources.
-        objects_.clear();
-        next_object_id_ = 1;
+        // --- MODIFICATION START: Erase only exportable objects ---
+        for (auto it = objects_.begin(); it != objects_.end(); ) {
+            if (it->second->isExportable()) {
+                // Also remove any boundary lines associated with the object being deleted
+                for (uint64_t lineId : it->second->boundaryLineIDs) {
+                    RemoveLine(lineId);
+                }
+                it = objects_.erase(it); // Erase and move to the next valid iterator
+            } else {
+                ++it; // Keep this object and move to the next one
+            }
+        }
+        // --- MODIFICATION END ---
+        
+        // Reset counters and other scene data
+        next_object_id_ = 1; // Resetting this might cause ID conflicts if we are not careful, but for "New Scene" it's ok.
         next_face_id_ = 1;
         
         lines_.clear();
         vertexAdjacency_.clear();
         next_line_id_ = 1;
         
-        commandManager_->ClearHistory(); // <-- NEW
+        commandManager_->ClearHistory();
         if (materialManager_) { materialManager_->ClearMaterials(); }
 
-        MarkStaticGeometryDirty(); // --- NEW: Mark as dirty
-        std::cout << "Scene: Cleared all objects, lines and command history from engine state." << std::endl;
+        MarkStaticGeometryDirty();
+        std::cout << "Scene: Cleared all user-created objects and lines." << std::endl;
     }
 
     void Scene::NewScene() {
@@ -1422,16 +1423,22 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             file.write(name.c_str(), nameLen);
             
             // Shape
-            bool hasShape = obj_ptr->has_shape() && obj_ptr->get_shape() && !obj_ptr->get_shape()->IsNull();
-            file.write(reinterpret_cast<const char*>(&hasShape), sizeof(hasShape));
-            if (hasShape) {
-                try {
-                    BinTools::Write(*obj_ptr->get_shape(), file);
-                } catch(...) {
-                    std::cerr << "Scene Error: Failed to write shape for object ID " << id << std::endl;
-                    // We can't easily recover here, so maybe it's best to fail the save.
-                    return false;
+            bool hasShape = false;
+            if (auto* brepGeom = dynamic_cast<BRepGeometry*>(obj_ptr->getGeometry())) {
+                const TopoDS_Shape* shape = brepGeom->getShape();
+                hasShape = (shape && !shape->IsNull());
+                file.write(reinterpret_cast<const char*>(&hasShape), sizeof(hasShape));
+                if (hasShape) {
+                    try {
+                        BinTools::Write(*shape, file);
+                    } catch(...) {
+                        std::cerr << "Scene Error: Failed to write shape for object ID " << id << std::endl;
+                        // We can't easily recover here, so maybe it's best to fail the save.
+                        return false;
+                    }
                 }
+            } else {
+                file.write(reinterpret_cast<const char*>(&hasShape), sizeof(hasShape));
             }
         }
 
@@ -1442,9 +1449,9 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
     bool Scene::LoadFromStream(std::istream& file) {
         ClearScene();
 
-        // 2. Scene Objects
         uint64_t numObjects;
         file.read(reinterpret_cast<char*>(&numObjects), sizeof(numObjects));
+        if (!file) return false;
 
         for (uint64_t i = 0; i < numObjects; ++i) {
             uint64_t id;
@@ -1464,10 +1471,11 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                 TopoDS_Shape shape;
                 try {
                     BinTools::Read(shape, file);
-                    newObj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(shape)));
+                    // NEW: Use the new geometry system
+                    auto geometry = std::make_unique<BRepGeometry>(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(shape)));
+                    newObj->setGeometry(std::move(geometry));
                     UpdateObjectBoundary(newObj);
-                    newObj->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*newObj->get_shape()));
-                    newObj->vao = 0; // Mark for GPU upload
+                    // The mesh will be created lazily by getMeshBuffers()
                 } catch (...) {
                      std::cerr << "Scene Error: Failed to read shape for object ID " << id << std::endl;
                 }
@@ -1490,27 +1498,20 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             TopoDS_Edge edge4 = BRepBuilderAPI_MakeEdge(p4, p1);
 
             BRepBuilderAPI_MakeWire wireMaker(edge1, edge2, edge3, edge4);
-            if (!wireMaker.IsDone()) {
-                std::cerr << "CreateRectangularFace Error: Failed to create wire." << std::endl;
-                return nullptr;
-            }
+            if (!wireMaker.IsDone()) { std::cerr << "CreateRectangularFace Error: Failed to create wire." << std::endl; return nullptr; }
+            
             TopoDS_Wire wire = wireMaker.Wire();
             BRepBuilderAPI_MakeFace faceMaker(wire, Standard_True);
-            if (!faceMaker.IsDone() || faceMaker.Face().IsNull()) {
-                std::cerr << "CreateRectangularFace Error: Failed to create face." << std::endl;
-                return nullptr;
-            }
+            if (!faceMaker.IsDone() || faceMaker.Face().IsNull()) { std::cerr << "CreateRectangularFace Error: Failed to create face." << std::endl; return nullptr; }
 
-            TopoDS_Face face = faceMaker.Face();
             SceneObject* new_face_obj = this->create_object(name);
             if (new_face_obj) {
-                new_face_obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(face)));
+                // NEW: Use the new geometry system
+                auto geometry = std::make_unique<BRepGeometry>(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(faceMaker.Face())));
+                new_face_obj->setGeometry(std::move(geometry));
+
                 UpdateObjectBoundary(new_face_obj);
-                auto mesh_data = Urbaxio::CadKernel::TriangulateShape(*new_face_obj->get_shape());
-                if (!mesh_data.isEmpty()) {
-                    new_face_obj->set_mesh_buffers(std::move(mesh_data));
-                    std::cout << "Scene: Created test face object: " << name << std::endl;
-                }
+                std::cout << "Scene: Created test face object: " << name << std::endl;
                 return new_face_obj;
             }
         } catch (const Standard_Failure& e) {
@@ -1574,7 +1575,12 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         bool testPassed = false;
         if (finalObjectCount == 1) {
             SceneObject* finalObj = get_all_objects()[0];
-            TopExp_Explorer faceExp(*finalObj->get_shape(), TopAbs_FACE);
+            auto* brepGeom = dynamic_cast<BRepGeometry*>(finalObj->getGeometry());
+            if (!brepGeom || !brepGeom->getShape()) {
+                std::cout << "TEST FAILED: Final object has no B-Rep geometry." << std::endl;
+                return;
+            }
+            TopExp_Explorer faceExp(*brepGeom->getShape(), TopAbs_FACE);
             int faceCount = 0;
             for (; faceExp.More(); faceExp.Next()) faceCount++;
             if (faceCount == 2) {
@@ -1594,7 +1600,12 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
 
         std::cout << "\n--- Final Object Analysis ---\n" << std::endl;
         for (const auto& [id, obj_ptr] : objects_) {
-            AnalyzeShape(*obj_ptr->get_shape(), "Final Object " + std::to_string(id));
+            if (auto* brepGeom = dynamic_cast<BRepGeometry*>(obj_ptr->getGeometry())) {
+                const TopoDS_Shape* shape = brepGeom->getShape();
+                if (shape) {
+                    AnalyzeShape(*shape, "Final Object " + std::to_string(id));
+                }
+            }
         }
         
         std::cout << "\n--- FACE SPLITTING TEST FINISHED ---\n" << std::endl;
@@ -1604,9 +1615,9 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         if (faceVertices.empty()) return nullptr;
         
         for (auto* obj : get_all_objects()) {
-            if (!obj || !obj->has_shape()) continue;
+            if (!obj || !obj->hasGeometry()) continue;
             // Guide normal doesn't matter much here, we're just checking for containment.
-            TopoDS_Face foundFace = FindOriginalFace(obj, *obj->get_shape(), faceVertices, glm::vec3(0,0,1));
+            TopoDS_Face foundFace = FindOriginalFace(obj, faceVertices, glm::vec3(0,0,1));
             if (!foundFace.IsNull()) {
                 return obj;
             }
@@ -1621,39 +1632,35 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         const glm::vec3& translation
     ) {
         SceneObject* obj = get_object_by_id(objectId);
-        if (!obj || !obj->has_shape()) return;
+        if (!obj || !obj->hasGeometry()) return;
+        
+        // This operation is only valid for B-Rep geometry.
+        auto* brepGeom = dynamic_cast<BRepGeometry*>(obj->getGeometry());
+        if (!brepGeom) {
+            std::cout << "Warning: Vertex move reconstruction is only supported for B-Rep objects." << std::endl;
+            return;
+        }
+        const TopoDS_Shape* originalShape = brepGeom->getShape();
+        if (!originalShape || originalShape->IsNull()) {
+            std::cerr << "Rebuild Error: Object has no B-Rep shape." << std::endl;
+            return;
+        }
 
         if (type == SubObjectType::FACE) {
-            if (glm::length2(translation) < 1.0e-10f) {
-                return;
-            }
+            if (glm::length2(translation) < 1.0e-10f) return;
 
-            glm::vec3 v0 = initialPositions[0];
-            glm::vec3 v1 = initialPositions[1];
-            glm::vec3 v2 = initialPositions[2];
+            glm::vec3 v0 = initialPositions[0], v1 = initialPositions[1], v2 = initialPositions[2];
             glm::vec3 faceNormal = glm::normalize(glm::cross(v1 - v0, v2 - v0));
             float projection = glm::dot(translation, faceNormal);
-
             if (std::fabs(projection) > 1.0e-5f) {
                 glm::vec3 direction = projection >= 0.0f ? faceNormal : -faceNormal;
                 float distance = std::fabs(projection);
-            if (ExtrudeFace(objectId, initialPositions, direction, distance, false)) {
-                    return;
-                }
+                if (ExtrudeFace(objectId, initialPositions, direction, distance, false)) return;
                 std::cerr << "MoveFace warning: ExtrudeFace fallback failed, trying direct reshape." << std::endl;
             }
-
-            const TopoDS_Shape& originalShape = *obj->get_shape();
-            if (originalShape.IsNull()) {
-                std::cerr << "Rebuild Error: Object has no B-Rep shape." << std::endl;
-                return;
-            }
-
-            TopoDS_Face faceToMove = FindOriginalFace(obj, originalShape, initialPositions, translation);
-            if (faceToMove.IsNull()) {
-                std::cerr << "Rebuild Error: Could not locate face to move." << std::endl;
-                return;
-            }
+            
+            TopoDS_Face faceToMove = FindOriginalFace(obj, initialPositions, translation);
+            if (faceToMove.IsNull()) { std::cerr << "Rebuild Error: Could not locate face to move." << std::endl; return; }
 
             gp_Trsf moveTransform;
             moveTransform.SetTranslation(gp_Vec(translation.x, translation.y, translation.z));
@@ -1679,115 +1686,36 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             TopoDS_Shape transformedFace = BRepBuilderAPI_Transform(faceToMove, moveTransform, Standard_True).Shape();
             reshaper->Replace(faceToMove, transformedFace);
 
-            TopoDS_Shape movedShape = reshaper->Apply(originalShape);
+            TopoDS_Shape movedShape = reshaper->Apply(*originalShape);
 
             Standard_Real diag = 1.0;
-            {
-                Bnd_Box movedBox;
-                BRepBndLib::Add(movedShape, movedBox);
-                if (!movedBox.IsVoid()) {
-                    Standard_Real sqExtent = movedBox.SquareExtent();
-                    if (sqExtent > gp::Resolution()) {
-                        diag = std::sqrt(sqExtent);
-                    }
-                }
-            }
+            { Bnd_Box movedBox; BRepBndLib::Add(movedShape, movedBox); if (!movedBox.IsVoid()) { Standard_Real sqExtent = movedBox.SquareExtent(); if (sqExtent > gp::Resolution()) diag = std::sqrt(sqExtent); } }
             Standard_Real scale = std::max(diag, 1.0);
-            const Standard_Real prec     = std::max(1.0e-6, scale * 5.0e-8);
-            const Standard_Real sewTol   = std::max(2.5e-4, scale * 2.5e-6);
-            const Standard_Real maxTol   = std::max(1.0e-3, scale * 1.0e-5);
-
-            try {
-                BRepLib::BuildCurves3d(movedShape);
-                BRepLib::SameParameter(movedShape, prec, Standard_True);
-            } catch (const Standard_Failure& e) {
-                std::cerr << "Rebuild Warning: BRepLib preparation failed: " << e.GetMessageString() << std::endl;
-            }
-
-            try {
-                ShapeFix_Shape sfix(movedShape);
-                sfix.SetPrecision(prec);
-                sfix.SetMaxTolerance(maxTol);
-                sfix.Perform();
-                movedShape = sfix.Shape();
-            } catch (const Standard_Failure& e) {
-                std::cerr << "Rebuild Warning: ShapeFix_Shape failed: " << e.GetMessageString() << std::endl;
-            }
-
+            const Standard_Real prec = std::max(1.0e-6, scale * 5.0e-8);
+            const Standard_Real sewTol = std::max(2.5e-4, scale * 2.5e-6);
+            const Standard_Real maxTol = std::max(1.0e-3, scale * 1.0e-5);
+            try { BRepLib::BuildCurves3d(movedShape); BRepLib::SameParameter(movedShape, prec, Standard_True); } catch (const Standard_Failure& e) { std::cerr << "Rebuild Warning: BRepLib preparation failed: " << e.GetMessageString() << std::endl; }
+            try { ShapeFix_Shape sfix(movedShape); sfix.SetPrecision(prec); sfix.SetMaxTolerance(maxTol); sfix.Perform(); movedShape = sfix.Shape(); } catch (const Standard_Failure& e) { std::cerr << "Rebuild Warning: ShapeFix_Shape failed: " << e.GetMessageString() << std::endl; }
             TopoDS_Shape sewnShape = movedShape;
-            try {
-                BRepBuilderAPI_Sewing sew(sewTol, Standard_True, Standard_True, Standard_True, Standard_True);
-                sew.SetNonManifoldMode(Standard_False);
-                sew.Add(movedShape);
-                sew.Perform();
-                TopoDS_Shape sewed = sew.SewedShape();
-                if (!sewed.IsNull()) {
-                    sewnShape = sewed;
-                }
-            } catch (const Standard_Failure& e) {
-                std::cerr << "Rebuild Warning: Sewing failed: " << e.GetMessageString() << std::endl;
-            }
-
+            try { BRepBuilderAPI_Sewing sew(sewTol, Standard_True, Standard_True, Standard_True, Standard_True); sew.SetNonManifoldMode(Standard_False); sew.Add(movedShape); sew.Perform(); TopoDS_Shape sewed = sew.SewedShape(); if (!sewed.IsNull()) sewnShape = sewed; } catch (const Standard_Failure& e) { std::cerr << "Rebuild Warning: Sewing failed: " << e.GetMessageString() << std::endl; }
             TopoDS_Shape solidShape = sewnShape;
             try {
                 int shellCount = 0;
                 for (TopExp_Explorer ex(sewnShape, TopAbs_SHELL); ex.More(); ex.Next()) shellCount++;
-
-                if (shellCount >= 1) {
-                    TopoDS_Compound comp;
-                    BRep_Builder bb;
-                    bb.MakeCompound(comp);
-
-                    bool madeAny = false;
-                    for (TopExp_Explorer ex(sewnShape, TopAbs_SHELL); ex.More(); ex.Next()) {
-                        const TopoDS_Shell& sh = TopoDS::Shell(ex.Current());
-                        BRepBuilderAPI_MakeSolid ms(sh);
-                        if (ms.IsDone()) {
-                            TopoDS_Solid sd = ms.Solid();
-                            bb.Add(comp, sd);
-                            madeAny = true;
-                        }
-                    }
-                    if (madeAny) solidShape = comp;
-                }
-            } catch (const Standard_Failure& e) {
-                std::cerr << "Rebuild Warning: MakeSolid failed: " << e.GetMessageString() << std::endl;
-            }
-
+                if (shellCount >= 1) { TopoDS_Compound comp; BRep_Builder bb; bb.MakeCompound(comp); bool madeAny = false; for (TopExp_Explorer ex(sewnShape, TopAbs_SHELL); ex.More(); ex.Next()) { const TopoDS_Shell& sh = TopoDS::Shell(ex.Current()); BRepBuilderAPI_MakeSolid ms(sh); if (ms.IsDone()) { TopoDS_Solid sd = ms.Solid(); bb.Add(comp, sd); madeAny = true; } } if (madeAny) solidShape = comp; }
+            } catch (const Standard_Failure& e) { std::cerr << "Rebuild Warning: MakeSolid failed: " << e.GetMessageString() << std::endl; }
             TopoDS_Shape finalShape = solidShape;
             try {
-                ShapeFix_Shape finalFix(finalShape);
-                finalFix.SetPrecision(prec);
-                finalFix.SetMaxTolerance(maxTol);
-                finalFix.Perform();
-                TopoDS_Shape healed = finalFix.Shape();
+                ShapeFix_Shape finalFix(finalShape); finalFix.SetPrecision(prec); finalFix.SetMaxTolerance(maxTol); finalFix.Perform(); TopoDS_Shape healed = finalFix.Shape();
+                ShapeUpgrade_UnifySameDomain unif; unif.Initialize(healed); unif.SetLinearTolerance(1.0e-4); unif.SetAngularTolerance(1.0e-4); unif.AllowInternalEdges(Standard_True); unif.Build(); finalShape = unif.Shape();
+            } catch (const Standard_Failure& e) { std::cerr << "Rebuild Error: Final Heal/Unify failed: " << e.GetMessageString() << std::endl; return; }
+            BRepCheck_Analyzer analyzer(finalShape); if (!analyzer.IsValid()) { std::cerr << "Rebuild Error: Final shape invalid after face move." << std::endl; return; }
 
-                ShapeUpgrade_UnifySameDomain unif;
-                unif.Initialize(healed);
-                unif.SetLinearTolerance(1.0e-4);
-                unif.SetAngularTolerance(1.0e-4);
-                unif.AllowInternalEdges(Standard_True);
-                unif.Build();
-
-                finalShape = unif.Shape();
-            } catch (const Standard_Failure& e) {
-                std::cerr << "Rebuild Error: Final Heal/Unify failed: " << e.GetMessageString() << std::endl;
-                return;
-            }
-
-            BRepCheck_Analyzer analyzer(finalShape);
-            if (!analyzer.IsValid()) {
-                std::cerr << "Rebuild Error: Final shape invalid after face move." << std::endl;
-                return;
-            }
-
-            obj->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
+            // NEW: Update geometry through the new system
+            brepGeom->setShape(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
+            obj->invalidateMeshCache();
             UpdateObjectBoundary(obj);
-
-            auto mesh = Urbaxio::CadKernel::TriangulateShape(*obj->get_shape(), -1.0, 0.35, 0.05);
-            obj->set_mesh_buffers(std::move(mesh));
-            obj->vao = 0;
-            MarkStaticGeometryDirty(); // --- NEW: Mark as dirty after modification
+            MarkStaticGeometryDirty();
             return;
         }
 

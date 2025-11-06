@@ -1,6 +1,7 @@
 #include "tools/PaintTool.h"
 #include "engine/scene.h"
 #include "engine/scene_object.h"
+#include "engine/geometry/BRepGeometry.h"
 #include "camera.h"
 #include "snapping.h"
 #include <SDL2/SDL_mouse.h>
@@ -21,8 +22,8 @@ std::vector<size_t> FindCoplanarAdjacentTriangles_ForPaint(
 {
     const float NORMAL_DOT_TOLERANCE = 0.999f;
     const float PLANE_DIST_TOLERANCE = 1e-4f;
-    const auto& mesh = object.get_mesh_buffers();
-    if (!object.has_mesh() || startTriangleBaseIndex + 2 >= mesh.indices.size()) { return { startTriangleBaseIndex }; }
+    const auto& mesh = object.getMeshBuffers();
+    if (!object.hasMesh() || startTriangleBaseIndex + 2 >= mesh.indices.size()) { return { startTriangleBaseIndex }; }
     std::map<std::pair<unsigned int, unsigned int>, std::vector<size_t>> edgeToTriangles;
     for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
         unsigned int v_indices[3] = { mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2] };
@@ -98,18 +99,31 @@ void PaintTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, c
     Urbaxio::Engine::SceneObject* obj = context.scene->get_object_by_id(*context.hoveredObjId);
     if (!obj) return;
     
-    // We can't apply materials to objects without a proper B-Rep shape yet.
-    // This is a complex task involving splitting faces in the CAD kernel.
-    if (!obj->has_shape()) {
-        // For now, we just change the material of the first (and only) mesh group.
-        if (!obj->meshGroups.empty()) {
-            obj->meshGroups[0].materialName = currentMaterialName_;
-        }
+    // Painting B-Rep objects is not yet supported.
+    if (dynamic_cast<Urbaxio::Engine::BRepGeometry*>(obj->getGeometry())) {
+        std::cout << "PaintTool: Painting B-Rep objects is not yet implemented." << std::endl;
         return;
     }
-    // TODO: Implement B-Rep face splitting and material assignment as a command.
-    // This is a very advanced step. For now, we will leave it as a placeholder.
-    std::cout << "PaintTool: B-Rep material assignment is not yet implemented." << std::endl;
+    
+    // --- NEW LOGIC for MeshGeometry ---
+    // The hovered face is defined by the first triangle in the list of co-planar triangles.
+    size_t firstTriangleBaseIndex = context.hoveredFaceTriangleIndices->front();
+
+    // Find which mesh group this triangle belongs to.
+    // The groups are defined by ranges of indices in the main index buffer.
+    for (auto& group : obj->meshGroups) {
+        if (firstTriangleBaseIndex >= group.startIndex && firstTriangleBaseIndex < (group.startIndex + group.indexCount)) {
+            // Found the group. Change its material name.
+            group.materialName = currentMaterialName_;
+            std::cout << "PaintTool: Applied material '" << currentMaterialName_ << "' to a mesh group on object " << obj->get_id() << std::endl;
+
+            // This object's material assignment has changed, so the static batch is no longer valid.
+            context.scene->MarkStaticGeometryDirty();
+            return; // Job done.
+        }
+    }
+
+    std::cerr << "PaintTool Warning: Could not find a mesh group for the selected face on object " << obj->get_id() << ". This might indicate an issue with mesh group data." << std::endl;
 }
 
 void PaintTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
@@ -133,8 +147,8 @@ void PaintTool::updateHover(const glm::vec3& rayOrigin, const glm::vec3& rayDire
     float closestHitDist = std::numeric_limits<float>::max();
     for (Urbaxio::Engine::SceneObject* obj_ptr : context.scene->get_all_objects()) {
         const auto& name = obj_ptr->get_name();
-        if (obj_ptr && obj_ptr->has_mesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m" && name != "LeftControllerVisual" && name != "RightControllerVisual") {
-            const auto& mesh = obj_ptr->get_mesh_buffers();
+        if (obj_ptr && obj_ptr->hasMesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m" && name != "LeftControllerVisual" && name != "RightControllerVisual") {
+            const auto& mesh = obj_ptr->getMeshBuffers();
             for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                 glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]);
                 glm::vec3 v1(mesh.vertices[mesh.indices[i+1]*3], mesh.vertices[mesh.indices[i+1]*3+1], mesh.vertices[mesh.indices[i+1]*3+2]);

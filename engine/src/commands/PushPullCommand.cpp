@@ -1,6 +1,8 @@
 #include "engine/commands/PushPullCommand.h"
 #include "engine/scene.h"
 #include "engine/scene_object.h"
+#include "engine/geometry/BRepGeometry.h"
+#include "engine/geometry/MeshGeometry.h"
 #include <cad_kernel/cad_kernel.h>
 #include <cad_kernel/MeshBuffers.h>
 
@@ -44,8 +46,15 @@ void PushPullCommand::Execute() {
         return;
     }
     
-    targetObjectId_ = object->get_id(); // Store the ID we found for Undo/Redo
-    shapeBefore_ = SerializeShape(*object->get_shape());
+    // NEW: Get shape via BRepGeometry
+    auto* brepGeom = dynamic_cast<BRepGeometry*>(object->getGeometry());
+    if (!brepGeom || !brepGeom->getShape()) {
+        std::cerr << "PushPullCommand Error: Target object is not a valid B-Rep." << std::endl;
+        return;
+    }
+
+    targetObjectId_ = object->get_id();
+    shapeBefore_ = SerializeShape(*brepGeom->getShape());
     if (shapeBefore_.empty()) {
         std::cerr << "PushPullCommand Error: Failed to serialize 'before' state." << std::endl;
         return;
@@ -54,7 +63,11 @@ void PushPullCommand::Execute() {
     bool success = scene_->ExtrudeFace(targetObjectId_, faceVertices_, faceNormal_, distance_, disableMerge_);
     
     if (success) {
-        shapeAfter_ = SerializeShape(*object->get_shape());
+        // After success, re-fetch the geometry and serialize the new shape
+        auto* updatedGeom = dynamic_cast<BRepGeometry*>(object->getGeometry());
+        if(updatedGeom && updatedGeom->getShape()) {
+            shapeAfter_ = SerializeShape(*updatedGeom->getShape());
+        }
     } else {
         std::cerr << "PushPullCommand: ExtrudeFace operation failed. Aborting." << std::endl;
         RestoreObjectShape(targetObjectId_, shapeBefore_);
@@ -92,15 +105,13 @@ void PushPullCommand::RestoreObjectShape(uint64_t objectId, const std::vector<ch
         return;
     }
 
-    object->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(restoredShape)));
+    // NEW: Update via the new geometry system
+    auto geometry = std::make_unique<BRepGeometry>(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(restoredShape)));
+    object->setGeometry(std::move(geometry));
     scene_->UpdateObjectBoundary(object);
-    object->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*object->get_shape()));
-    object->vao = 0;
 
-    // --- START OF MODIFICATION ---
     // Mark the scene dirty to force the renderer to re-compile the static batch
     scene_->MarkStaticGeometryDirty();
-    // --- END OF MODIFICATION ---
 }
 
 std::vector<char> PushPullCommand::SerializeShape(const TopoDS_Shape& shape) {
