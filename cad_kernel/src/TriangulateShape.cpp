@@ -27,6 +27,9 @@
 #include <TShort_HArray1OfShortReal.hxx>// Handle                     
 #include <Poly_Array1OfTriangle.hxx>   //                          
 #include <Message.hxx>
+#include <ShapeAnalysis_Surface.hxx>
+#include <Geom_Surface.hxx>
+#include <gp_Pnt2d.hxx>
 
 #include <cmath>
 #include <vector>
@@ -90,6 +93,12 @@ namespace Urbaxio::CadKernel {
                 continue; //                               
             }
 
+            Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+            Handle(ShapeAnalysis_Surface) sas;
+            if (!surface.IsNull()) {
+                sas = new ShapeAnalysis_Surface(surface);
+            }
+
             // --- 4.          /                 ---
             if (!triangulation->HasNormals()) {
                 try {
@@ -119,6 +128,18 @@ namespace Urbaxio::CadKernel {
             // --- 5.                            ---
             for (Standard_Integer i = nodes.Lower(); i <= nodes.Upper(); ++i) {
                 gp_Pnt vertex = nodes(i);
+
+                if (!sas.IsNull()) {
+                    const double UV_SCALE = 1.0;
+                    gp_Pnt2d uv_params = sas->ValueOfUV(vertex, 1e-6);
+                    out.uvs.push_back(static_cast<float>(uv_params.X() * UV_SCALE));
+                    out.uvs.push_back(static_cast<float>(uv_params.Y() * UV_SCALE));
+                }
+                else {
+                    out.uvs.push_back(0.0f);
+                    out.uvs.push_back(0.0f);
+                }
+
                 vertex.Transform(transformation);
 
                 //                       (nx, ny, nz)    TShort_Array1OfShortReal
@@ -154,12 +175,6 @@ namespace Urbaxio::CadKernel {
                 out.normals.push_back(static_cast<float>(normal.X()));
                 out.normals.push_back(static_cast<float>(normal.Y()));
                 out.normals.push_back(static_cast<float>(normal.Z()));
-                // --- START OF MODIFICATION: Fix for missing UVs ---
-                // Add dummy UV coordinates for every vertex to ensure buffer consistency.
-                // This prevents crashes when batching geometry that was generated without textures.
-                out.uvs.push_back(0.0f); // U coordinate
-                out.uvs.push_back(0.0f); // V coordinate
-                // --- END OF MODIFICATION ---
             }
 
             // --- 6.                  ---
