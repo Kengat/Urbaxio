@@ -123,7 +123,10 @@ bool ExportSceneToObj(const std::string& filepath, const Engine::Scene& scene) {
     return true;
 }
 
-bool ImportObjToScene(const std::string& filepath, Engine::Scene& scene, float scale) {
+LoadedSceneData LoadObjToIntermediate(const std::string& filepath, float scale, std::atomic<float>& progress) {
+    LoadedSceneData loadedData;
+    progress = 0.0f;
+
     tinyobj::attrib_t attrib;
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
@@ -134,14 +137,16 @@ bool ImportObjToScene(const std::string& filepath, Engine::Scene& scene, float s
 
     if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filepath.c_str(), mtl_base_dir.c_str(), true)) {
         std::cerr << "FileIO Error: Failed to load OBJ file: " << warn << err << std::endl;
-        return false;
+        progress = 1.0f;
+        return loadedData;
     }
 
     if (!warn.empty()) {
         std::cout << "FileIO Warning: " << warn << std::endl;
     }
 
-    // --- 1. Process and add materials to the scene's material manager ---
+    progress = 0.1f;
+
     for (const auto& mat : materials) {
         Engine::Material newMat;
         newMat.name = trim(mat.name);
@@ -150,74 +155,62 @@ bool ImportObjToScene(const std::string& filepath, Engine::Scene& scene, float s
             std::filesystem::path texture_path = std::filesystem::path(mtl_base_dir) / trim(mat.diffuse_texname);
             newMat.diffuseTexturePath = std::filesystem::absolute(texture_path).string();
         }
-        scene.getMaterialManager()->AddMaterial(newMat);
+        loadedData.materials.push_back(newMat);
     }
 
-    // --- 2. Transformation from standard Y-Up to our Z-Up on import ---
+    progress = 0.2f;
+
     glm::mat4 y_up_to_z_up = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
     glm::mat3 normal_transform = glm::mat3(y_up_to_z_up);
 
-    // --- 3. Import each shape from the OBJ as a separate SceneObject ---
-    for (const auto& shape : shapes) {
+    float shape_progress_step = shapes.empty() ? 0.8f : (0.8f / shapes.size());
+    for (size_t s = 0; s < shapes.size(); ++s) {
+        const auto& shape = shapes[s];
+
+        LoadedObjectData newObjectData;
         CadKernel::MeshBuffers combinedMesh;
         std::vector<Engine::MeshGroup> meshGroups;
         std::map<tinyobj::index_t, uint32_t, IndexComparator> unique_vertices;
-
-        // Group faces by material ID
         std::map<int, std::vector<tinyobj::index_t>> facesByMaterial;
         for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
             int material_id = shape.mesh.material_ids[f];
-            for (int v = 0; v < 3; ++v) { // We assume triangulation
+            for (int v = 0; v < 3; ++v) {
                 facesByMaterial[material_id].push_back(shape.mesh.indices[f * 3 + v]);
             }
         }
 
-        // Process each material group
         for(const auto& [material_id, indices] : facesByMaterial) {
             Engine::MeshGroup group;
             group.startIndex = combinedMesh.indices.size();
-            
+
             if (material_id >= 0 && material_id < materials.size()) {
                 group.materialName = trim(materials[material_id].name);
             } else {
                 group.materialName = "Default";
             }
-            
+
             for (const auto& index : indices) {
                 auto it = unique_vertices.find(index);
                 if (it != unique_vertices.end()) {
                     combinedMesh.indices.push_back(it->second);
                 } else {
                     uint32_t new_idx = static_cast<uint32_t>(combinedMesh.vertices.size() / 3);
-                    
-                    // Vertex position
-                    glm::vec3 pos(
-                        attrib.vertices[3 * index.vertex_index + 0],
-                        attrib.vertices[3 * index.vertex_index + 1],
-                        attrib.vertices[3 * index.vertex_index + 2]
-                    );
+
+                    glm::vec3 pos( attrib.vertices[3 * index.vertex_index + 0], attrib.vertices[3 * index.vertex_index + 1], attrib.vertices[3 * index.vertex_index + 2] );
                     glm::vec3 transformed_pos = y_up_to_z_up * glm::vec4(pos, 1.0f);
                     transformed_pos *= scale;
-                    combinedMesh.vertices.push_back(transformed_pos.x);
-                    combinedMesh.vertices.push_back(transformed_pos.y);
-                    combinedMesh.vertices.push_back(transformed_pos.z);
-                    // Vertex normal
+                    combinedMesh.vertices.push_back(transformed_pos.x); combinedMesh.vertices.push_back(transformed_pos.y); combinedMesh.vertices.push_back(transformed_pos.z);
+
                     if (index.normal_index >= 0) {
-                        glm::vec3 norm(
-                            attrib.normals[3 * index.normal_index + 0],
-                            attrib.normals[3 * index.normal_index + 1],
-                            attrib.normals[3 * index.normal_index + 2]
-                        );
+                        glm::vec3 norm( attrib.normals[3 * index.normal_index + 0], attrib.normals[3 * index.normal_index + 1], attrib.normals[3 * index.normal_index + 2] );
                         glm::vec3 transformed_norm = normal_transform * norm;
-                        combinedMesh.normals.push_back(transformed_norm.x);
-                        combinedMesh.normals.push_back(transformed_norm.y);
-                        combinedMesh.normals.push_back(transformed_norm.z);
+                        combinedMesh.normals.push_back(transformed_norm.x); combinedMesh.normals.push_back(transformed_norm.y); combinedMesh.normals.push_back(transformed_norm.z);
                     } else { combinedMesh.normals.insert(combinedMesh.normals.end(), {0,0,1}); }
-                    // Vertex UV
+
                     if (index.texcoord_index >= 0) {
-                        combinedMesh.uvs.push_back(attrib.texcoords[2 * index.texcoord_index + 0]);
-                        combinedMesh.uvs.push_back(attrib.texcoords[2 * index.texcoord_index + 1]);
+                        combinedMesh.uvs.push_back(attrib.texcoords[2 * index.texcoord_index + 0]); combinedMesh.uvs.push_back(attrib.texcoords[2 * index.texcoord_index + 1]);
                     } else { combinedMesh.uvs.insert(combinedMesh.uvs.end(), {0,0}); }
+
                     combinedMesh.indices.push_back(new_idx);
                     unique_vertices[index] = new_idx;
                 }
@@ -228,23 +221,39 @@ bool ImportObjToScene(const std::string& filepath, Engine::Scene& scene, float s
             }
         }
 
-        std::string objectName = shape.name;
-        if (objectName.empty()) {
-            objectName = path.stem().string();
+        newObjectData.name = shape.name;
+        if (newObjectData.name.empty()) {
+            newObjectData.name = path.stem().string();
         }
 
-        Engine::SceneObject* new_obj = scene.create_object(objectName);
+        newObjectData.mesh = combinedMesh;
+        newObjectData.meshGroups = meshGroups;
+        loadedData.objects.push_back(std::move(newObjectData));
+
+        progress = 0.2f + (float)(s + 1) * shape_progress_step;
+    }
+
+    std::cout << "FileIO: Successfully parsed " << shapes.size() << " shape(s) from " << filepath << " in worker thread." << std::endl;
+    progress = 1.0f;
+    return loadedData;
+}
+
+void ApplyLoadedDataToScene(const LoadedSceneData& data, Engine::Scene& scene) {
+    for (const auto& mat : data.materials) {
+        scene.getMaterialManager()->AddMaterial(mat);
+    }
+
+    for (const auto& objectData : data.objects) {
+        Engine::SceneObject* new_obj = scene.create_object(objectData.name);
         if (new_obj) {
-            // Manually set mesh and groups, bypassing the default group creation in set_mesh_buffers
-            CadKernel::MeshBuffers temp_mesh = combinedMesh; // Make a copy
-            new_obj->set_mesh_buffers(std::move(temp_mesh)); // This will build adjacency and create a default group
-            new_obj->meshGroups = std::move(meshGroups); // Now overwrite with the correct groups
+            CadKernel::MeshBuffers temp_mesh = objectData.mesh;
+            new_obj->set_mesh_buffers(std::move(temp_mesh));
+            new_obj->meshGroups = objectData.meshGroups;
             new_obj->vao = 0;
         }
     }
 
-    std::cout << "FileIO: Successfully imported " << shapes.size() << " shape(s) from " << filepath << std::endl;
-    return true;
+    std::cout << "FileIO: Applied " << data.objects.size() << " object(s) to the scene." << std::endl;
 }
 
 CadKernel::MeshBuffers LoadMeshFromObj(const std::string& filepath) {

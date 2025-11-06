@@ -58,6 +58,7 @@ extern "C" {
 #include "file_io.h"
 #include "snapping.h"
 #include <filesystem>
+#include "LoadingManager.h"
 // --- NEW: VR UI System includes ---
 #include "ui/IVRWidget.h"
 #include "ui/VRButtonWidget.h"
@@ -582,16 +583,32 @@ namespace { // Anonymous namespace for helpers
         if (obj.ebo != 0) { glDeleteBuffers(1, &obj.ebo); obj.ebo = 0; }
     }
 
-    // --- NEW: Function to render the OBJ import options popup ---
+    void RenderLoadingPopup(Urbaxio::LoadingManager& manager) {
+        if (manager.IsLoading()) {
+            ImGui::OpenPopup("Loading...");
+        }
+
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(350, 0));
+        if (ImGui::BeginPopupModal("Loading...", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+            ImGui::Text("%s", manager.GetStatus().c_str());
+            ImGui::ProgressBar(manager.GetProgress(), ImVec2(-1, 0));
+
+            if (!manager.IsLoading()) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
+
     void RenderImportOptionsPopup(
         bool& show, 
         const std::string& filepath, 
-        Urbaxio::Engine::Scene& scene,
-        Urbaxio::Renderer& renderer) // --- NEW: Pass renderer by reference
+        Urbaxio::LoadingManager& loadingManager)
     {
         if (show) {
             ImGui::OpenPopup("Import Options");
-            show = false; // Reset the trigger
+            show = false;
         }
 
         ImGui::SetNextWindowSize(ImVec2(350, 180), ImGuiCond_FirstUseEver);
@@ -599,7 +616,7 @@ namespace { // Anonymous namespace for helpers
             ImGui::Text("Importing: %s", std::filesystem::path(filepath).filename().string().c_str());
             ImGui::Separator();
 
-            static int selected_unit = 2; // Default to Millimeters
+            static int selected_unit = 2;
             static float custom_scale = 0.001f;
 
             ImGui::RadioButton("Meters (1.0)", &selected_unit, 0);
@@ -607,7 +624,7 @@ namespace { // Anonymous namespace for helpers
             ImGui::RadioButton("Centimeters (0.01)", &selected_unit, 1);
             ImGui::SameLine();
             ImGui::RadioButton("Millimeters (0.001)", &selected_unit, 2);
-            
+
             if (selected_unit == 0) custom_scale = 1.0f;
             else if (selected_unit == 1) custom_scale = 0.01f;
             else if (selected_unit == 2) custom_scale = 0.001f;
@@ -615,8 +632,7 @@ namespace { // Anonymous namespace for helpers
             ImGui::Separator();
 
             if (ImGui::Button("Import", ImVec2(120, 0))) {
-                Urbaxio::FileIO::ImportObjToScene(filepath, scene, custom_scale);
-                renderer.InvalidateStaticBatch(); // --- NEW: Invalidate the static batch after import
+                loadingManager.RequestLoadObj(filepath, custom_scale);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SetItemDefaultFocus();
@@ -952,6 +968,7 @@ int main(int argc, char* argv[]) {
     Urbaxio::Camera camera; Urbaxio::InputHandler inputHandler;
     Urbaxio::SnappingSystem snappingSystem;
     int object_counter = 0;
+    Urbaxio::LoadingManager loadingManager;
     
     // --- Appearance Settings ---
     ImVec4 clear_color = ImVec4(0.13f, 0.13f, 0.18f, 1.00f);
@@ -1102,12 +1119,11 @@ int main(int argc, char* argv[]) {
         menuSphereWidget->SetDepthStrength(1.8f, 1.8f);
     }
 
-    // --- NEW: State for the import options dialog ---
-    bool g_showImportOptionsPopup = false;
-    std::string g_fileToImportPath;
-
     // --- NEW: State for alternate VR click ---
     bool rightAButtonWasPressed = false;
+
+    bool g_showImportOptionsPopup = false;
+    std::string g_fileToImportPath;
 
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
     while (!should_quit) {
@@ -1134,6 +1150,12 @@ int main(int argc, char* argv[]) {
         // --- Process Input (always, for ImGui and quitting) ---
         inputHandler.ProcessEvents(camera, should_quit, window, toolManager, scene_ptr);
 
+        Urbaxio::FileIO::LoadedSceneData loadedData;
+        if (loadingManager.PopResult(loadedData)) {
+            Urbaxio::FileIO::ApplyLoadedDataToScene(loadedData, *scene_ptr);
+            renderer.InvalidateStaticBatch();
+        }
+
         // --- NEW: Check if the scene's static geometry has changed and invalidate renderer if so ---
         if (scene_ptr->IsStaticGeometryDirty()) {
             renderer.InvalidateStaticBatch();
@@ -1149,7 +1171,6 @@ int main(int argc, char* argv[]) {
                 LoadProject(inputHandler.droppedFilePath, scene_ptr, camera, renderer);
                 RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
             } else if (droppedPath.extension() == ".obj") {
-                // It's an OBJ, trigger the import options popup
                 g_fileToImportPath = inputHandler.droppedFilePath;
                 g_showImportOptionsPopup = true;
             }
@@ -1291,7 +1312,7 @@ int main(int argc, char* argv[]) {
             }
 
             ImGui::SeparatorText("Exchange");
-            if (ImGui::Button("Import OBJ")) {
+            if (ImGui::Button("Import")) {
                 std::string path = OpenObjDialog(window);
                 if (!path.empty()) {
                     g_fileToImportPath = path;
@@ -1299,7 +1320,7 @@ int main(int argc, char* argv[]) {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button("Export OBJ")) {
+            if (ImGui::Button("Export")) {
                 std::string path = SaveObjDialog(window);
                 if (!path.empty()) {
                     Urbaxio::FileIO::ExportSceneToObj(path, *scene_ptr);
@@ -1488,7 +1509,10 @@ int main(int argc, char* argv[]) {
         }
 
         // --- NEW: Render our custom modal popup if it's been triggered ---
-        RenderImportOptionsPopup(g_showImportOptionsPopup, g_fileToImportPath, *scene_ptr, renderer); // --- NEW: Pass renderer
+        RenderImportOptionsPopup(g_showImportOptionsPopup, g_fileToImportPath, loadingManager);
+        if (!vr_mode) {
+            RenderLoadingPopup(loadingManager);
+        }
 
         ImGui::Render();
 
@@ -2044,7 +2068,11 @@ int main(int argc, char* argv[]) {
                         item.second(); // Вызываем сохранённую лямбда-функцию рендера
                     }
 
-                    
+                    if (loadingManager.IsLoading()) {
+                        glm::vec3 textPos = glm::vec3(view[3]) + glm::vec3(view[2]) * -1.5f;
+                        textRenderer.AddText(loadingManager.GetStatus(), textPos, glm::vec4(1.0f), 0.05f, view);
+                    }
+
                     // 3D distance text in VR
                     if (vrManager->zoomTextAlpha > 0.01f) {
                         float worldScale = glm::length(glm::vec3(worldTransform[0]));
