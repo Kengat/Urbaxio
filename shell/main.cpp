@@ -53,6 +53,8 @@ extern "C" {
 #include <set>
 #include <map>
 #include <cstdint>
+#include <thread>
+#include <atomic>
 
 #include "TextRenderer.h"
 #include "file_io.h"
@@ -836,6 +838,58 @@ namespace { // Anonymous namespace for helpers
         toolMenu.RecalculateLayout();
     }
 
+    void SetupFileMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int closeIcon, unsigned int minimizeIcon, SDL_Window* window, std::atomic<bool>& isFileDialogActive, std::atomic<bool>& fileDialogResultReady, std::string& filePathFromDialog, std::mutex& filePathMutex, bool& isImportDialog) {
+        glm::vec3 translation = glm::vec3(-0.076f, -0.030f, -0.063f);
+        glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-114.529f, 1.170f, -11.124f));
+        glm::vec3 scale = glm::vec3(0.365f);
+
+        glm::mat4 panelOffset = glm::translate(glm::mat4(1.0f), translation) *
+                                glm::mat4_cast(glm::quat(eulerAnglesRad)) *
+                                glm::scale(glm::mat4(1.0f), scale);
+
+        auto& fileMenu = vruiManager.AddPanel("FileMenu", "File", glm::vec2(0.156f, 0.293f), panelOffset, 0.1f, dragIcon, closeIcon, minimizeIcon);
+
+        auto importCallback = [&, window]() {
+            if (isFileDialogActive.load()) return;
+            isFileDialogActive = true;
+            fileDialogResultReady = false;
+            isImportDialog = true;
+
+            std::thread([&, window]() {
+                std::string path = OpenObjDialog(window);
+                {
+                    std::lock_guard<std::mutex> lock(filePathMutex);
+                    filePathFromDialog = path;
+                }
+                fileDialogResultReady = true;
+                isFileDialogActive = false;
+            }).detach();
+        };
+
+        auto exportCallback = [&, window]() {
+            if (isFileDialogActive.load()) return;
+            isFileDialogActive = true;
+            fileDialogResultReady = false;
+            isImportDialog = false;
+
+            std::thread([&, window]() {
+                std::string path = SaveObjDialog(window);
+                {
+                    std::lock_guard<std::mutex> lock(filePathMutex);
+                    filePathFromDialog = path;
+                }
+                fileDialogResultReady = true;
+                isFileDialogActive = false;
+            }).detach();
+        };
+
+        fileMenu.AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>("Import...", glm::vec3(0), glm::vec2(0.18f, 0.04f), importCallback));
+        fileMenu.AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>("Export...", glm::vec3(0), glm::vec2(0.18f, 0.04f), exportCallback));
+
+        fileMenu.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.01f));
+        fileMenu.RecalculateLayout();
+    }
+
     // --- START OF MODIFICATION ---
     unsigned int LoadTextureFromFile(const std::string& path, GLint wrapMode = GL_REPEAT) {
         int width, height, channels;
@@ -1071,6 +1125,12 @@ int main(int argc, char* argv[]) {
     Urbaxio::UI::VRUIManager vruiManager;
     std::string g_newNumpadInput = "0";
 
+    std::atomic<bool> isFileDialogActive = false;
+    std::atomic<bool> fileDialogResultReady = false;
+    std::string filePathFromDialog;
+    std::mutex filePathMutex;
+    bool isImportDialog = true;
+
     // --- NEW: Load UI Icons ---
     auto load_icon = [](const std::string& name) -> unsigned int {
         std::string path = "../../resources/" + name;
@@ -1095,6 +1155,7 @@ int main(int argc, char* argv[]) {
     SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture, closeIconTexture, minimizeIconTexture);
     SetupToolMenuPanel(vruiManager, toolManager, dragIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture, closeIconTexture, minimizeIconTexture);
     SetupPanelManagerPanel(vruiManager, dragIconTexture, closeIconTexture, minimizeIconTexture, backIconTexture);
+    SetupFileMenuPanel(vruiManager, dragIconTexture, closeIconTexture, minimizeIconTexture, window, isFileDialogActive, fileDialogResultReady, filePathFromDialog, filePathMutex, isImportDialog);
     
     if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
         panelMgr->SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
@@ -1149,6 +1210,28 @@ int main(int argc, char* argv[]) {
         
         // --- Process Input (always, for ImGui and quitting) ---
         inputHandler.ProcessEvents(camera, should_quit, window, toolManager, scene_ptr);
+
+        if (fileDialogResultReady.load()) {
+            std::string path;
+            bool isImport = isImportDialog;
+            {
+                std::lock_guard<std::mutex> lock(filePathMutex);
+                path = filePathFromDialog;
+                filePathFromDialog.clear();
+            }
+            fileDialogResultReady = false;
+            if (!path.empty()) {
+                if (isImport) {
+                    std::filesystem::path filePath(path);
+                    if (filePath.extension() == ".obj") {
+                        g_fileToImportPath = path;
+                        g_showImportOptionsPopup = true;
+                    }
+                } else {
+                    Urbaxio::FileIO::ExportSceneToObj(path, *scene_ptr);
+                }
+            }
+        }
 
         Urbaxio::FileIO::LoadedSceneData loadedData;
         if (loadingManager.PopResult(loadedData)) {
@@ -1524,7 +1607,21 @@ int main(int argc, char* argv[]) {
                 // --- Poll actions and update state (this part is unchanged) ---
                 vrManager->PollActions();
                 const auto& leftHand = vrManager->GetLeftHandVisual();
-                
+
+                glm::vec3 cyclopsEyePos(0.0f);
+                glm::quat cyclopsEyeQuat;
+                const auto& vr_views = vrManager->GetViews();
+                if (!vr_views.empty()) {
+                    glm::mat4 invView1 = glm::inverse(vr_views[0].viewMatrix);
+                    cyclopsEyePos = invView1[3];
+                    cyclopsEyeQuat = glm::quat_cast(invView1);
+                    if (vr_views.size() > 1) {
+                        glm::mat4 invView2 = glm::inverse(vr_views[1].viewMatrix);
+                        cyclopsEyePos = (cyclopsEyePos + glm::vec3(invView2[3])) * 0.5f;
+                        cyclopsEyeQuat = glm::slerp(cyclopsEyeQuat, glm::quat_cast(invView2), 0.5f);
+                    }
+                }
+
                 bool rightAButtonIsClicked = (vrManager->rightAButtonIsPressed && !rightAButtonWasPressed);
                 rightAButtonWasPressed = vrManager->rightAButtonIsPressed;
 
@@ -1940,18 +2037,17 @@ int main(int argc, char* argv[]) {
                 toolManager.RenderPreview(renderer, vrSnap);
                 
                 // --- 1. MULTIVIEW SCENE PASS ---
-                const auto& vr_views = vrManager->GetViews();
                 if (!vr_views.empty()) {
-                    glm::vec3 cyclopsEyePos(0.0f);
+                    glm::vec3 cyclopsEyePosMultiview(0.0f);
                     glm::vec3 pos1 = glm::inverse(vr_views[0].viewMatrix)[3];
                     glm::vec3 pos2 = (vr_views.size() > 1) ? glm::inverse(vr_views[1].viewMatrix)[3] : pos1;
-                    cyclopsEyePos = (pos1 + pos2) * 0.5f;
-                    renderer.setCyclopsEyePosition(cyclopsEyePos);
+                    cyclopsEyePosMultiview = (pos1 + pos2) * 0.5f;
+                    renderer.setCyclopsEyePosition(cyclopsEyePosMultiview);
                     glm::vec3 cursorWorldPos = vrSnap.snapped ? vrSnap.worldPoint : rayEnd;
                     renderer.RenderFrameMultiview(
                         vrManager->GetMultiviewFbo(),
                         vr_views, 
-                        cyclopsEyePos,
+                        cyclopsEyePosMultiview,
                         scene_ptr,
                         lightColor, ambientStrength, 
                         showGrid, showAxes, axisLineWidth, negAxisLineWidth,
@@ -2068,9 +2164,46 @@ int main(int argc, char* argv[]) {
                         item.second(); // Вызываем сохранённую лямбда-функцию рендера
                     }
 
-                    if (loadingManager.IsLoading()) {
-                        glm::vec3 textPos = glm::vec3(view[3]) + glm::vec3(view[2]) * -1.5f;
-                        textRenderer.AddText(loadingManager.GetStatus(), textPos, glm::vec4(1.0f), 0.05f, view);
+                    const float HINT_DISTANCE_FROM_HEAD = 2.0f;
+                    glm::vec3 headForward = cyclopsEyeQuat * glm::vec3(0.0f, 0.0f, -1.0f);
+                    glm::vec3 headUp = cyclopsEyeQuat * glm::vec3(0.0f, 1.0f, 0.0f);
+                    glm::vec3 hintAnchorPos = cyclopsEyePos + headForward * HINT_DISTANCE_FROM_HEAD;
+
+                    float hint_alpha = 0.0f;
+                    std::string hint_line1, hint_line2;
+
+                    if (isFileDialogActive.load()) {
+                        hint_line1 = "Please check your desktop monitor";
+                        hint_line2 = "to select a file.";
+                        hint_alpha = 1.0f;
+                    } else if (loadingManager.IsLoading()) {
+                        hint_line1 = loadingManager.GetStatus();
+                        hint_alpha = 1.0f;
+                    }
+
+                    if (hint_alpha > 0.01f) {
+                        float worldScale = glm::length(glm::vec3(worldTransform[0]));
+                        const float desiredPx = 25.0f;
+                        float viewportH = static_cast<float>(swapchain.height);
+                        const auto& fov = current_view.fov;
+
+                        float viewZ = -(view * glm::vec4(hintAnchorPos, 1.0f)).z;
+                        viewZ = std::max(0.1f, viewZ);
+
+                        float worldUnitsPerPixel = viewZ * (tanf(fov.angleUp) - tanf(fov.angleDown)) / viewportH;
+                        float textWorldSize = desiredPx * worldUnitsPerPixel;
+                        float finalWorldHeight = textWorldSize * worldScale;
+
+                        const float verticalOffset = 0.15f;
+
+                        glm::vec3 text_pos_1 = hintAnchorPos + headUp * (verticalOffset + (hint_line2.empty() ? 0.0f : finalWorldHeight));
+
+                        const float textOpacity = 0.85f;
+                        textRenderer.AddText(hint_line1, text_pos_1, glm::vec4(1.0f, 1.0f, 1.0f, hint_alpha * textOpacity), finalWorldHeight, view);
+                        if (!hint_line2.empty()) {
+                            glm::vec3 text_pos_2 = hintAnchorPos + headUp * verticalOffset;
+                            textRenderer.AddText(hint_line2, text_pos_2, glm::vec4(1.0f, 1.0f, 1.0f, hint_alpha * textOpacity), finalWorldHeight, view);
+                        }
                     }
 
                     // 3D distance text in VR
