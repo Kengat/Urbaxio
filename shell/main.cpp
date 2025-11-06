@@ -586,7 +586,8 @@ namespace { // Anonymous namespace for helpers
     void RenderImportOptionsPopup(
         bool& show, 
         const std::string& filepath, 
-        Urbaxio::Engine::Scene& scene) 
+        Urbaxio::Engine::Scene& scene,
+        Urbaxio::Renderer& renderer) // --- NEW: Pass renderer by reference
     {
         if (show) {
             ImGui::OpenPopup("Import Options");
@@ -615,6 +616,7 @@ namespace { // Anonymous namespace for helpers
 
             if (ImGui::Button("Import", ImVec2(120, 0))) {
                 Urbaxio::FileIO::ImportObjToScene(filepath, scene, custom_scale);
+                renderer.InvalidateStaticBatch(); // --- NEW: Invalidate the static batch after import
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SetItemDefaultFocus();
@@ -645,7 +647,7 @@ namespace { // Anonymous namespace for helpers
         return scene->SaveToStream(file);
     }
 
-    bool LoadProject(const std::string& path, Urbaxio::Engine::Scene* scene, Urbaxio::Camera& camera) {
+    bool LoadProject(const std::string& path, Urbaxio::Engine::Scene* scene, Urbaxio::Camera& camera, Urbaxio::Renderer& renderer) { // --- NEW: Pass renderer
         std::ifstream file(path, std::ios::binary);
         if (!file.is_open()) return false;
 
@@ -665,7 +667,12 @@ namespace { // Anonymous namespace for helpers
         camera.UpdateFromPositionTarget();
         
         // 3. Scene Data
-        return scene->LoadFromStream(file);
+        bool result = scene->LoadFromStream(file);
+        
+        // --- NEW: Invalidate renderer's static batch ---
+        renderer.InvalidateStaticBatch();
+        
+        return result;
     }
 
     void RecreateEssentialMarkers(Urbaxio::Engine::Scene* scene, float capsuleRadius, float capsuleHeight10m, float capsuleHeight5m) {
@@ -1120,13 +1127,19 @@ int main(int argc, char* argv[]) {
         // --- Process Input (always, for ImGui and quitting) ---
         inputHandler.ProcessEvents(camera, should_quit, window, toolManager, scene_ptr);
 
+        // --- NEW: Check if the scene's static geometry has changed and invalidate renderer if so ---
+        if (scene_ptr->IsStaticGeometryDirty()) {
+            renderer.InvalidateStaticBatch();
+            scene_ptr->ClearStaticGeometryDirtyFlag();
+        }
+
         // --- NEW: Handle file drop after processing events ---
         if (!inputHandler.droppedFilePath.empty()) {
             std::filesystem::path droppedPath(inputHandler.droppedFilePath);
             if (droppedPath.extension() == ".urbx") {
                 // It's a project file, load it directly
                 for (auto* obj : scene_ptr->get_all_objects()) { if (obj) FreeGPUResources(*obj); }
-                LoadProject(inputHandler.droppedFilePath, scene_ptr, camera);
+                LoadProject(inputHandler.droppedFilePath, scene_ptr, camera, renderer);
                 RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
             } else if (droppedPath.extension() == ".obj") {
                 // It's an OBJ, trigger the import options popup
@@ -1244,6 +1257,7 @@ int main(int argc, char* argv[]) {
                 for (auto* obj : scene_ptr->get_all_objects()) { if (obj) FreeGPUResources(*obj); }
                 scene_ptr->NewScene();
                 RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
+                renderer.InvalidateStaticBatch(); // --- NEW: Invalidate the static batch
             }
             ImGui::SameLine();
             if (ImGui::Button("Save Scene")) {
@@ -1264,7 +1278,7 @@ int main(int argc, char* argv[]) {
                         }
                     }
                     for (auto* obj : scene_ptr->get_all_objects()) { if (obj) FreeGPUResources(*obj); }
-                    LoadProject(path, scene_ptr, camera);
+                    LoadProject(path, scene_ptr, camera, renderer);
                     RecreateEssentialMarkers(scene_ptr, capsuleRadius, capsuleHeight10m, capsuleHeight5m);
                 }
             }
@@ -1467,7 +1481,7 @@ int main(int argc, char* argv[]) {
         }
 
         // --- NEW: Render our custom modal popup if it's been triggered ---
-        RenderImportOptionsPopup(g_showImportOptionsPopup, g_fileToImportPath, *scene_ptr);
+        RenderImportOptionsPopup(g_showImportOptionsPopup, g_fileToImportPath, *scene_ptr, renderer); // --- NEW: Pass renderer
 
         ImGui::Render();
 
@@ -1912,6 +1926,7 @@ int main(int argc, char* argv[]) {
                         showGrid, showAxes, axisLineWidth, negAxisLineWidth,
                         gridColor, axisColorX, axisColorY, axisColorZ, positiveAxisFadeColor, negativeAxisFadeColor,
                         cursorWorldPos, cursorRadius, effectIntensity,
+                        previewObjId, // --- NEW: Pass preview object ID
                         transformOverrides, colorOverrides, unlitOverrides
                     );
                 }

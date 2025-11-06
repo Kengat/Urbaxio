@@ -96,6 +96,11 @@ void PushPullCommand::RestoreObjectShape(uint64_t objectId, const std::vector<ch
     scene_->UpdateObjectBoundary(object);
     object->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*object->get_shape()));
     object->vao = 0;
+
+    // --- START OF MODIFICATION ---
+    // Mark the scene dirty to force the renderer to re-compile the static batch
+    scene_->MarkStaticGeometryDirty();
+    // --- END OF MODIFICATION ---
 }
 
 std::vector<char> PushPullCommand::SerializeShape(const TopoDS_Shape& shape) {

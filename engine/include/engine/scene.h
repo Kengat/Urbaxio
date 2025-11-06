@@ -118,6 +118,11 @@ namespace Urbaxio::Engine {
         // Public helper to find an object containing a specific face
         SceneObject* FindObjectByFace(const std::vector<glm::vec3>& faceVertices);
 
+        // --- NEW: Dirty flag system for static geometry batching ---
+        void MarkStaticGeometryDirty();
+        bool IsStaticGeometryDirty() const;
+        void ClearStaticGeometryDirtyFlag();
+
         // --- NEW: B-Rep Reconstruction ---
         void RebuildObjectByMovingVertices(
             uint64_t objectId, 
@@ -138,6 +143,9 @@ namespace Urbaxio::Engine {
         std::unique_ptr<CommandManager> commandManager_;
         // --- NEW: Material Manager ---
         std::unique_ptr<MaterialManager> materialManager_;
+
+        // --- NEW: Dirty flag for static geometry ---
+        bool isStaticGeometryDirty_ = true;
 
         // --- NEW: Private helper for loading ---
         // Creates an object with a specific ID during file loading

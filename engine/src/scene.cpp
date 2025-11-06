@@ -308,6 +308,7 @@ namespace Urbaxio::Engine {
     Scene::Scene() {
         commandManager_ = std::make_unique<CommandManager>();
         materialManager_ = std::make_unique<MaterialManager>();
+        isStaticGeometryDirty_ = true; // --- NEW: Start with a dirty flag
     }
     Scene::~Scene() = default;
 
@@ -389,9 +390,21 @@ namespace Urbaxio::Engine {
                 obj->vao = 0;
             }
         }
+        MarkStaticGeometryDirty(); // --- NEW: Mark as dirty after undo/redo
     }
 
-    SceneObject* Scene::create_object(const std::string& name) { uint64_t new_id = next_object_id_++; auto result = objects_.emplace(new_id, std::make_unique<SceneObject>(new_id, name)); if (result.second) { return result.first->second.get(); } else { std::cerr << "Scene: Failed to insert new object with ID " << new_id << " into map." << std::endl; next_object_id_--; return nullptr; } }
+    SceneObject* Scene::create_object(const std::string& name) { 
+        uint64_t new_id = next_object_id_++; 
+        auto result = objects_.emplace(new_id, std::make_unique<SceneObject>(new_id, name)); 
+        if (result.second) { 
+            MarkStaticGeometryDirty(); // --- NEW: Mark as dirty when creating any object
+            return result.first->second.get(); 
+        } else { 
+            std::cerr << "Scene: Failed to insert new object with ID " << new_id << " into map." << std::endl; 
+            next_object_id_--; 
+            return nullptr; 
+        } 
+    }
 
 SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) {
     // Check if ID is already taken
@@ -402,6 +415,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
     if (result.second) {
         // Ensure next generated ID will be higher than any loaded ID
         next_object_id_ = std::max(next_object_id_, id + 1);
+        MarkStaticGeometryDirty(); // --- NEW: Mark as dirty
         return result.first->second.get();
     }
     return nullptr;
@@ -429,6 +443,8 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         } else {
             std::cerr << "Scene: Warning - Triangulation failed for box '" << name << "'." << std::endl;
         }
+        new_obj->setExportable(true); // --- FIX: Explicitly mark as static/exportable
+        MarkStaticGeometryDirty(); // --- NEW: Mark as dirty
         return new_obj;
     }
     SceneObject* Scene::get_object_by_id(uint64_t id) { auto it = objects_.find(id); if (it != objects_.end()) { return it->second.get(); } return nullptr; }
@@ -454,6 +470,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
 
         // Erase the object from the map, which will call its destructor and free memory
         objects_.erase(it);
+        MarkStaticGeometryDirty(); // --- NEW: Mark as dirty
         std::cout << "Scene: Deleted object " << id << std::endl;
     }
 
@@ -1360,6 +1377,10 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             std::cerr << "OCCT Exception during ExtrudeFace: " << e.GetMessageString() << std::endl;
             return false;
         }
+        // --- START OF MODIFICATION ---
+        // Mark the scene as dirty so the renderer will re-compile the static batch.
+        MarkStaticGeometryDirty();
+        // --- END OF MODIFICATION ---
         return true;
     }
 
@@ -1378,6 +1399,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         commandManager_->ClearHistory(); // <-- NEW
         if (materialManager_) { materialManager_->ClearMaterials(); }
 
+        MarkStaticGeometryDirty(); // --- NEW: Mark as dirty
         std::cout << "Scene: Cleared all objects, lines and command history from engine state." << std::endl;
     }
 
@@ -1765,6 +1787,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             auto mesh = Urbaxio::CadKernel::TriangulateShape(*obj->get_shape(), -1.0, 0.35, 0.05);
             obj->set_mesh_buffers(std::move(mesh));
             obj->vao = 0;
+            MarkStaticGeometryDirty(); // --- NEW: Mark as dirty after modification
             return;
         }
 
@@ -1772,6 +1795,19 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             std::cout << "Warning: Vertex/Edge move reconstruction is currently not implemented." << std::endl;
             return;
         }
+    }
+
+    // --- NEW: Implementation of dirty flag methods ---
+    void Scene::MarkStaticGeometryDirty() {
+        isStaticGeometryDirty_ = true;
+    }
+
+    bool Scene::IsStaticGeometryDirty() const {
+        return isStaticGeometryDirty_;
+    }
+
+    void Scene::ClearStaticGeometryDirtyFlag() {
+        isStaticGeometryDirty_ = false;
     }
 
 } // namespace Urbaxio

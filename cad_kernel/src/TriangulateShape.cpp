@@ -154,6 +154,12 @@ namespace Urbaxio::CadKernel {
                 out.normals.push_back(static_cast<float>(normal.X()));
                 out.normals.push_back(static_cast<float>(normal.Y()));
                 out.normals.push_back(static_cast<float>(normal.Z()));
+                // --- START OF MODIFICATION: Fix for missing UVs ---
+                // Add dummy UV coordinates for every vertex to ensure buffer consistency.
+                // This prevents crashes when batching geometry that was generated without textures.
+                out.uvs.push_back(0.0f); // U coordinate
+                out.uvs.push_back(0.0f); // V coordinate
+                // --- END OF MODIFICATION ---
             }
 
             // --- 6.                  ---

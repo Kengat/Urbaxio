@@ -42,42 +42,43 @@ void MoveCommand::applyTransform(const glm::vec3& vector) {
         return;
     }
 
-    // --- 1. Transform the CAD B-Rep shape ---
+    // --- 1. Transform the CAD B-Rep shape (if it exists) ---
     if (object->has_shape()) {
         try {
             gp_Trsf occtTransform;
             occtTransform.SetTranslation(gp_Vec(vector.x, vector.y, vector.z));
             
-            // --- FIX: Correct constructor call ---
             BRepBuilderAPI_Transform transformer(*object->get_shape(), occtTransform);
             transformer.Build();
 
             if (transformer.IsDone()) {
+                // Update the B-Rep shape
                 object->set_shape(Urbaxio::CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(transformer.Shape())));
+                // Re-triangulate from the new shape to update the mesh buffers
+                object->set_mesh_buffers(Urbaxio::CadKernel::TriangulateShape(*object->get_shape()));
+                object->vao = 0; // Mark for re-upload if it's dynamic
             } else {
                 std::cerr << "MoveCommand Warning: OCCT transformation failed for object " << objectId_ << std::endl;
             }
         } catch(...) {
             std::cerr << "MoveCommand Warning: OCCT exception during transformation for object " << objectId_ << std::endl;
         }
-    }
-    
-    // --- 2. Transform the visual mesh (much faster than re-triangulating) ---
-    if (object->has_mesh()) {
-        // We need a non-const reference to modify the mesh buffers
+    } else if (object->has_mesh()) {
+        // Fallback for non-BRep objects: manually transform vertices
         Urbaxio::CadKernel::MeshBuffers& mesh = const_cast<Urbaxio::CadKernel::MeshBuffers&>(object->get_mesh_buffers());
         for (size_t i = 0; i < mesh.vertices.size(); i += 3) {
             mesh.vertices[i] += vector.x;
             mesh.vertices[i+1] += vector.y;
             mesh.vertices[i+2] += vector.z;
         }
-        // Mark the GPU buffers as dirty so the main loop re-uploads them
         object->vao = 0;
     }
 
-    // --- 3. Transform the associated boundary lines ---
-    // This will rebuild the vertex adjacency map correctly by removing old lines and adding new ones.
+    // --- 2. Update the boundary lines based on the new shape/mesh ---
     scene_->UpdateObjectBoundary(object);
+
+    // --- 3. Mark the static scene as dirty to trigger recompilation ---
+    scene_->MarkStaticGeometryDirty();
 }
 
 } // namespace Urbaxio::Engine

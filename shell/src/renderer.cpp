@@ -524,8 +524,13 @@ namespace Urbaxio {
         "}\n";
     // -- END OF MODIFICATION --
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateMultiviewShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreatePreviewBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateSplatResources()) return false; if (!CreateGhostMeshResources()) return false; if (!CreatePanelOutlineResources()) return false; glGenFramebuffers(1, &blitFBO_); glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateMultiviewShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreatePreviewBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateSplatResources()) return false; if (!CreateGhostMeshResources()) return false; if (!CreatePanelOutlineResources()) return false; glGenFramebuffers(1, &blitFBO_); glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
+    
+    // --- NEW: Method to invalidate the static batch, forcing a re-compile ---
+    void Renderer::InvalidateStaticBatch() {
+        isStaticBatchValid_ = false;
+    }
     
     void Renderer::RenderFrame(
         int viewportWidth, int viewportHeight,
@@ -568,35 +573,88 @@ namespace Urbaxio {
         // --- 1. OPAQUE PASS (REFACTORED WITH RENDER QUEUE) ---
         if (objectShaderProgram != 0 && scene && scene->getMaterialManager()) {
             
-            // --- Step 1: Collect all draw commands ---
-            // --- NEW: Frustum Culling Setup ---
+            // --- Step 1: Compile static scene if needed ---
+            if (!isStaticBatchValid_) {
+                CompileStaticScene(scene);
+            }
+            
+            // --- Step 2: Draw the compiled static batch ---
+            if (!staticBatchQueue.empty()) {
+                glUseProgram(objectShaderProgram);
+                glUniformMatrix4fv(objectShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
+                glUniformMatrix4fv(objectShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
+                glm::mat3 worldFromViewRot = glm::mat3(glm::inverse(view));
+                glm::vec3 camForwardWS = glm::normalize(worldFromViewRot * glm::vec3(0, 0, -1));
+                glm::vec3 lightDir = -camForwardWS;
+                glUniform3fv(objectShaderLocs.lightDir, 1, glm::value_ptr(lightDir));
+                glUniform3fv(objectShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
+                glUniform1f(objectShaderLocs.ambientStrength, ambientStrength);
+                glUniform1f(objectShaderLocs.overrideAlpha, 1.0f);
+                glBindVertexArray(VAO_Static); // Bind the single static VAO once
+                for (const auto& [material, commands] : staticBatchQueue) {
+                    // Bind material state once per material
+                    if (material && material->diffuseTextureID != 0) {
+                        glUniform1i(objectShaderLocs.useTexture, 1);
+                        glActiveTexture(GL_TEXTURE0);
+                        glBindTexture(GL_TEXTURE_2D, material->diffuseTextureID);
+                        glUniform1i(objectShaderLocs.diffuseTexture, 0);
+                    } else {
+                        glUniform1i(objectShaderLocs.useTexture, 0);
+                    }
+                    // Execute all commands for this material
+                    for (const auto& cmd : commands) {
+                        // --- START OF MODIFICATION ---
+                        // Skip drawing the original static object if it's being moved as a preview.
+                        if (cmd.objectId == previewObjectId) {
+                            continue;
+                        }
+                        // --- END OF MODIFICATION ---
+                        
+                        // Set per-object uniforms
+                        glUniformMatrix4fv(objectShaderLocs.model, 1, GL_FALSE, glm::value_ptr(cmd.modelMatrix));
+                        glUniform1i(objectShaderLocs.unlit, cmd.isUnlit);
+                        
+                        if (!material || material->diffuseTextureID == 0) {
+                            glUniform3fv(objectShaderLocs.objectColor, 1, glm::value_ptr(material ? material->diffuseColor : glm::vec3(1,0,1)));
+                        }
+                        
+                        // The magic call for static batching
+                        glDrawElementsBaseVertex(
+                            GL_TRIANGLES,
+                            cmd.indexCount,
+                            GL_UNSIGNED_INT,
+                            (void*)(cmd.startIndexOffset),
+                            cmd.baseVertex
+                        );
+                    }
+                }
+                glBindVertexArray(0); // Unbind the static VAO
+            }
+            
+            // --- Step 3: Collect and draw DYNAMIC objects (the old way) ---
             Frustum frustum;
             frustum.ExtractPlanes(projection * view);
-
-            std::map<const Engine::Material*, std::vector<RenderCommand>> opaqueQueue;
+            std::map<const Engine::Material*, std::vector<std::pair<RenderCommand, GLuint>>> opaqueQueue;
             Engine::MaterialManager* matManager = scene->getMaterialManager();
             for (const auto* obj : scene->get_all_objects()) {
-                if (!obj || obj->vao == 0 || obj->index_count == 0) continue;
+                // MODIFIED: Only process non-exportable (dynamic) objects here
+                if (!obj || obj->vao == 0 || obj->index_count == 0 || obj->isExportable()) continue;
                 
                 // --- FIX: Get the correct model matrix for the object ---
                 auto transformIt = transformOverrides.find(obj->get_id());
                 glm::mat4 modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : obj->getTransform();
 
-                // --- FIX: Use the model matrix for the culling check ---
-                if (obj->isExportable() && obj->aabbValid && !frustum.IsAABBVisible(obj->aabbMin, obj->aabbMax, modelMatrix)) {
-                    continue;
-                }
-
                 if (obj->get_id() == previewObjectId) continue;
-                if (!obj->isExportable() && transformIt == transformOverrides.end()) continue;
+                if (transformIt == transformOverrides.end()) continue;
+                
                 for (const auto& group : obj->meshGroups) {
                     if (group.indexCount == 0) continue;
                     
                     RenderCommand cmd;
                     cmd.material = matManager->GetMaterial(group.materialName);
-                    cmd.vao = obj->vao;
-                    cmd.startIndex = group.startIndex;
                     cmd.indexCount = group.indexCount;
+                    cmd.startIndexOffset = group.startIndex * sizeof(unsigned int);
+                    cmd.baseVertex = 0;
                     cmd.modelMatrix = modelMatrix;
                     
                     auto unlitIt = unlitOverrides.find(obj->get_id());
@@ -606,51 +664,53 @@ namespace Urbaxio {
                         cmd.colorOverride = colorIt->second;
                     }
                     
-                    opaqueQueue[cmd.material].push_back(cmd);
+                    opaqueQueue[cmd.material].push_back({cmd, obj->vao});
                 }
             }
-            // --- Step 2: Execute the sorted draw commands ---
-            glUseProgram(objectShaderProgram);
-            glUniformMatrix4fv(objectShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(objectShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
-            glm::mat3 worldFromViewRot = glm::mat3(glm::inverse(view));
-            glm::vec3 camForwardWS = glm::normalize(worldFromViewRot * glm::vec3(0, 0, -1));
-            glm::vec3 lightDir = -camForwardWS;
-            glUniform3fv(objectShaderLocs.lightDir, 1, glm::value_ptr(lightDir));
-            glUniform3fv(objectShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
-            glUniform1f(objectShaderLocs.ambientStrength, ambientStrength);
-            glUniform1f(objectShaderLocs.overrideAlpha, 1.0f);
-            for (const auto& [material, commands] : opaqueQueue) {
-                // Set material state ONCE per material
-                if (material && material->diffuseTextureID != 0) {
-                    glUniform1i(objectShaderLocs.useTexture, 1);
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, material->diffuseTextureID);
-                    glUniform1i(objectShaderLocs.diffuseTexture, 0);
-                } else {
-                    glUniform1i(objectShaderLocs.useTexture, 0);
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, 0);
-                }
-                // Execute all commands for this material
-                for (const auto& cmd : commands) {
-                    // Set per-object uniforms
-                    glUniformMatrix4fv(objectShaderLocs.model, 1, GL_FALSE, glm::value_ptr(cmd.modelMatrix));
-                    glUniform1i(objectShaderLocs.unlit, cmd.isUnlit);
-                    
-                    if (!cmd.material || cmd.material->diffuseTextureID == 0) {
-                        glm::vec3 currentColor = (cmd.material) ? cmd.material->diffuseColor : glm::vec3(1.0, 0.0, 1.0);
-                        if (cmd.colorOverride) {
-                            currentColor = *cmd.colorOverride;
-                        }
-                        glUniform3fv(objectShaderLocs.objectColor, 1, glm::value_ptr(currentColor));
+            // --- Step 4: Execute the dynamic draw commands ---
+            if (!opaqueQueue.empty()) {
+                glUseProgram(objectShaderProgram);
+                glUniformMatrix4fv(objectShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
+                glUniformMatrix4fv(objectShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
+                glm::mat3 worldFromViewRot = glm::mat3(glm::inverse(view));
+                glm::vec3 camForwardWS = glm::normalize(worldFromViewRot * glm::vec3(0, 0, -1));
+                glm::vec3 lightDir = -camForwardWS;
+                glUniform3fv(objectShaderLocs.lightDir, 1, glm::value_ptr(lightDir));
+                glUniform3fv(objectShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
+                glUniform1f(objectShaderLocs.ambientStrength, ambientStrength);
+                glUniform1f(objectShaderLocs.overrideAlpha, 1.0f);
+                for (const auto& [material, commands] : opaqueQueue) {
+                    // Set material state ONCE per material
+                    if (material && material->diffuseTextureID != 0) {
+                        glUniform1i(objectShaderLocs.useTexture, 1);
+                        glActiveTexture(GL_TEXTURE0);
+                        glBindTexture(GL_TEXTURE_2D, material->diffuseTextureID);
+                        glUniform1i(objectShaderLocs.diffuseTexture, 0);
+                    } else {
+                        glUniform1i(objectShaderLocs.useTexture, 0);
+                        glActiveTexture(GL_TEXTURE0);
+                        glBindTexture(GL_TEXTURE_2D, 0);
                     }
-                    
-                    glBindVertexArray(cmd.vao);
-                    glDrawElements(GL_TRIANGLES, cmd.indexCount, GL_UNSIGNED_INT, (void*)(cmd.startIndex * sizeof(unsigned int)));
+                    // Execute all commands for this material
+                    for (const auto& [cmd, vao] : commands) {
+                        // Set per-object uniforms
+                        glUniformMatrix4fv(objectShaderLocs.model, 1, GL_FALSE, glm::value_ptr(cmd.modelMatrix));
+                        glUniform1i(objectShaderLocs.unlit, cmd.isUnlit);
+                        
+                        if (!cmd.material || cmd.material->diffuseTextureID == 0) {
+                            glm::vec3 currentColor = (cmd.material) ? cmd.material->diffuseColor : glm::vec3(1.0, 0.0, 1.0);
+                            if (cmd.colorOverride) {
+                                currentColor = *cmd.colorOverride;
+                            }
+                            glUniform3fv(objectShaderLocs.objectColor, 1, glm::value_ptr(currentColor));
+                        }
+                        
+                        glBindVertexArray(vao);
+                        glDrawElements(GL_TRIANGLES, cmd.indexCount, GL_UNSIGNED_INT, (void*)(cmd.startIndexOffset));
+                    }
                 }
+                glBindVertexArray(0);
             }
-            glBindVertexArray(0);
         }
 
         // --- Render Ghost Mesh (as opaque object with boundary wireframe) ---
@@ -975,6 +1035,8 @@ namespace Urbaxio {
         const glm::vec4& positiveAxisFadeColor, const glm::vec4& negativeAxisFadeColor,
         // Interactive Effects
         const glm::vec3& cursorWorldPos, float cursorRadius, float intensity,
+        // --- NEW for Previews ---
+        uint64_t previewObjectId,
         // Overrides
         const std::map<uint64_t, glm::mat4>& transformOverrides,
         const std::map<uint64_t, glm::vec3>& colorOverrides,
@@ -999,38 +1061,77 @@ namespace Urbaxio {
         
         // --- Render Opaque Objects ---
         if (objectMultiviewShaderProgram != 0 && scene && scene->getMaterialManager()) {
-            // --- NEW: Frustum Culling Setup for VR ---
+            // --- NEW: Compile static scene if needed ---
+            if (!isStaticBatchValid_) {
+                CompileStaticScene(scene);
+            }
+            
+            // --- NEW: Draw the compiled static batch (Multiview) ---
+            if (!staticBatchQueue.empty()) {
+                glUseProgram(objectMultiviewShaderProgram);
+                glUniformMatrix4fv(objectMultiviewShaderLocs.view, 2, GL_FALSE, glm::value_ptr(viewMatrices[0]));
+                glUniformMatrix4fv(objectMultiviewShaderLocs.projection, 2, GL_FALSE, glm::value_ptr(projMatrices[0]));
+                glm::mat3 worldFromViewRot = glm::mat3(glm::inverse(viewMatrices[0]));
+                glm::vec3 camForwardWS = glm::normalize(worldFromViewRot * glm::vec3(0, 0, -1));
+                glm::vec3 lightDir = -camForwardWS;
+                glUniform3fv(objectMultiviewShaderLocs.lightDir, 1, glm::value_ptr(lightDir));
+                glUniform3fv(objectMultiviewShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
+                glUniform1f(objectMultiviewShaderLocs.ambientStrength, ambientStrength);
+                glUniform1f(objectMultiviewShaderLocs.overrideAlpha, 1.0f);
+                glBindVertexArray(VAO_Static);
+                for (const auto& [material, commands] : staticBatchQueue) {
+                    if (material && material->diffuseTextureID != 0) {
+                        glUniform1i(objectMultiviewShaderLocs.useTexture, 1);
+                        glActiveTexture(GL_TEXTURE0);
+                        glBindTexture(GL_TEXTURE_2D, material->diffuseTextureID);
+                        glUniform1i(objectMultiviewShaderLocs.diffuseTexture, 0);
+                    } else {
+                        glUniform1i(objectMultiviewShaderLocs.useTexture, 0);
+                    }
+                    for (const auto& cmd : commands) {
+                        // --- START OF MODIFICATION ---
+                        // Skip drawing the original static object if it's being moved as a preview.
+                        if (cmd.objectId == previewObjectId) {
+                            continue;
+                        }
+                        // --- END OF MODIFICATION ---
+                        
+                        glUniformMatrix4fv(objectMultiviewShaderLocs.model, 1, GL_FALSE, glm::value_ptr(cmd.modelMatrix));
+                        glUniform1i(objectMultiviewShaderLocs.unlit, cmd.isUnlit);
+                        if (!material || material->diffuseTextureID == 0) {
+                            glUniform3fv(objectMultiviewShaderLocs.objectColor, 1, glm::value_ptr(material ? material->diffuseColor : glm::vec3(1,0,1)));
+                        }
+                        glDrawElementsBaseVertex(GL_TRIANGLES, cmd.indexCount, GL_UNSIGNED_INT, (void*)(cmd.startIndexOffset), cmd.baseVertex);
+                    }
+                }
+                glBindVertexArray(0);
+            }
+            
+            // --- NEW: Draw DYNAMIC objects (Multiview) ---
             Frustum frustumLeft, frustumRight;
             frustumLeft.ExtractPlanes(projMatrices[0] * viewMatrices[0]);
             frustumRight.ExtractPlanes(projMatrices[1] * viewMatrices[1]);
-
-            // Collect all draw commands (same logic as RenderFrame)
-            std::map<const Engine::Material*, std::vector<RenderCommand>> opaqueQueue;
+            
+            std::map<const Engine::Material*, std::vector<std::pair<RenderCommand, GLuint>>> opaqueQueue;
             Engine::MaterialManager* matManager = scene->getMaterialManager();
             for (const auto* obj : scene->get_all_objects()) {
-                if (!obj || obj->vao == 0 || obj->index_count == 0) continue;
-
+                // MODIFIED: Only process non-exportable (dynamic) objects here
+                if (!obj || obj->vao == 0 || obj->index_count == 0 || obj->isExportable()) continue;
+                
                 // --- FIX: Get the correct model matrix for the object ---
                 auto transformIt = transformOverrides.find(obj->get_id());
                 glm::mat4 modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : obj->getTransform();
-
-                // --- FIX: Frustum Culling Check for VR with world-space AABB ---
-                if (obj->isExportable() && obj->aabbValid) {
-                    if (!frustumLeft.IsAABBVisible(obj->aabbMin, obj->aabbMax, modelMatrix) &&
-                        !frustumRight.IsAABBVisible(obj->aabbMin, obj->aabbMax, modelMatrix)) {
-                        continue;
-                    }
-                }
-
-                if (!obj->isExportable() && transformIt == transformOverrides.end()) continue;
+                
+                if (transformIt == transformOverrides.end()) continue;
+                
                 for (const auto& group : obj->meshGroups) {
                     if (group.indexCount == 0) continue;
                     
                     RenderCommand cmd;
                     cmd.material = matManager->GetMaterial(group.materialName);
-                    cmd.vao = obj->vao;
-                    cmd.startIndex = group.startIndex;
                     cmd.indexCount = group.indexCount;
+                    cmd.startIndexOffset = group.startIndex * sizeof(unsigned int);
+                    cmd.baseVertex = 0;
                     cmd.modelMatrix = modelMatrix;
                     
                     auto unlitIt = unlitOverrides.find(obj->get_id());
@@ -1040,49 +1141,51 @@ namespace Urbaxio {
                         cmd.colorOverride = colorIt->second;
                     }
                     
-                    opaqueQueue[cmd.material].push_back(cmd);
+                    opaqueQueue[cmd.material].push_back({cmd, obj->vao});
                 }
             }
             // Execute the sorted draw commands
-            glUseProgram(objectMultiviewShaderProgram);
-            glUniformMatrix4fv(objectMultiviewShaderLocs.view, 2, GL_FALSE, glm::value_ptr(viewMatrices[0]));
-            glUniformMatrix4fv(objectMultiviewShaderLocs.projection, 2, GL_FALSE, glm::value_ptr(projMatrices[0]));
-            glm::mat3 worldFromViewRot = glm::mat3(glm::inverse(viewMatrices[0]));
-            glm::vec3 camForwardWS = glm::normalize(worldFromViewRot * glm::vec3(0, 0, -1));
-            glm::vec3 lightDir = -camForwardWS;
-            glUniform3fv(objectMultiviewShaderLocs.lightDir, 1, glm::value_ptr(lightDir));
-            glUniform3fv(objectMultiviewShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
-            glUniform1f(objectMultiviewShaderLocs.ambientStrength, ambientStrength);
-            glUniform1f(objectMultiviewShaderLocs.overrideAlpha, 1.0f);
-            for (const auto& [material, commands] : opaqueQueue) {
-                // Set material state ONCE per material
-                if (material && material->diffuseTextureID != 0) {
-                    glUniform1i(objectMultiviewShaderLocs.useTexture, 1);
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, material->diffuseTextureID);
-                    glUniform1i(objectMultiviewShaderLocs.diffuseTexture, 0);
-                } else {
-                    glUniform1i(objectMultiviewShaderLocs.useTexture, 0);
-                }
-                // Execute all commands for this material
-                for (const auto& cmd : commands) {
-                    // Set per-object uniforms
-                    glUniformMatrix4fv(objectMultiviewShaderLocs.model, 1, GL_FALSE, glm::value_ptr(cmd.modelMatrix));
-                    glUniform1i(objectMultiviewShaderLocs.unlit, cmd.isUnlit);
-                    
-                    if (!cmd.material || cmd.material->diffuseTextureID == 0) {
-                        glm::vec3 currentColor = (cmd.material) ? cmd.material->diffuseColor : glm::vec3(1.0, 0.0, 1.0);
-                        if (cmd.colorOverride) {
-                            currentColor = *cmd.colorOverride;
-                        }
-                        glUniform3fv(objectMultiviewShaderLocs.objectColor, 1, glm::value_ptr(currentColor));
+            if (!opaqueQueue.empty()) {
+                glUseProgram(objectMultiviewShaderProgram);
+                glUniformMatrix4fv(objectMultiviewShaderLocs.view, 2, GL_FALSE, glm::value_ptr(viewMatrices[0]));
+                glUniformMatrix4fv(objectMultiviewShaderLocs.projection, 2, GL_FALSE, glm::value_ptr(projMatrices[0]));
+                glm::mat3 worldFromViewRot = glm::mat3(glm::inverse(viewMatrices[0]));
+                glm::vec3 camForwardWS = glm::normalize(worldFromViewRot * glm::vec3(0, 0, -1));
+                glm::vec3 lightDir = -camForwardWS;
+                glUniform3fv(objectMultiviewShaderLocs.lightDir, 1, glm::value_ptr(lightDir));
+                glUniform3fv(objectMultiviewShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
+                glUniform1f(objectMultiviewShaderLocs.ambientStrength, ambientStrength);
+                glUniform1f(objectMultiviewShaderLocs.overrideAlpha, 1.0f);
+                for (const auto& [material, commands] : opaqueQueue) {
+                    // Set material state ONCE per material
+                    if (material && material->diffuseTextureID != 0) {
+                        glUniform1i(objectMultiviewShaderLocs.useTexture, 1);
+                        glActiveTexture(GL_TEXTURE0);
+                        glBindTexture(GL_TEXTURE_2D, material->diffuseTextureID);
+                        glUniform1i(objectMultiviewShaderLocs.diffuseTexture, 0);
+                    } else {
+                        glUniform1i(objectMultiviewShaderLocs.useTexture, 0);
                     }
-                    
-                    glBindVertexArray(cmd.vao);
-                    glDrawElements(GL_TRIANGLES, cmd.indexCount, GL_UNSIGNED_INT, (void*)(cmd.startIndex * sizeof(unsigned int)));
+                    // Execute all commands for this material
+                    for (const auto& [cmd, vao] : commands) {
+                        // Set per-object uniforms
+                        glUniformMatrix4fv(objectMultiviewShaderLocs.model, 1, GL_FALSE, glm::value_ptr(cmd.modelMatrix));
+                        glUniform1i(objectMultiviewShaderLocs.unlit, cmd.isUnlit);
+                        
+                        if (!cmd.material || cmd.material->diffuseTextureID == 0) {
+                            glm::vec3 currentColor = (cmd.material) ? cmd.material->diffuseColor : glm::vec3(1.0, 0.0, 1.0);
+                            if (cmd.colorOverride) {
+                                currentColor = *cmd.colorOverride;
+                            }
+                            glUniform3fv(objectMultiviewShaderLocs.objectColor, 1, glm::value_ptr(currentColor));
+                        }
+                        
+                        glBindVertexArray(vao);
+                        glDrawElements(GL_TRIANGLES, cmd.indexCount, GL_UNSIGNED_INT, (void*)(cmd.startIndexOffset));
+                    }
                 }
+                glBindVertexArray(0);
             }
-            glBindVertexArray(0);
         }
         
         // --- TRANSPARENT / OVERLAY PASS (Multiview) ---
@@ -1380,6 +1483,102 @@ namespace Urbaxio {
         glDrawArrays(GL_TRIANGLE_FAN, 0, vertexCount);
         glBindVertexArray(0);
     }
+    
+    // --- NEW: Implementation of the Scene Compiler ---
+    void Renderer::CompileStaticScene(Urbaxio::Engine::Scene* scene) {
+        if (!scene) return;
+        std::cout << "Renderer: Compiling static scene geometry..." << std::endl;
+        
+        // 1. Clear old data
+        staticBatchQueue.clear();
+        std::vector<float> allVertices;
+        std::vector<float> allNormals;
+        std::vector<float> allUVs;
+        std::vector<unsigned int> allIndices;
+        int currentBaseVertex = 0;
+        size_t currentIndexOffset = 0;
+        auto* matManager = scene->getMaterialManager();
+        
+        // 2. Gather data and create commands
+        for (const auto* obj : scene->get_all_objects()) {
+            // Only compile static, renderable objects
+            if (!obj || !obj->has_mesh() || !obj->isExportable() || obj->get_mesh_buffers().isEmpty()) {
+                continue;
+            }
+            
+            const auto& mesh = obj->get_mesh_buffers();
+            
+            // --- FIX: This is the correct logic for handling multiple materials per object ---
+            
+            // The base vertex offset is the same for all mesh groups within this object.
+            int objectBaseVertex = currentBaseVertex;
+            
+            // Iterate through all mesh groups for the current object.
+            for (const auto& group : obj->meshGroups) {
+                // Create a separate RenderCommand for each material group.
+                RenderCommand cmd;
+                cmd.material = matManager->GetMaterial(group.materialName);
+                cmd.modelMatrix = obj->getTransform(); 
+                cmd.indexCount = static_cast<GLsizei>(group.indexCount);
+                // The start index for this group is the object's starting index offset PLUS the group's local start index.
+                cmd.startIndexOffset = (currentIndexOffset + group.startIndex) * sizeof(unsigned int);
+                cmd.baseVertex = objectBaseVertex;
+                cmd.isUnlit = false;
+                cmd.objectId = obj->get_id(); // Set the object ID for the command
+                
+                staticBatchQueue[cmd.material].push_back(cmd);
+            }
+            
+            // Append this object's full geometry data to the "mega-buffers".
+            allVertices.insert(allVertices.end(), mesh.vertices.begin(), mesh.vertices.end());
+            allNormals.insert(allNormals.end(), mesh.normals.begin(), mesh.normals.end());
+            allUVs.insert(allUVs.end(), mesh.uvs.begin(), mesh.uvs.end());
+            allIndices.insert(allIndices.end(), mesh.indices.begin(), mesh.indices.end());
+            
+            // Update the global offsets using the full size of the object's mesh.
+            currentBaseVertex += static_cast<int>(mesh.vertices.size() / 3);
+            currentIndexOffset += mesh.indices.size();
+        }
+        
+        // 6. Upload data to GPU
+        if (VAO_Static == 0) glGenVertexArrays(1, &VAO_Static);
+        if (VBO_Static_Vertices == 0) glGenBuffers(1, &VBO_Static_Vertices);
+        if (VBO_Static_Normals == 0) glGenBuffers(1, &VBO_Static_Normals);
+        if (VBO_Static_UVs == 0) glGenBuffers(1, &VBO_Static_UVs);
+        if (IBO_Static == 0) glGenBuffers(1, &IBO_Static);
+        
+        glBindVertexArray(VAO_Static);
+        
+        // Vertices
+        glBindBuffer(GL_ARRAY_BUFFER, VBO_Static_Vertices);
+        glBufferData(GL_ARRAY_BUFFER, allVertices.size() * sizeof(float), allVertices.data(), GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        
+        // Normals
+        glBindBuffer(GL_ARRAY_BUFFER, VBO_Static_Normals);
+        glBufferData(GL_ARRAY_BUFFER, allNormals.size() * sizeof(float), allNormals.data(), GL_STATIC_DRAW);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
+        
+        // UVs
+        glBindBuffer(GL_ARRAY_BUFFER, VBO_Static_UVs);
+        glBufferData(GL_ARRAY_BUFFER, allUVs.size() * sizeof(float), allUVs.data(), GL_STATIC_DRAW);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(2);
+        
+        // Indices
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IBO_Static);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, allIndices.size() * sizeof(unsigned int), allIndices.data(), GL_STATIC_DRAW);
+        
+        glBindVertexArray(0);
+        
+        isStaticBatchValid_ = true;
+        std::cout << "Renderer: Static scene compiled. Vertices: " << currentBaseVertex 
+                  << ", Indices: " << currentIndexOffset 
+                  << ", Batches: " << staticBatchQueue.size() << std::endl;
+    }
+    
     void Renderer::Cleanup() {
         std::cout << "Renderer: Cleaning up resources..." << std::endl;
         if (gridVAO != 0) glDeleteVertexArrays(1, &gridVAO); gridVAO = 0; if (gridVBO != 0) glDeleteBuffers(1, &gridVBO); gridVBO = 0;
