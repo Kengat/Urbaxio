@@ -60,6 +60,8 @@ find_package(glad CONFIG REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(OpenXR CONFIG REQUIRED)
+find_package(Eigen3 CONFIG REQUIRED)
+find_package(libigl CONFIG REQUIRED)
 # Note: OpenXR package provides the OpenXR::openxr_loader target
 
 # --- Link the application with libraries ---
@@ -73,6 +75,8 @@ target_link_libraries(Urbaxio PRIVATE
     OpenGL::GL
     imgui::imgui
     OpenXR::openxr_loader
+    Eigen3::Eigen
+    igl::igl_core
 )
 
 # --- Copy OpenCascade DLLs after build ---

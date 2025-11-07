@@ -43,7 +43,7 @@ target_link_libraries(engine PUBLIC
     glm::glm
     # --- NEW: Link against libigl and Eigen3 ---
     igl::igl_core
-    igl_copyleft::igl_copyleft_core
+    ${LIBIGL_COPYLEFT_LIBRARIES}
     Eigen3::Eigen
     OpenMP::OpenMP_CXX
 )

@@ -21,6 +21,7 @@
 
 #include <glm/gtx/norm.hpp>
 #include <glm/common.hpp> // For epsilonEqual
+#include <glm/gtc/epsilon.hpp>
 #include <glm/gtx/intersect.hpp> // For glm::intersectRayPlane
 
 // OCCT Includes

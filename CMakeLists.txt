@@ -4,6 +4,9 @@ cmake_minimum_required(VERSION 3.18)
 # Название проекта
 project(Urbaxio VERSION 0.0.1 LANGUAGES CXX)
 
+# --- ГЛОБАЛЬНОЕ ДОБАВЛЕНИЕ ПУТИ ---
+include_directories("C:/vcpkg/installed/x64-windows/include")
+
 # --- Find OpenCASCADE (MANUAL, HARDCODED PATH) ---
 # We are completely bypassing vcpkg's manifest for OpenCASCADE.
 # We point directly to the files installed on your system.
