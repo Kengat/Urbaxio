@@ -26,7 +26,8 @@ enum class ToolType {
     Line,
     PushPull,
     Move,
-    Paint
+    Paint,
+    Sculpt
 };
 
 // Bundles common objects and state that tools need to access.

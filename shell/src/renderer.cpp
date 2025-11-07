@@ -705,8 +705,21 @@ namespace Urbaxio {
                             glUniform3fv(objectShaderLocs.objectColor, 1, glm::value_ptr(currentColor));
                         }
                         
+                        // --- NEW: Handle transparency for dynamic objects ---
+                        if (cmd.objectId != 0) {
+                            auto* obj = scene->get_object_by_id(cmd.objectId);
+                            if (obj && obj->get_name() == "BrushCursor") {
+                                glUniform1f(objectShaderLocs.overrideAlpha, 0.4f);
+                                glDepthMask(GL_FALSE); // Disable depth writing
+                            }
+                        }
+                        
                         glBindVertexArray(vao);
                         glDrawElements(GL_TRIANGLES, cmd.indexCount, GL_UNSIGNED_INT, (void*)(cmd.startIndexOffset));
+                        
+                        // --- NEW: Reset state ---
+                        glUniform1f(objectShaderLocs.overrideAlpha, 1.0f);
+                        glDepthMask(GL_TRUE);
                     }
                 }
                 glBindVertexArray(0);

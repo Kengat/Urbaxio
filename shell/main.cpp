@@ -24,6 +24,7 @@ extern "C" {
 #include <tools/PushPullTool.h>
 // <-- NEW
 #include <tools/PaintTool.h>
+#include <tools/SculptTool.h>
 
 #include "camera.h"
 #include "input_handler.h"
@@ -1030,6 +1031,21 @@ int main(int argc, char* argv[]) {
     int object_counter = 0;
     Urbaxio::LoadingManager loadingManager;
     
+    // --- Brush Cursor Object & Material ---
+    Urbaxio::Engine::Material brushMat;
+    brushMat.name = "BrushCursorMaterial";
+    brushMat.diffuseColor = glm::vec3(1.0f, 0.6f, 0.0f); // Orange
+    scene_ptr->getMaterialManager()->AddMaterial(brushMat);
+
+    Urbaxio::Engine::SceneObject* brushCursor = scene_ptr->create_object("BrushCursor");
+    if(brushCursor) {
+        brushCursor->setGeometry(std::make_unique<Urbaxio::Engine::MeshGeometry>(CreateIcoSphereMesh(1.0f, 2)));
+        brushCursor->setExportable(false);
+        // Assign material by creating a mesh group
+        brushCursor->meshGroups.clear();
+        brushCursor->meshGroups.push_back({"BrushCursorMaterial", 0, brushCursor->getMeshBuffers().indices.size()});
+    }
+    
     // --- Appearance Settings ---
     ImVec4 clear_color = ImVec4(0.13f, 0.13f, 0.18f, 1.00f);
     glm::vec3 lightColor = glm::vec3(0.618f, 0.858f, 0.844f);
@@ -1102,6 +1118,7 @@ int main(int argc, char* argv[]) {
     
     Urbaxio::Tools::ToolManager toolManager(toolContext);
     toolManager.AddTool(Urbaxio::Tools::ToolType::Paint, std::make_unique<Urbaxio::Tools::PaintTool>()); // <-- NEW
+    toolManager.AddTool(Urbaxio::Tools::ToolType::Sculpt, std::make_unique<Urbaxio::Tools::SculptTool>());
 
     // --- Marker settings ---
     static float capsuleRadius = 0.5f;
@@ -1363,9 +1380,9 @@ int main(int argc, char* argv[]) {
                 object_counter++;
                 std::string name = "VoxelSphere_" + std::to_string(object_counter);
 
-                // 1. Define grid properties
-                glm::uvec3 dims(64, 64, 64);
-                float voxelSize = 0.2f;
+                // 1. Define grid properties (REDUCED RESOLUTION)
+                glm::uvec3 dims(32, 32, 32); // <-- CHANGED FROM 64 to 32
+                float voxelSize = 0.4f;     // <-- INCREASED to keep size similar
                 glm::vec3 origin = glm::vec3(-((float)dims.x * voxelSize) / 2.0f, -((float)dims.y * voxelSize) / 2.0f, 0.0f);
                 auto grid = std::make_unique<Urbaxio::Engine::VoxelGrid>(dims, origin, voxelSize);
 
@@ -1474,6 +1491,9 @@ int main(int argc, char* argv[]) {
             ImGui::SameLine(); // <-- NEW
             bool isPaint = activeToolType == Urbaxio::Tools::ToolType::Paint; // <-- NEW
             if (ImGui::RadioButton("Paint", isPaint)) toolManager.SetTool(Urbaxio::Tools::ToolType::Paint); // <-- NEW
+            ImGui::SameLine();
+            bool isSculpt = activeToolType == Urbaxio::Tools::ToolType::Sculpt;
+            if (ImGui::RadioButton("Sculpt", isSculpt)) toolManager.SetTool(Urbaxio::Tools::ToolType::Sculpt);
 
             if (ImGui::Button("Clear Lines") && scene_ptr) { 
                 scene_ptr->ClearUserLines(); 
