@@ -15,8 +15,8 @@ Windows Registry Editor Version 5.00
 
 [HKEY_CLASSES_ROOT\Urbaxio.ProjectFile\DefaultIcon]
 ; Указываем путь к EXE и ID иконки для файлов (-102)
-@="C:\\Users\\illia\\OneDrive\\Документы\\programming\\Urbaxio\\build\\shell\\Debug\\Urbaxio.exe,-102"
+@="C:\\dev\\Urbaxio\\build\\shell\\Debug\\Urbaxio.exe,-102"
 
 [HKEY_CLASSES_ROOT\Urbaxio.ProjectFile\shell\open\command]
 ; Указываем команду для открытия по дабл-клику
-@="\"C:\\Users\\illia\\OneDrive\\Документы\\programming\\Urbaxio\\build\\shell\\Debug\\Urbaxio.exe\" \"%1\""
+@="\"C:\\dev\\Urbaxio\\build\\shell\\Debug\\Urbaxio.exe\" \"%1\""

@@ -55,7 +55,7 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 # 1. Clean Build (if needed)
 
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio
+# cd /d C:/dev/Urbaxio
 
 # rmdir /s /q build && mkdir build && cd build
 
@@ -67,7 +67,7 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 # 2. Incremental Build (most common)
 
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build
+# cd /d C:/dev/Urbaxio/build
 
 # cmake --build . --config Debug -- /p:VcpkgEnableManifest=true
 
@@ -75,7 +75,7 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 # 3. Run Application
 
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build/shell/Debug
+# cd /d C:/dev/Urbaxio/build/shell/Debug
 
 # .\\Urbaxio.exe
 
@@ -83,7 +83,7 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 # 4. Rollback to Previous Version (if needed before generating snapshot)
 
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio
+# cd /d C:/dev/Urbaxio
 
 # git reset --hard HEAD
 
@@ -95,7 +95,7 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 #       Run this and send the content of 'project_structure.txt'.
 
-#       cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build
+#       cd /d C:/dev/Urbaxio/build
 
 #       cmake --build . --target generate_structure
 
@@ -107,7 +107,7 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 #       2. Run:
 
-#          cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build
+#          cd /d C:/dev/Urbaxio/build
 
 #          cmake --build . --target generate_partial_snapshot
 
@@ -115,7 +115,7 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 #    C) Generate Full Snapshot (for large changes or if requested)
 
-#       cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build
+#       cd /d C:/dev/Urbaxio/build
 
 #       cmake --build . --target generate_snapshot
 
@@ -123,7 +123,7 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 # 6. Git Commit & Push
 
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio
+# cd /d C:/dev/Urbaxio
 
 # git add . && git commit -m \"A descriptive commit message\" && git push origin main
 

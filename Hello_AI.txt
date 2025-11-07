@@ -76,7 +76,7 @@ IMPORTANT:
 
 # 1. Clean Build (if CMakeLists.txt or dependencies changed, or if problems occur)
 #    Run these in Developer CommandPrompt for VS
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio
+# cd /d C:/dev/Urbaxio
 # rmdir /s /q build
 # mkdir build
 # cd build
@@ -85,23 +85,23 @@ IMPORTANT:
 
 # 2. Incremental Build (if only .cpp/.h files changed)
 #    Run these in Developer Command Prompt for VS (inside the existing 'build' directory)
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build
+# cd /d C:/dev/Urbaxio/build
 # cmake --build . --config Debug -- /p:VcpkgEnableManifest=true
 
 # 3. Run Application (after successful build)
 #    Run in Developer Command Prompt for VS
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build/shell/Debug
+# cd /d C:/dev/Urbaxio/build/shell/Debug
 # .\Urbaxio.exe
 #    (Or find Urbaxio.exe in build\bin\Debug or build\shell\Debug and double-click)
 
 # 4. Generate Code Snapshot (run when needed for AI)
 #    Run in Developer Command Prompt for VS (inside the 'build' directory)
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build
+# cd /d C:/dev/Urbaxio/build
 # cmake --build . --target generate_snapshot
 
 # 5. Git Commit & Push (after successful changes)
 #    Run in Developer Command Prompt for VS (from project root)
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio
+# cd /d C:/dev/Urbaxio
 # git add .
 # git commit -m "A descriptive commit message"
 # git push origin main
@@ -7283,7 +7283,7 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 # 1. Clean Build (if CMakeLists.txt or dependencies changed, or if problems occur)
 #    Run these in Developer CommandPrompt for VS
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio
+# cd /d C:/dev/Urbaxio
 # rmdir /s /q build
 # mkdir build
 # cd build
@@ -7292,23 +7292,23 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 
 # 2. Incremental Build (if only .cpp/.h files changed)
 #    Run these in Developer Command Prompt for VS (inside the existing 'build' directory)
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build
+# cd /d C:/dev/Urbaxio/build
 # cmake --build . --config Debug -- /p:VcpkgEnableManifest=true
 
 # 3. Run Application (after successful build)
 #    Run in Developer Command Prompt for VS
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build/shell/Debug
+# cd /d C:/dev/Urbaxio/build/shell/Debug
 # .\\Urbaxio.exe
 #    (Or find Urbaxio.exe in build\\bin\\Debug or build\\shell\\Debug and double-click)
 
 # 4. Generate Code Snapshot (run when needed for AI)
 #    Run in Developer Command Prompt for VS (inside the 'build' directory)
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build
+# cd /d C:/dev/Urbaxio/build
 # cmake --build . --target generate_snapshot
 
 # 5. Git Commit & Push (after successful changes)
 #    Run in Developer Command Prompt for VS (from project root)
-# cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio
+# cd /d C:/dev/Urbaxio
 # git add .
 # git commit -m \"A descriptive commit message\"
 # git push origin main

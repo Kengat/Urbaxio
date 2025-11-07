@@ -35,7 +35,7 @@ YOUR WORKFLOW:
 
 Okay, I see the issue. To fix it, I need to see the relevant files. Please follow these steps:
 
-1.  In your project's root folder (`C:/Users/illia/OneDrive/Документы/programming/Urbaxio`), open the file named `snapshot_files.txt` (or create it if it doesn't exist).
+1.  In your project's root folder (`C:/dev/Urbaxio`), open the file named `snapshot_files.txt` (or create it if it doesn't exist).
 
 2.  Replace its entire content with the following line:
 
@@ -47,7 +47,7 @@ Okay, I see the issue. To fix it, I need to see the relevant files. Please follo
 
     ```bash
     # Run in Developer Command Prompt for VS (inside the 'build' directory)
-    cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build
+    cd /d C:/dev/Urbaxio/build
     cmake --build . --target generate_partial_snapshot
     ```
 
@@ -61,7 +61,7 @@ EXAMPLE FOR FULL SNAPSHOT:
 
 # Run in Developer Command Prompt for VS (inside the 'build' directory)
 
-cd /d C:/Users/illia/OneDrive/Документы/programming/Urbaxio/build
+cd /d C:/dev/Urbaxio/build
 
 cmake --build . --target generate_snapshot
 
