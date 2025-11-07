@@ -1259,10 +1259,40 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        Urbaxio::FileIO::LoadedSceneData loadedData;
+        // --- Process background job results ---
+        Urbaxio::LoadedDataResult loadedData;
         if (loadingManager.PopResult(loadedData)) {
-            Urbaxio::FileIO::ApplyLoadedDataToScene(loadedData, *scene_ptr);
-            renderer.InvalidateStaticBatch();
+            std::visit([&](auto&& arg) {
+                using T = std::decay_t<decltype(arg)>;
+                if constexpr (std::is_same_v<T, Urbaxio::FileIO::LoadedSceneData>) {
+                    Urbaxio::FileIO::ApplyLoadedDataToScene(arg, *scene_ptr);
+                    renderer.InvalidateStaticBatch();
+                } else if constexpr (std::is_same_v<T, Urbaxio::VoxelizeResult>) {
+                    // Create a VolumetricGeometry from the grid returned by the worker
+
+                    auto new_geom = std::make_unique<Urbaxio::Engine::VolumetricGeometry>(std::move(arg.grid));
+
+                    // Create and execute a command that will swap the geometry
+
+                    // and store the original for undo.
+                    auto command = std::make_unique<Urbaxio::Engine::VoxelizeCommand>(
+
+                        scene_ptr,
+
+                        arg.objectId,
+
+                        std::move(new_geom)
+
+                    );
+                    scene_ptr->getCommandManager()->ExecuteCommand(std::move(command));
+                    
+                    // Deselect after operation
+
+                    selectedObjId = 0;
+                    selectedTriangleIndices.clear();
+                }
+            }, loadedData);
+
         }
 
         // --- NEW: Check if the scene's static geometry has changed and invalidate renderer if so ---
@@ -1290,9 +1320,11 @@ int main(int argc, char* argv[]) {
         // --- NEW: Asynchronous Texture Loading ---
         if (scene_ptr && scene_ptr->getMaterialManager()) {
             auto& materials = scene_ptr->getMaterialManager()->GetAllMaterials();
+            bool textureWasLoaded = false;
             for (auto& kv : materials) {
                 auto& mat = kv.second;
                 if (!mat.diffuseTexturePath.empty() && mat.diffuseTextureID == 0) {
+                    textureWasLoaded = true;
                     mat.diffuseTextureID = LoadTextureFromFile(mat.diffuseTexturePath);
                     if (mat.diffuseTextureID == 0) {
                         std::cerr << "Shell: Failed to load texture: " << mat.diffuseTexturePath << std::endl;
@@ -1302,19 +1334,19 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
+            if (textureWasLoaded) {
+                renderer.InvalidateStaticBatch();
+            }
         }
 
         // --- Update Active Tool ---
         toolManager.OnUpdate(currentSnap);
         
-        // --- GPU Upload for new objects ---
+        // --- GPU Upload for new/modified objects ---
         if (scene_ptr) {
-            std::vector<Urbaxio::Engine::SceneObject*> all_objects = scene_ptr->get_all_objects();
-            for (Urbaxio::Engine::SceneObject* obj : all_objects) {
+            for (Urbaxio::Engine::SceneObject* obj : scene_ptr->get_all_objects()) {
                 if (obj && obj->hasGeometry() && obj->vao == 0) {
-                    if (!UploadMeshToGPU(*obj)) {
-                        // This might fail legitimately if mesh is empty, so we don't log an error.
-                    }
+                    UploadMeshToGPU(*obj);
                 }
             }
         }
@@ -1425,13 +1457,9 @@ int main(int argc, char* argv[]) {
             }
             if (ImGui::Button("Voxelize Selected")) {
                 if (canVoxelize) {
-                    // For now, resolution is hardcoded. We can add a popup later.
                     static int voxelize_resolution = 64;
-                    auto command = std::make_unique<Urbaxio::Engine::VoxelizeCommand>(scene_ptr, selectedObjId, voxelize_resolution);
-                    scene_ptr->getCommandManager()->ExecuteCommand(std::move(command));
-                    // Deselect after operation to avoid confusion
-                    selectedObjId = 0;
-                    selectedTriangleIndices.clear();
+                    // This is now an async request
+                    loadingManager.RequestVoxelize(scene_ptr, selectedObjId, voxelize_resolution);
                 }
             }
             if (!canVoxelize) {

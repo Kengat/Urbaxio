@@ -10,8 +10,25 @@
 #include <atomic>
 #include <functional>
 #include <filesystem>
+#include <variant>
+
+// Forward declarations for our data types
+
+namespace Urbaxio::Engine {
+    class Scene;
+    class VoxelGrid;
+}
 
 namespace Urbaxio {
+
+struct VoxelizeResult {
+    uint64_t objectId;
+    std::unique_ptr<Engine::VoxelGrid> grid;
+};
+
+// A variant to hold any type of loaded data result
+
+using LoadedDataResult = std::variant<FileIO::LoadedSceneData, VoxelizeResult>;
 
 class LoadingManager {
 public:
@@ -20,13 +37,15 @@ public:
 
     void RequestLoadObj(const std::string& filepath, float scale);
 
+    void RequestVoxelize(Engine::Scene* scene, uint64_t objectId, int resolution);
+
     bool IsLoading() const;
 
     float GetProgress() const;
 
     std::string GetStatus() const;
 
-    bool PopResult(Urbaxio::FileIO::LoadedSceneData& outData);
+    bool PopResult(LoadedDataResult& outData);
 
 private:
     void worker_thread_main();
@@ -36,9 +55,15 @@ private:
         float scale;
     };
 
+    struct VoxelizeJob {
+        uint64_t objectId;
+        int resolution;
+        std::vector<char> serializedShape; // Pass shape data safely to worker thread
+    };
+
     std::thread workerThread_;
-    std::queue<LoadJob> jobQueue_;
-    std::queue<Urbaxio::FileIO::LoadedSceneData> resultQueue_;
+    std::queue<std::variant<LoadJob, VoxelizeJob>> jobQueue_;
+    std::queue<LoadedDataResult> resultQueue_;
     std::mutex jobMutex_;
     std::mutex resultMutex_;
     std::condition_variable jobCondition_;

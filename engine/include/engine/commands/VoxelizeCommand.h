@@ -15,7 +15,7 @@ namespace Urbaxio::Engine {
 
 class VoxelizeCommand : public ICommand {
 public:
-    VoxelizeCommand(Scene* scene, uint64_t objectId, int resolution = 64);
+    VoxelizeCommand(Scene* scene, uint64_t objectId, std::unique_ptr<IGeometry> voxelizedGeometry);
     ~VoxelizeCommand();
 
     void Execute() override;
@@ -25,11 +25,9 @@ public:
 private:
     Scene* scene_;
     uint64_t objectId_;
-    int resolution_;
 
     // Memento: store the original geometry to allow undo
     std::unique_ptr<IGeometry> originalGeometry_;
-    // Store the generated geometry to allow redo
     std::unique_ptr<IGeometry> voxelizedGeometry_;
 };
 
