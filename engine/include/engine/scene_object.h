@@ -50,7 +50,7 @@ namespace Urbaxio::Engine {
         bool isExportable() const;
 
         // --- NEW: Geometry Handling with Polymorphism ---
-        void setGeometry(std::unique_ptr<IGeometry> geometry);
+        std::unique_ptr<IGeometry> setGeometry(std::unique_ptr<IGeometry> geometry);
         IGeometry* getGeometry() const;
         bool hasGeometry() const;
         const CadKernel::MeshBuffers& getMeshBuffers() const; // Caching version

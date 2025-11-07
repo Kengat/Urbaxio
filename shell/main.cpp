@@ -13,6 +13,9 @@ extern "C" {
 #include <engine/scene_object.h>
 #include <engine/MaterialManager.h>
 #include <engine/geometry/MeshGeometry.h>
+// --- ADD THESE INCLUDES ---
+#include <engine/geometry/BRepGeometry.h>
+#include <engine/commands/VoxelizeCommand.h>
 // --- NEW: Include volumetric geometry headers ---
 #include <engine/geometry/VoxelGrid.h>
 #include <engine/geometry/VolumetricGeometry.h>
@@ -1407,6 +1410,32 @@ int main(int argc, char* argv[]) {
                     auto vol_geom = std::make_unique<Urbaxio::Engine::VolumetricGeometry>(std::move(grid));
                     new_obj->setGeometry(std::move(vol_geom));
                 }
+            }
+            // --- ADD THE NEW VOXELIZE BUTTON LOGIC HERE ---
+            ImGui::SameLine();
+            bool canVoxelize = false;
+            if (selectedObjId != 0) {
+                Urbaxio::Engine::SceneObject* obj = scene_ptr->get_object_by_id(selectedObjId);
+                if (obj && dynamic_cast<Urbaxio::Engine::BRepGeometry*>(obj->getGeometry())) {
+                    canVoxelize = true;
+                }
+            }
+            if (!canVoxelize) {
+                ImGui::BeginDisabled();
+            }
+            if (ImGui::Button("Voxelize Selected")) {
+                if (canVoxelize) {
+                    // For now, resolution is hardcoded. We can add a popup later.
+                    static int voxelize_resolution = 64;
+                    auto command = std::make_unique<Urbaxio::Engine::VoxelizeCommand>(scene_ptr, selectedObjId, voxelize_resolution);
+                    scene_ptr->getCommandManager()->ExecuteCommand(std::move(command));
+                    // Deselect after operation to avoid confusion
+                    selectedObjId = 0;
+                    selectedTriangleIndices.clear();
+                }
+            }
+            if (!canVoxelize) {
+                ImGui::EndDisabled();
             }
             
             ImGui::Separator();

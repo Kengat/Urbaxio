@@ -90,11 +90,13 @@ namespace Urbaxio::Engine {
     bool SceneObject::isExportable() const { return isExportable_; }
 
     // --- Geometry & Mesh ---
-    void SceneObject::setGeometry(std::unique_ptr<IGeometry> geometry) {
+    std::unique_ptr<IGeometry> SceneObject::setGeometry(std::unique_ptr<IGeometry> geometry) {
+        std::unique_ptr<IGeometry> old_geometry = std::move(geometry_);
         geometry_ = std::move(geometry);
         invalidateMeshCache();
 
         buildLocationToVertexMap(); // Rebuild map, it might be a B-Rep shape
+        return old_geometry;
     }
 
 

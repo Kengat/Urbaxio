@@ -14,6 +14,7 @@ add_library(engine STATIC
     src/commands/CreateLineCommand.cpp
     src/commands/MoveSubObjectCommand.cpp
     src/commands/SculptCommand.cpp
+    src/commands/VoxelizeCommand.cpp
     # Geometry implementations
 )
 
@@ -27,6 +28,7 @@ target_include_directories(engine PUBLIC
 # Находим пакеты, от которых зависит engine
 find_package(fmt CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
+find_package(OpenMP REQUIRED)
 
 # --- NEW: Find libigl and its dependencies (Eigen) ---
 find_package(libigl CONFIG REQUIRED)
@@ -39,7 +41,9 @@ target_link_libraries(engine PUBLIC
     cad_kernel # Наша обертка над OCCT
     fmt::fmt
     glm::glm
-    # --- NEW: Link against libigl and Eigen3 (FIXED) ---
+    # --- NEW: Link against libigl and Eigen3 ---
     igl::igl_core
+    igl_copyleft::igl_copyleft_core
     Eigen3::Eigen
+    OpenMP::OpenMP_CXX
 )

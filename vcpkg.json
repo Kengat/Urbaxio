@@ -9,6 +9,7 @@
     "imgui",
     "glm",
     "openxr-loader",
-    "libigl"
+    "libigl",
+    "eigen3"
   ]
 }
