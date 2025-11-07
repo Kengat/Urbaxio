@@ -29,14 +29,15 @@ void VoxelizeCommand::Execute() {
     if (!originalGeometry_) {
         originalGeometry_ = obj->setGeometry(std::move(voxelizedGeometry_));
     } else { // Redo
-
         originalGeometry_ = obj->setGeometry(std::move(voxelizedGeometry_));
-        return;
     }
 
-    // After swapping geometry, invalidate caches.
+    // For volumetric: let it generate mesh ONCE synchronously on first access
+    // Then all subsequent updates will be async
     obj->invalidateMeshCache();
     scene_->MarkStaticGeometryDirty();
+    
+    std::cout << "[VoxelizeCommand] Geometry swapped, mesh will regenerate" << std::endl;
 }
 
 
@@ -48,6 +49,8 @@ void VoxelizeCommand::Undo() {
     // Swap the original geometry back, and store the voxelized one for redo.
     voxelizedGeometry_ = obj->setGeometry(std::move(originalGeometry_));
     
+    // After Undo, we're back to original geometry (usually B-Rep)
+    // This is fast, so invalidate normally
     obj->invalidateMeshCache();
     scene_->MarkStaticGeometryDirty();
 }

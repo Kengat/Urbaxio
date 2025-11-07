@@ -35,6 +35,11 @@ find_package(libigl CONFIG REQUIRED)
 find_package(Eigen3 CONFIG REQUIRED)
 message(STATUS "Found libigl and Eigen3 via vcpkg.")
 
+# --- NEW: Find OpenVDB and TBB for sparse voxel storage ---
+find_package(OpenVDB CONFIG REQUIRED)
+find_package(TBB CONFIG REQUIRED)
+message(STATUS "Found OpenVDB and TBB via vcpkg.")
+
 # Подключаем библиотеки. PUBLIC означает, что любой, кто использует "engine",
 # также автоматически получит пути к fmt и glm. Это решит проблему с линковкой fmt.
 target_link_libraries(engine PUBLIC
@@ -46,4 +51,7 @@ target_link_libraries(engine PUBLIC
     ${LIBIGL_COPYLEFT_LIBRARIES}
     Eigen3::Eigen
     OpenMP::OpenMP_CXX
+    # --- NEW: Link against OpenVDB and TBB ---
+    OpenVDB::openvdb
+    TBB::tbb
 )

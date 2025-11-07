@@ -5,6 +5,7 @@
 #include "engine/geometry/VoxelGrid.h"
 #include "renderer.h"
 #include "snapping.h"
+#include "LoadingManager.h"
 #include <imgui.h>
 #include <iostream>
 #include "camera.h"
@@ -114,11 +115,13 @@ void SculptTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, 
         Engine::SceneObject* obj = context.scene->get_object_by_id(sculptedObjectId_);
         auto* volGeom = obj ? dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry()) : nullptr;
         if (volGeom && volGeom->getGrid()) {
-            // --- CAPTURE BOTH 'BEFORE' AND 'WORKING' STATES ---
-            gridDataBeforeStroke_ = volGeom->getGrid()->sdfData;
-            workingGridData_ = volGeom->getGrid()->sdfData; // Start with a fresh copy
+            // --- CAPTURE BOTH 'BEFORE' AND 'WORKING' STATES from OpenVDB ---
+            // Convert sparse grid to dense array for Undo/Redo
+            gridDataBeforeStroke_ = volGeom->getGrid()->toDenseArray();
+            workingGridData_ = gridDataBeforeStroke_; // Start with a fresh copy
             
-            std::cout << "[SculptTool] Mouse Down. Captured state for object " << sculptedObjectId_ << std::endl;
+            std::cout << "[SculptTool] Mouse Down. Captured state for object " << sculptedObjectId_ 
+                      << " (" << volGeom->getGrid()->getActiveVoxelCount() << " active voxels)" << std::endl;
             
             applyBrush(hitPosition);
             lastBrushApplyPos_ = hitPosition;
@@ -143,6 +146,9 @@ void SculptTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
         return;
     }
     
+    // IMPORTANT: Ensure final state is committed to OpenVDB before saving to undo stack
+    volGeom->getGrid()->fromDenseArray(workingGridData_);
+    
     // The final state of our stroke is in the working copy
     auto command = std::make_unique<Engine::SculptCommand>(
         context.scene,
@@ -151,6 +157,15 @@ void SculptTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
         std::move(workingGridData_)
     );
     context.scene->getCommandManager()->ExecuteCommand(std::move(command));
+
+    // ASYNC REMESH: Request mesh update in background (NO WAIT!)
+    if (context.loadingManager) {
+        context.loadingManager->RequestRemesh(context.scene, sculptedObjectId_);
+        std::cout << "[SculptTool] Async remesh requested. Continue sculpting!" << std::endl;
+    } else {
+        // NO FALLBACK - keep old mesh if no loader
+        std::cout << "[SculptTool] WARNING: No LoadingManager, mesh not updated!" << std::endl;
+    }
 
     sculptedObjectId_ = 0;
 }
@@ -196,8 +211,8 @@ void SculptTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, co
     }
 
     if (isSculpting_ && hitSurface) {
-        // --- SOLUTION B: Distance Sampling ---
-        const float MIN_BRUSH_DISTANCE_FACTOR = 0.25f; // Apply brush every 1/4 of its radius
+        // --- OPTIMIZED: Smoother strokes with smaller distance ---
+        const float MIN_BRUSH_DISTANCE_FACTOR = 0.1f; // Apply brush every 10% of its radius (smoother)
         float min_dist_sq = (brushRadius_ * MIN_BRUSH_DISTANCE_FACTOR) * (brushRadius_ * MIN_BRUSH_DISTANCE_FACTOR);
 
         if (glm::distance2(brushPos, lastBrushApplyPos_) > min_dist_sq) {
@@ -214,7 +229,7 @@ bool SculptTool::applyBrush(const glm::vec3& brushWorldPos) {
 
     bool subtract = *context.ctrlDown; 
     
-    // --- IMPORTANT: We now operate on the 'workingGridData_' copy ---
+    // --- OPTIMIZED: Work directly with workingGridData_, update OpenVDB less frequently ---
     Engine::SceneObject* obj = context.scene->get_object_by_id(sculptedObjectId_);
     auto* volGeom = obj ? dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry()) : nullptr;
     if (!volGeom || !volGeom->getGrid()) return false;
@@ -227,14 +242,18 @@ bool SculptTool::applyBrush(const glm::vec3& brushWorldPos) {
     glm::ivec3 max_bound = glm::min(glm::ivec3(grid->dimensions) - 1, glm::ivec3(glm::ceil(localPos + radiusInVoxels)));
     
     bool gridModified = false;
+    
+    // OPTIMIZATION: Update dense array in memory (fast)
     for (int z = min_bound.z; z <= max_bound.z; ++z) {
         for (int y = min_bound.y; y <= max_bound.y; ++y) {
             for (int x = min_bound.x; x <= max_bound.x; ++x) {
-                // Read the original SDF from the 'before' state for a clean application
                 size_t index = z * grid->dimensions.x * grid->dimensions.y + y * grid->dimensions.x + x;
-                float original_sdf = gridDataBeforeStroke_[index];
+                
+                // FIX: Read CURRENT working state, not the original!
+                // This allows strokes to accumulate changes
+                float& current_sdf = workingGridData_[index];
 
-                if (std::abs(original_sdf) > brushRadius_) {
+                if (std::abs(current_sdf) > brushRadius_ * 1.5f) {
                     continue;
                 }
 
@@ -242,16 +261,18 @@ bool SculptTool::applyBrush(const glm::vec3& brushWorldPos) {
                 float dist_to_brush_center = glm::distance(voxelLocalPos, localPos);
 
                 if (dist_to_brush_center < radiusInVoxels) {
+                    // IMPROVED: Smoother falloff with squared smoothstep
                     float falloff = 1.0f - (dist_to_brush_center / radiusInVoxels);
                     falloff = glm::smoothstep(0.0f, 1.0f, falloff);
+                    falloff = falloff * falloff; // Squared for even smoother blending
                     
                     float displacement = brushStrength_ * falloff * grid->voxelSize * 10.0f; 
 
-                    float& working_sdf = workingGridData_[index];
+                    // ACCUMULATE changes additively
                     if (subtract) {
-                        working_sdf = glm::max(working_sdf, original_sdf + displacement);
+                        current_sdf += displacement;  // Move surface outward (subtract material)
                     } else {
-                        working_sdf = glm::min(working_sdf, original_sdf - displacement);
+                        current_sdf -= displacement;  // Move surface inward (add material)
                     }
                     gridModified = true;
                 }
@@ -259,14 +280,11 @@ bool SculptTool::applyBrush(const glm::vec3& brushWorldPos) {
         }
     }
     
-    // --- We need to temporarily update the real grid for live preview ---
-    if (gridModified) {
-        grid->sdfData = workingGridData_;
-        obj->invalidateMeshCache();
-        // IMPORTANT: DO NOT mark the scene as dirty here, it will cause massive slowdowns.
-        // The final dirty flag is set by the command on mouse up.
-    }
-
+    // --- NO LIVE PREVIEW: We don't update mesh during sculpting! ---
+    // Working data is only in memory (workingGridData_)
+    // Mesh update happens asynchronously ONLY on Mouse Up
+    // This gives INSTANT response with NO lag!
+    
     return gridModified;
 }
 
@@ -290,6 +308,8 @@ void SculptTool::RenderUI() {
     ImGui::SliderFloat("Strength", &brushStrength_, 0.01f, 1.0f);
     ImGui::TextDisabled("Hold Ctrl to Subtract");
     ImGui::Separator();
+    ImGui::TextDisabled("Tip: Use lower voxel resolution (64-128)");
+    ImGui::TextDisabled("for smoother sculpting performance.");
 }
 
 void SculptTool::RenderPreview(Renderer& renderer, const SnapResult& snap) {

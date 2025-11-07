@@ -124,7 +124,48 @@ namespace Urbaxio::Engine {
         vao = 0; // Mark for GPU re-upload
     }
 
+    void SceneObject::setMeshBuffers(CadKernel::MeshBuffers&& mesh) {
+        // Directly set the mesh cache (for async remesh results)
+        mesh_buffers_cache_ = std::move(mesh);
+        is_mesh_cache_dirty_ = false;
+        
+        // Clear dependent caches
+        meshGroups.clear();
+        triangleToFaceID_.clear();
+        faces_.clear();
+        
+        // FIX: Create a default mesh group for the entire mesh so renderer can batch it
+        if (!mesh_buffers_cache_.isEmpty()) {
+            MeshGroup defaultGroup;
+            defaultGroup.materialName = "DefaultMaterial";  // Will use default material
+            defaultGroup.startIndex = 0;
+            defaultGroup.indexCount = mesh_buffers_cache_.indices.size();
+            meshGroups.push_back(defaultGroup);
+            
+            // FIX: Calculate AABB so raycast works for sculpting!
+            aabbMin = glm::vec3(std::numeric_limits<float>::max());
+            aabbMax = glm::vec3(std::numeric_limits<float>::lowest());
+            for (size_t i = 0; i < mesh_buffers_cache_.vertices.size(); i += 3) {
+                aabbMin.x = std::min(aabbMin.x, mesh_buffers_cache_.vertices[i]);
+                aabbMin.y = std::min(aabbMin.y, mesh_buffers_cache_.vertices[i+1]);
+                aabbMin.z = std::min(aabbMin.z, mesh_buffers_cache_.vertices[i+2]);
+                aabbMax.x = std::max(aabbMax.x, mesh_buffers_cache_.vertices[i]);
+                aabbMax.y = std::max(aabbMax.y, mesh_buffers_cache_.vertices[i+1]);
+                aabbMax.z = std::max(aabbMax.z, mesh_buffers_cache_.vertices[i+2]);
+            }
+            aabbValid = true;
+        } else {
+            aabbValid = false;
+        }
+        
+        vao = 0; // Mark for GPU re-upload
+    }
 
+    void SceneObject::markMeshAsClean() {
+        // Mark cache as valid (prevents sync getRenderMesh call)
+        // Async remesh will update it soon
+        is_mesh_cache_dirty_ = false;
+    }
 
     // This is now the central point for getting renderable mesh data.
     // It uses a cache for performance.

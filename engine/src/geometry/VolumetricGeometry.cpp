@@ -35,7 +35,14 @@ CadKernel::MeshBuffers VolumetricGeometry::getRenderMesh(double detailLevel) con
         return outMesh;
     }
 
-    // 1. Prepare data for libigl
+    // 1. Convert sparse OpenVDB grid to dense array for Marching Cubes
+    std::vector<float> denseData = grid_->toDenseArray();
+    
+    std::cout << "[VolumetricGeometry] OpenVDB stats: " 
+              << grid_->getActiveVoxelCount() << " active voxels, "
+              << (grid_->getMemoryUsage() / 1024.0 / 1024.0) << " MB" << std::endl;
+
+    // 2. Prepare data for libigl
     Eigen::VectorXd S(totalVoxels);
     Eigen::MatrixXd GV(totalVoxels, 3);
 
@@ -43,7 +50,7 @@ CadKernel::MeshBuffers VolumetricGeometry::getRenderMesh(double detailLevel) con
         for (unsigned int y = 0; y < dims.y; ++y) {
             for (unsigned int x = 0; x < dims.x; ++x) {
                 size_t index = z * dims.x * dims.y + y * dims.x + x;
-                S(index) = grid_->at(x, y, z);
+                S(index) = denseData[index];
                 
                 GV.row(index) << 
                     grid_->origin.x + x * grid_->voxelSize,
@@ -53,7 +60,7 @@ CadKernel::MeshBuffers VolumetricGeometry::getRenderMesh(double detailLevel) con
         }
     }
 
-    // 2. Run Marching Cubes
+    // 3. Run Marching Cubes
     Eigen::MatrixXd V_igl; // Output vertices
     Eigen::MatrixXi F_igl; // Output faces (indices)
     
@@ -68,7 +75,7 @@ CadKernel::MeshBuffers VolumetricGeometry::getRenderMesh(double detailLevel) con
         return outMesh; // No surface generated
     }
 
-    // 3. Convert Eigen matrices to our MeshBuffers struct
+    // 4. Convert Eigen matrices to our MeshBuffers struct
     outMesh.vertices.resize(V_igl.rows() * 3);
     for (int i = 0; i < V_igl.rows(); ++i) {
         outMesh.vertices[i * 3 + 0] = (float)V_igl(i, 0);
@@ -83,7 +90,7 @@ CadKernel::MeshBuffers VolumetricGeometry::getRenderMesh(double detailLevel) con
         outMesh.indices[i * 3 + 2] = (unsigned int)F_igl(i, 2);
     }
 
-    // 4. Calculate per-vertex normals
+    // 5. Calculate per-vertex normals
     Eigen::MatrixXd N_igl;
     igl::per_vertex_normals(V_igl, F_igl, N_igl);
     

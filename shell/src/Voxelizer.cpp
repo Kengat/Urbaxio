@@ -75,14 +75,33 @@ std::unique_ptr<Engine::VoxelGrid> Voxelizer::BRepToSDFGrid(const TopoDS_Shape& 
     Eigen::MatrixXd N; 
     igl::signed_distance(P, V, F, igl::SIGNED_DISTANCE_TYPE_WINDING_NUMBER, S, I, C, N);
 
-    // 7. Copy the results into our VoxelGrid structure
+    // 7. Copy the results into our sparse OpenVDB VoxelGrid structure
     auto grid = std::make_unique<Engine::VoxelGrid>(dims, origin, (float)voxelSize);
-    // Correct the data type - Eigen uses double, we use float.
-    for (size_t i = 0; i < S.size(); ++i) {
-        grid->sdfData[i] = static_cast<float>(S(i));
+    
+    // Use OpenVDB accessor for efficient batch writes
+    Engine::VoxelGrid::Accessor accessor(*grid);
+    
+    size_t activeCount = 0;
+    for (unsigned int z = 0; z < dims.z; ++z) {
+        for (unsigned int y = 0; y < dims.y; ++y) {
+            for (unsigned int x = 0; x < dims.x; ++x) {
+                size_t index = z * dims.x * dims.y + y * dims.x + x;
+                float sdfValue = static_cast<float>(S(index));
+                
+                // Only store values near the surface (sparse optimization)
+                // This dramatically reduces memory usage
+                if (std::abs(sdfValue) < voxelSize * 5.0f) {
+                    accessor.setValue(x, y, z, sdfValue);
+                    activeCount++;
+                }
+            }
+        }
     }
     
-    std::cout << "Voxelization complete. Grid size: " << dims.x << "x" << dims.y << "x" << dims.z << std::endl;
+    std::cout << "Voxelization complete. Grid size: " << dims.x << "x" << dims.y << "x" << dims.z 
+              << ", Active voxels: " << activeCount << " / " << (dims.x * dims.y * dims.z)
+              << " (" << (100.0 * activeCount / (dims.x * dims.y * dims.z)) << "%)"
+              << ", Memory: " << (grid->getMemoryUsage() / 1024.0 / 1024.0) << " MB" << std::endl;
     return grid;
 }
 

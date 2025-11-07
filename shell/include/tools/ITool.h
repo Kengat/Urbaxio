@@ -12,6 +12,7 @@
 namespace Urbaxio {
     class Camera;
     class Renderer;
+    class LoadingManager;
     namespace Engine {
         class Scene;
     }
@@ -61,6 +62,9 @@ struct ToolContext {
     // NEW: Flag to indicate if running in VR
     bool isVrMode = false;
     // --- END OF MODIFICATION ---
+    
+    // NEW: Loading manager for async operations
+    LoadingManager* loadingManager = nullptr;
 };
 
 // Interface for all interactive tools

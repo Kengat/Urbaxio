@@ -55,6 +55,8 @@ namespace Urbaxio::Engine {
         bool hasGeometry() const;
         const CadKernel::MeshBuffers& getMeshBuffers() const; // Caching version
         void invalidateMeshCache();
+        void setMeshBuffers(CadKernel::MeshBuffers&& mesh); // Direct mesh update (for async remesh)
+        void markMeshAsClean(); // Mark mesh cache as valid (keeps current mesh)
 
         // --- NEW: Mesh Groups for Materials ---
         mutable std::vector<MeshGroup> meshGroups;

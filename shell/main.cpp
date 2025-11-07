@@ -595,7 +595,8 @@ namespace { // Anonymous namespace for helpers
     }
 
     void RenderLoadingPopup(Urbaxio::LoadingManager& manager) {
-        if (manager.IsLoading()) {
+        // Only show blocking popup for voxelization and file loading (NOT for remeshing!)
+        if (manager.IsBlockingOperation()) {
             ImGui::OpenPopup("Loading...");
         }
 
@@ -605,10 +606,25 @@ namespace { // Anonymous namespace for helpers
             ImGui::Text("%s", manager.GetStatus().c_str());
             ImGui::ProgressBar(manager.GetProgress(), ImVec2(-1, 0));
 
-            if (!manager.IsLoading()) {
+            if (!manager.IsBlockingOperation()) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
+        }
+        
+        // Show small non-blocking indicator for background operations (remeshing)
+        if (manager.IsLoading() && !manager.IsBlockingOperation()) {
+            ImGuiIO& io = ImGui::GetIO();
+            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 10, 10), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+            ImGui::SetNextWindowBgAlpha(0.7f);
+            if (ImGui::Begin("BackgroundTask", nullptr, 
+                ImGuiWindowFlags_NoDecoration | 
+                ImGuiWindowFlags_NoMove | 
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Remeshing...");
+            }
+            ImGui::End();
         }
     }
 
@@ -1114,6 +1130,7 @@ int main(int argc, char* argv[]) {
     // --- START OF MODIFICATION ---
     toolContext.isVrMode = vr_mode;
     // --- END OF MODIFICATION ---
+    toolContext.loadingManager = &loadingManager; // For async remeshing
     if (vrManager) {
         toolContext.worldTransform = &vrManager->GetWorldTransform();
         toolContext.rightThumbstickY = &vrManager->rightThumbstickY;
@@ -1237,6 +1254,43 @@ int main(int argc, char* argv[]) {
         // --- Process Input (always, for ImGui and quitting) ---
         inputHandler.ProcessEvents(camera, should_quit, window, toolManager, scene_ptr);
 
+        // --- Undo/Redo Shortcuts (Desktop Mode) ---
+        if (!vr_mode && ctrlDown) {
+            if (keyboardState[SDL_SCANCODE_Z] && !keyboardState[SDL_SCANCODE_LSHIFT] && !keyboardState[SDL_SCANCODE_RSHIFT]) {
+                static bool undoKeyWasPressed = false;
+                if (!undoKeyWasPressed) {
+                    scene_ptr->getCommandManager()->Undo();
+                    // Request async remesh for volumetric objects after Undo
+                    for (auto* obj : scene_ptr->get_all_objects()) {
+                        if (obj && dynamic_cast<Urbaxio::Engine::VolumetricGeometry*>(obj->getGeometry())) {
+                            loadingManager.RequestRemesh(scene_ptr, obj->get_id());
+                        }
+                    }
+                    undoKeyWasPressed = true;
+                }
+            } else {
+                static bool undoKeyWasPressed = false;
+                undoKeyWasPressed = false;
+            }
+            
+            if ((keyboardState[SDL_SCANCODE_Y] || (keyboardState[SDL_SCANCODE_Z] && (keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT])))) {
+                static bool redoKeyWasPressed = false;
+                if (!redoKeyWasPressed) {
+                    scene_ptr->getCommandManager()->Redo();
+                    // Request async remesh for volumetric objects after Redo
+                    for (auto* obj : scene_ptr->get_all_objects()) {
+                        if (obj && dynamic_cast<Urbaxio::Engine::VolumetricGeometry*>(obj->getGeometry())) {
+                            loadingManager.RequestRemesh(scene_ptr, obj->get_id());
+                        }
+                    }
+                    redoKeyWasPressed = true;
+                }
+            } else {
+                static bool redoKeyWasPressed = false;
+                redoKeyWasPressed = false;
+            }
+        }
+
         if (fileDialogResultReady.load()) {
             std::string path;
             bool isImport = isImportDialog;
@@ -1286,10 +1340,23 @@ int main(int argc, char* argv[]) {
                     );
                     scene_ptr->getCommandManager()->ExecuteCommand(std::move(command));
                     
+                    // NOTE: First mesh is generated synchronously by VolumetricGeometry::getRenderMesh()
+                    // Subsequent updates will be async via RequestRemesh in SculptTool
+                    
                     // Deselect after operation
 
                     selectedObjId = 0;
                     selectedTriangleIndices.clear();
+                } else if constexpr (std::is_same_v<T, Urbaxio::RemeshResult>) {
+                    // Async remesh completed! Update the mesh instantly
+                    std::cout << "[Main] Async remesh complete for object " << arg.objectId << std::endl;
+                    
+                    Urbaxio::Engine::SceneObject* obj = scene_ptr->get_object_by_id(arg.objectId);
+                    if (obj) {
+                        // Directly set the mesh buffers (instant swap, no Marching Cubes!)
+                        obj->setMeshBuffers(std::move(arg.mesh));
+                        renderer.InvalidateStaticBatch();
+                    }
                 }
             }, loadedData);
 
@@ -1426,12 +1493,14 @@ int main(int argc, char* argv[]) {
                 sphereCenter.z += 1.0f; // Lift it a bit
                 float sphereRadius = 4.0f;
 
+                // Use OpenVDB Accessor for efficient batch writes
+                Urbaxio::Engine::VoxelGrid::Accessor accessor(*grid);
                 for (unsigned int z = 0; z < dims.z; ++z) {
                     for (unsigned int y = 0; y < dims.y; ++y) {
                         for (unsigned int x = 0; x < dims.x; ++x) {
                             glm::vec3 voxelPos = origin + glm::vec3(x, y, z) * voxelSize;
                             float dist = glm::distance(voxelPos, sphereCenter) - sphereRadius;
-                            grid->at(x, y, z) = dist;
+                            accessor.setValue(x, y, z, dist);
                         }
                     }
                 }
@@ -1455,9 +1524,13 @@ int main(int argc, char* argv[]) {
             if (!canVoxelize) {
                 ImGui::BeginDisabled();
             }
+            
+            static int voxelize_resolution = 64;
+            ImGui::SliderInt("Voxel Resolution", &voxelize_resolution, 32, 512, "%d", ImGuiSliderFlags_Logarithmic);
+            ImGui::TextDisabled("Higher = more detail, more memory");
+            
             if (ImGui::Button("Voxelize Selected")) {
                 if (canVoxelize) {
-                    static int voxelize_resolution = 64;
                     // This is now an async request
                     loadingManager.RequestVoxelize(scene_ptr, selectedObjId, voxelize_resolution);
                 }
@@ -1745,9 +1818,23 @@ int main(int argc, char* argv[]) {
                 if (vrManager->triggeredUndoRedoAction == Urbaxio::UndoRedoAction::TriggerUndo) {
                     scene_ptr->getCommandManager()->Undo();
                     vrManager->triggeredUndoRedoAction = Urbaxio::UndoRedoAction::None; // Reset the flag
+                    
+                    // After Undo: request async remesh for all volumetric objects
+                    for (auto* obj : scene_ptr->get_all_objects()) {
+                        if (obj && dynamic_cast<Urbaxio::Engine::VolumetricGeometry*>(obj->getGeometry())) {
+                            loadingManager.RequestRemesh(scene_ptr, obj->get_id());
+                        }
+                    }
                 } else if (vrManager->triggeredUndoRedoAction == Urbaxio::UndoRedoAction::TriggerRedo) {
                     scene_ptr->getCommandManager()->Redo();
                     vrManager->triggeredUndoRedoAction = Urbaxio::UndoRedoAction::None; // Reset the flag
+                    
+                    // After Redo: request async remesh for all volumetric objects
+                    for (auto* obj : scene_ptr->get_all_objects()) {
+                        if (obj && dynamic_cast<Urbaxio::Engine::VolumetricGeometry*>(obj->getGeometry())) {
+                            loadingManager.RequestRemesh(scene_ptr, obj->get_id());
+                        }
+                    }
                 }
 
 

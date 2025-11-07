@@ -19,6 +19,10 @@ namespace Urbaxio::Engine {
     class VoxelGrid;
 }
 
+namespace Urbaxio::CadKernel {
+    struct MeshBuffers;
+}
+
 namespace Urbaxio {
 
 struct VoxelizeResult {
@@ -26,9 +30,14 @@ struct VoxelizeResult {
     std::unique_ptr<Engine::VoxelGrid> grid;
 };
 
+struct RemeshResult {
+    uint64_t objectId;
+    CadKernel::MeshBuffers mesh;
+};
+
 // A variant to hold any type of loaded data result
 
-using LoadedDataResult = std::variant<FileIO::LoadedSceneData, VoxelizeResult>;
+using LoadedDataResult = std::variant<FileIO::LoadedSceneData, VoxelizeResult, RemeshResult>;
 
 class LoadingManager {
 public:
@@ -39,7 +48,10 @@ public:
 
     void RequestVoxelize(Engine::Scene* scene, uint64_t objectId, int resolution);
 
+    void RequestRemesh(Engine::Scene* scene, uint64_t objectId);
+
     bool IsLoading() const;
+    bool IsBlockingOperation() const; // Returns true only for operations that should block UI
 
     float GetProgress() const;
 
@@ -61,14 +73,20 @@ private:
         std::vector<char> serializedShape; // Pass shape data safely to worker thread
     };
 
+    struct RemeshJob {
+        uint64_t objectId;
+        std::unique_ptr<Engine::VoxelGrid> gridCopy; // Copy of the grid for thread safety
+    };
+
     std::thread workerThread_;
-    std::queue<std::variant<LoadJob, VoxelizeJob>> jobQueue_;
+    std::queue<std::variant<LoadJob, VoxelizeJob, RemeshJob>> jobQueue_;
     std::queue<LoadedDataResult> resultQueue_;
     std::mutex jobMutex_;
     std::mutex resultMutex_;
     std::condition_variable jobCondition_;
     bool stopWorker_ = false;
     std::atomic<bool> isLoading_;
+    std::atomic<bool> isBlockingOperation_; // True for voxelize/load, false for remesh
     std::atomic<float> progress_;
     std::string statusMessage_;
     mutable std::mutex statusMutex_;

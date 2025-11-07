@@ -10,6 +10,8 @@
     "glm",
     "openxr-loader",
     "libigl",
-    "eigen3"
+    "eigen3",
+    "openvdb",
+    "tbb"
   ]
 }

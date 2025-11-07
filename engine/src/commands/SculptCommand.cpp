@@ -41,12 +41,19 @@ void SculptCommand::applyGridData(const std::vector<float>& data) {
     VoxelGrid* grid = volGeom->getGrid();
     if (!grid) return;
     
-    if (grid->sdfData.size() == data.size()) {
-        grid->sdfData = data;
-        obj->invalidateMeshCache();
-        scene_->MarkStaticGeometryDirty();
+    size_t expectedSize = grid->dimensions.x * grid->dimensions.y * grid->dimensions.z;
+    if (data.size() == expectedSize) {
+        // Convert dense array back to sparse OpenVDB grid
+        grid->fromDenseArray(data);
+        
+        // Don't invalidate mesh cache - keep old mesh until async update arrives
+        // This prevents sync Marching Cubes during Undo/Redo
+        
+        std::cout << "[SculptCommand] Restored grid state. Active voxels: " 
+                  << grid->getActiveVoxelCount() << " (mesh update will be async)" << std::endl;
     } else {
-        std::cerr << "SculptCommand Error: Grid data size mismatch!" << std::endl;
+        std::cerr << "SculptCommand Error: Grid data size mismatch! Expected " 
+                  << expectedSize << ", got " << data.size() << std::endl;
     }
 }
 
