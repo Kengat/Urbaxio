@@ -28,7 +28,11 @@ enum class ToolType {
     PushPull,
     Move,
     Paint,
-    Sculpt
+    Sculpt,
+    SculptDraw,
+    SculptPinch,
+    SculptSmooth,
+    VoxelizeAction // A dummy type for one-shot action buttons
 };
 
 // Bundles common objects and state that tools need to access.

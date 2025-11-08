@@ -10,10 +10,13 @@ namespace Urbaxio::UI {
 VRToolButtonWidget::VRToolButtonWidget(const std::string& text, const glm::vec3& localPos, const glm::vec2& size,
                                        GLuint textureId,
                                        Urbaxio::Tools::ToolType toolType, Urbaxio::Tools::ToolManager& toolManager,
-                                       std::function<void()> onClick)
+                                       std::function<void()> onClick,
+                                       const ToolButtonColors& selectedColors,
+                                       const ToolButtonColors& inactiveColors)
     : text_(text), localPosition_(localPos), size_(size), 
       textureId_(textureId),
-      toolType_(toolType), toolManager_(toolManager), onClick_(onClick) {}
+      toolType_(toolType), toolManager_(toolManager), onClick_(onClick),
+      selectedColors_(selectedColors), inactiveColors_(inactiveColors) {}
 
 void VRToolButtonWidget::Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) {
     const float FADE_SPEED = 0.15f;
@@ -75,11 +78,8 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
 
     float aberration = 0.05f + sphereHoverAlpha_ * 0.10f;
     
-    glm::vec3 baseColor = isSelected ? selectedColor_ : inactiveColor_;
-    glm::vec3 abColor1 = isSelected ? orange_aberration1_ : blue_aberration1_;
-    glm::vec3 abColor2 = isSelected ? orange_aberration2_ : blue_aberration2_;
-
-    renderer.RenderVRMenuWidget(view, projection, sphereModel, baseColor, aberration, alpha, abColor1, abColor2);
+    const auto& currentColors = isSelected ? selectedColors_ : inactiveColors_;
+    renderer.RenderVRMenuWidget(view, projection, sphereModel, currentColors.base, aberration, alpha, currentColors.aberration1, currentColors.aberration2);
 
     if (textureId_ != 0) {
         // -- START OF MODIFICATION --

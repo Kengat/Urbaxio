@@ -17,12 +17,21 @@ namespace Urbaxio {
 
 namespace Urbaxio::UI {
 
+// A struct to hold a complete color theme for a button state
+struct ToolButtonColors {
+    glm::vec3 base;
+    glm::vec3 aberration1;
+    glm::vec3 aberration2;
+};
+
 class VRToolButtonWidget : public IVRWidget {
 public:
     VRToolButtonWidget(const std::string& text, const glm::vec3& localPos, const glm::vec2& size,
                        GLuint textureId,
                        Urbaxio::Tools::ToolType toolType, Urbaxio::Tools::ToolManager& toolManager,
-                       std::function<void()> onClick);
+                       std::function<void()> onClick,
+                       const ToolButtonColors& selectedColors = { {1.0f, 0.79f, 0.4f}, {1.00f, 0.84f, 0.26f}, {1.0f, 0.1f, 0.1f} },
+                       const ToolButtonColors& inactiveColors = { {0.3f, 0.75f, 1.0f}, {0.67f, 0.5f, 1.0f}, {0.3f, 1.0f, 0.76f} });
 
     void Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) override;
     void Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask = std::nullopt) const override;
@@ -46,14 +55,8 @@ private:
     float sphereHoverAlpha_ = 0.0f;
     float textHoverAlpha_ = 0.0f;
 
-    // Colors for the sphere indicator
-    glm::vec3 selectedColor_ = glm::vec3(1.0f, 0.79f, 0.4f);
-    glm::vec3 orange_aberration1_ = glm::vec3(1.00f, 0.84f, 0.26f);
-    glm::vec3 orange_aberration2_ = glm::vec3(1.0f, 0.1f, 0.1f);
-
-    glm::vec3 inactiveColor_ = glm::vec3(0.3f, 0.75f, 1.0f);
-    glm::vec3 blue_aberration1_ = glm::vec3(0.67f, 0.5f, 1.0f);
-    glm::vec3 blue_aberration2_ = glm::vec3(0.3f, 1.0f, 0.76f);
+    ToolButtonColors selectedColors_;
+    ToolButtonColors inactiveColors_;
 };
 
 } // namespace Urbaxio::UI

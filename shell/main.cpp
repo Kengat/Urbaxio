@@ -832,7 +832,7 @@ namespace { // Anonymous namespace for helpers
     }
 
     // --- NEW: Factory function to create the tool menu panel ---
-    void SetupToolMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, unsigned int dragIconTexture, unsigned int selectIcon, unsigned int lineIcon, unsigned int pushpullIcon, unsigned int moveIcon, unsigned int closeIconTexture, unsigned int minimizeIconTexture) {
+    void SetupStandardToolsPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, unsigned int dragIconTexture, unsigned int selectIcon, unsigned int lineIcon, unsigned int pushpullIcon, unsigned int moveIcon, unsigned int paintIcon, unsigned int closeIconTexture, unsigned int minimizeIconTexture) {
         // --- FINAL: Default transform values from your tuning ---
         glm::vec3 translation = glm::vec3(0.059f, -0.033f, -0.050f);
         glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-113.214f, 3.417f, -3.030f));
@@ -847,20 +847,74 @@ namespace { // Anonymous namespace for helpers
         float panelHeight = 0.394f;
         float cornerRadius = 0.5f;
 
-        const int numButtons = 4;
-        float buttonHeight = panelHeight / (numButtons + 1.5f);
-        float buttonSpacing = buttonHeight * 1.6f;
-
-        auto& toolMenu = vruiManager.AddPanel("ToolMenu", "Tools", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIconTexture, closeIconTexture, minimizeIconTexture);
+        auto& toolMenu = vruiManager.AddPanel("StandardTools", "Standard", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIconTexture, closeIconTexture, minimizeIconTexture);
         
-        toolMenu.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(buttonSpacing - buttonHeight, true));
+        // Adjust layout for 5 buttons
+        toolMenu.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f, true)); // Reduced spacing a bit
 
         toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Select", glm::vec3(0), glm::vec2(0), selectIcon, Urbaxio::Tools::ToolType::Select, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Select); }));
         toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Line", glm::vec3(0), glm::vec2(0), lineIcon, Urbaxio::Tools::ToolType::Line, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Line); }));
         toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Push/Pull", glm::vec3(0), glm::vec2(0), pushpullIcon, Urbaxio::Tools::ToolType::PushPull, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull); }));
         toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Move", glm::vec3(0), glm::vec2(0), moveIcon, Urbaxio::Tools::ToolType::Move, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Move); }));
+        toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Paint", glm::vec3(0), glm::vec2(0), paintIcon, Urbaxio::Tools::ToolType::Paint, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Paint); }));
 
         toolMenu.RecalculateLayout();
+    }
+
+    void SetupSculptToolsPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, const Urbaxio::Tools::ToolContext& toolContext, unsigned int dragIcon, unsigned int sculptIcon, unsigned int sculptDrawIcon, unsigned int sculptPinchIcon, unsigned int sculptSmoothIcon, unsigned int voxelizationIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
+        // Position it to the right of the standard tools panel
+        glm::vec3 translation = glm::vec3(0.096f, -0.035f, -0.052f);
+        glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-113.341f, 2.228f, -6.367f));
+        glm::vec3 scale = glm::vec3(0.403f, 0.403f, 0.403f);
+
+        glm::mat4 panelOffset = glm::translate(glm::mat4(1.0f), translation) *
+                                glm::mat4_cast(glm::quat(eulerAnglesRad)) *
+                                glm::scale(glm::mat4(1.0f), scale);
+
+        // Adjust panel size for 5 buttons
+        float panelWidth = 0.064f;
+        float panelHeight = 0.394f; // Same height as standard tools
+        float cornerRadius = 0.5f;
+
+        auto& sculptMenu = vruiManager.AddPanel("SculptureTools", "Sculpture", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIcon, closeIcon, minimizeIcon);
+        
+        sculptMenu.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f, true)); // Same layout
+
+        // Voxelize Action Button Callback
+        auto voxelizeCallback = [&toolContext]() {
+            if (toolContext.selectedObjId && *toolContext.selectedObjId != 0 && toolContext.scene && toolContext.loadingManager) {
+                Urbaxio::Engine::SceneObject* obj = toolContext.scene->get_object_by_id(*toolContext.selectedObjId);
+                if (obj && dynamic_cast<Urbaxio::Engine::BRepGeometry*>(obj->getGeometry())) {
+                    // Using a fixed resolution for now, can be made configurable later
+                    toolContext.loadingManager->RequestVoxelize(toolContext.scene, *toolContext.selectedObjId, 128);
+                }
+            }
+        };
+        
+        // Placeholder for unimplemented tools
+        auto placeholderCallback = [](){ std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; };
+
+        // Define the custom color themes for the sculpt panel
+        const Urbaxio::UI::ToolButtonColors sculptInactiveColors = { 
+            {0.04f, 0.89f, 0.03f}, // base
+            {0.68f, 0.47f, 0.99f}, // aberration1
+            {0.59f, 0.99f, 0.62f}  // aberration2
+            
+        };
+        const Urbaxio::UI::ToolButtonColors sculptSelectedColors = { 
+            {0.96f, 0.22f, 0.29f}, // base
+            {0.99f, 0.29f, 0.66f}, // aberration1
+            {0.99f, 0.46f, 0.29f}  // aberration2
+        };
+
+        // Add buttons to the panel, passing the new color themes
+        sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Sculpt", glm::vec3(0), glm::vec2(0), sculptIcon, Urbaxio::Tools::ToolType::Sculpt, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Sculpt); }, sculptSelectedColors, sculptInactiveColors));
+        sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Draw", glm::vec3(0), glm::vec2(0), sculptDrawIcon, Urbaxio::Tools::ToolType::SculptDraw, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptDraw); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
+        sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Pinch", glm::vec3(0), glm::vec2(0), sculptPinchIcon, Urbaxio::Tools::ToolType::SculptPinch, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptPinch); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
+        sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Smooth", glm::vec3(0), glm::vec2(0), sculptSmoothIcon, Urbaxio::Tools::ToolType::SculptSmooth, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptSmooth); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
+        sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Voxelize", glm::vec3(0), glm::vec2(0), voxelizationIcon, Urbaxio::Tools::ToolType::VoxelizeAction, toolManager, voxelizeCallback, sculptSelectedColors, sculptInactiveColors));
+        
+        sculptMenu.RecalculateLayout();
     }
 
     void SetupFileMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int closeIcon, unsigned int minimizeIcon, SDL_Window* window, std::atomic<bool>& isFileDialogActive, std::atomic<bool>& fileDialogResultReady, std::string& filePathFromDialog, std::mutex& filePathMutex, bool& isImportDialog) {
@@ -1189,6 +1243,12 @@ int main(int argc, char* argv[]) {
     unsigned int lineIconTexture = load_icon("line_icon.png");
     unsigned int pushpullIconTexture = load_icon("pushpull_icon.png");
     unsigned int moveIconTexture = load_icon("move_icon.png");
+    unsigned int paintBucketIconTexture = load_icon("paint_bucket_icon.png");
+    unsigned int sculptIconTexture = load_icon("clay_two_hands.png");
+    unsigned int sculptDrawIconTexture = load_icon("clay_control.png");
+    unsigned int sculptPinchIconTexture = load_icon("clay_pinch.png");
+    unsigned int sculptSmoothIconTexture = load_icon("clay_smooth.png");
+    unsigned int voxelizationIconTexture = load_icon("voxelization.png");
     unsigned int closeIconTexture = load_icon("close_icon.png");
     unsigned int minimizeIconTexture = load_icon("minimize_icon.png");
     unsigned int panelManagerIconTexture = load_icon("panel_manager.png");
@@ -1196,7 +1256,8 @@ int main(int argc, char* argv[]) {
 
     // --- NEW: Setup our VR panels using the new system ---
     SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture, closeIconTexture, minimizeIconTexture);
-    SetupToolMenuPanel(vruiManager, toolManager, dragIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture, closeIconTexture, minimizeIconTexture);
+    SetupStandardToolsPanel(vruiManager, toolManager, dragIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture, paintBucketIconTexture, closeIconTexture, minimizeIconTexture);
+    SetupSculptToolsPanel(vruiManager, toolManager, toolContext, dragIconTexture, sculptIconTexture, sculptDrawIconTexture, sculptPinchIconTexture, sculptSmoothIconTexture, voxelizationIconTexture, closeIconTexture, minimizeIconTexture);
     SetupPanelManagerPanel(vruiManager, dragIconTexture, closeIconTexture, minimizeIconTexture, backIconTexture);
     SetupFileMenuPanel(vruiManager, dragIconTexture, closeIconTexture, minimizeIconTexture, window, isFileDialogActive, fileDialogResultReady, filePathFromDialog, filePathMutex, isImportDialog);
     
@@ -1618,12 +1679,6 @@ int main(int argc, char* argv[]) {
             ImGui::SameLine();
             bool isPushPull = activeToolType == Urbaxio::Tools::ToolType::PushPull;
             if (ImGui::RadioButton("Push/Pull", isPushPull)) toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull);
-            ImGui::SameLine(); // <-- NEW
-            bool isPaint = activeToolType == Urbaxio::Tools::ToolType::Paint; // <-- NEW
-            if (ImGui::RadioButton("Paint", isPaint)) toolManager.SetTool(Urbaxio::Tools::ToolType::Paint); // <-- NEW
-            ImGui::SameLine();
-            bool isSculpt = activeToolType == Urbaxio::Tools::ToolType::Sculpt;
-            if (ImGui::RadioButton("Sculpt", isSculpt)) toolManager.SetTool(Urbaxio::Tools::ToolType::Sculpt);
 
             if (ImGui::Button("Clear Lines") && scene_ptr) { 
                 scene_ptr->ClearUserLines(); 

@@ -33,6 +33,7 @@ public:
 
     void SetLocalPosition(const glm::vec3& pos) override;
     const glm::vec3& GetLocalPosition() const override;
+    void SetSize(const glm::vec2& size) override;
     glm::vec2 GetSize() const override;
 
     void SetIconOffsetUseCameraForward(bool useCameraForward) { iconOffsetUseCameraForward_ = useCameraForward; }

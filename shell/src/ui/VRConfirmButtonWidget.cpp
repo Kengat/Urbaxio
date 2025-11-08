@@ -200,6 +200,11 @@ void VRConfirmButtonWidget::SetLocalPosition(const glm::vec3& pos) { localPositi
 
 const glm::vec3& VRConfirmButtonWidget::GetLocalPosition() const { return localPosition_; }
 
+void VRConfirmButtonWidget::SetSize(const glm::vec2& size) {
+    // For a sphere in a vertical layout, the height is the most relevant dimension for diameter.
+    diameter_ = size.y;
+}
+
 glm::vec2 VRConfirmButtonWidget::GetSize() const { return {diameter_, diameter_}; }
 
 } // namespace Urbaxio::UI
