@@ -329,6 +329,16 @@ namespace { // Anonymous namespace for helpers
         return translationMatrix * rotationMatrix;
     }
 
+    // Helper to convert XrPosef (position + quaternion) to a 4x4 view matrix
+    glm::mat4 XrPoseToMat4(const XrPosef& pose) {
+        glm::quat orientation(pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z);
+        glm::vec3 position(pose.position.x, pose.position.y, pose.position.z);
+        glm::mat4 rotationMatrix = glm::toMat4(orientation);
+        glm::mat4 translationMatrix = glm::translate(glm::mat4(1.0f), position);
+        // The view matrix is the inverse of the camera's transformation
+        return glm::inverse(translationMatrix * rotationMatrix);
+    }
+
     // Transform a 3D point by a 4x4 matrix
     glm::vec3 TransformPoint(const glm::mat4& M, const glm::vec3& p) {
         return glm::vec3(M * glm::vec4(p, 1.0f));
@@ -2420,10 +2430,34 @@ int main(int argc, char* argv[]) {
                         item.second(); // Вызываем сохранённую лямбда-функцию рендера
                     }
 
-                    const float HINT_DISTANCE_FROM_HEAD = 2.0f;
-                    glm::vec3 headForward = cyclopsEyeQuat * glm::vec3(0.0f, 0.0f, -1.0f);
-                    glm::vec3 headUp = cyclopsEyeQuat * glm::vec3(0.0f, 1.0f, 0.0f);
-                    glm::vec3 hintAnchorPos = cyclopsEyePos + headForward * HINT_DISTANCE_FROM_HEAD;
+                    // Complete rewrite of hint text positioning logic
+                    // This robust approach treats the multi-line text as a single billboarded panel.
+                    
+                    // 1. Get the average head pose in appSpace (physical space, Y-up) from raw view data
+                    glm::mat4 headPoseInAppSpace;
+                    if (vr_views.size() > 1) {
+                        glm::mat4 headPose1 = glm::inverse(XrPoseToMat4(vr_views[0].pose));
+                        glm::mat4 headPose2 = glm::inverse(XrPoseToMat4(vr_views[1].pose));
+                        glm::vec3 posInAppSpace = (glm::vec3(headPose1[3]) + glm::vec3(headPose2[3])) * 0.5f;
+                        glm::quat rotInAppSpace = glm::slerp(glm::quat_cast(headPose1), glm::quat_cast(headPose2), 0.5f);
+                        headPoseInAppSpace = glm::translate(glm::mat4(1.0f), posInAppSpace) * glm::mat4_cast(rotInAppSpace);
+                    } else if (!vr_views.empty()) {
+                        headPoseInAppSpace = glm::inverse(XrPoseToMat4(vr_views[0].pose));
+                    }
+                    // 2. Define text position relative to the head in physical space
+                    const float HINT_DISTANCE_FROM_HEAD = 2.0f; // 2 meters in front
+                    const float HINT_VERTICAL_OFFSET = -1.2f; // 50 cm below eye level
+                    
+                    glm::mat4 textAnchorInAppSpace = headPoseInAppSpace 
+                                                   * glm::translate(glm::mat4(1.0f), glm::vec3(0, HINT_VERTICAL_OFFSET, -HINT_DISTANCE_FROM_HEAD));
+                    // 3. Transform this physical-space anchor point into the virtual world space
+                    const glm::mat4& worldTransform = vrManager->GetWorldTransform();
+                    glm::mat4 textAnchorInWorldSpace = worldTransform * textAnchorInAppSpace;
+                    glm::vec3 hintAnchorPos = glm::vec3(textAnchorInWorldSpace[3]);
+                    // 4. Get the correct 'up' vector. It should be the 'up' of the head in the final virtual world,
+                    // which prevents the text from rolling with the head.
+                    glm::mat4 worldHeadPose = worldTransform * headPoseInAppSpace;
+                    glm::vec3 headUp = glm::normalize(glm::vec3(worldHeadPose[1])); // The Y-axis of the transformed head pose matrix
 
                     float hint_alpha = 0.0f;
                     std::string hint_line1, hint_line2;
@@ -2450,15 +2484,23 @@ int main(int argc, char* argv[]) {
                         float textWorldSize = desiredPx * worldUnitsPerPixel;
                         float finalWorldHeight = textWorldSize * worldScale;
 
-                        const float verticalOffset = 0.15f;
+                        // 5. Create a single billboard matrix for the entire text block, now using the correct 'up' vector
+                        glm::mat4 textBillboardMatrix = glm::inverse(glm::lookAt(hintAnchorPos, cyclopsEyePos, headUp));
 
-                        glm::vec3 text_pos_1 = hintAnchorPos + headUp * (verticalOffset + (hint_line2.empty() ? 0.0f : finalWorldHeight));
-
+                        // 6. Set this transform once and render text relative to it using AddTextOnPanel
+                        textRenderer.SetPanelModelMatrix(textBillboardMatrix);
+                        
                         const float textOpacity = 0.85f;
-                        textRenderer.AddText(hint_line1, text_pos_1, glm::vec4(1.0f, 1.0f, 1.0f, hint_alpha * textOpacity), finalWorldHeight, view);
-                        if (!hint_line2.empty()) {
-                            glm::vec3 text_pos_2 = hintAnchorPos + headUp * verticalOffset;
-                            textRenderer.AddText(hint_line2, text_pos_2, glm::vec4(1.0f, 1.0f, 1.0f, hint_alpha * textOpacity), finalWorldHeight, view);
+                        const glm::vec4 textColor = glm::vec4(1.0f, 1.0f, 1.0f, hint_alpha * textOpacity);
+                        
+                        if (hint_line2.empty()) {
+                            // Render a single centered line
+                            textRenderer.AddTextOnPanel(hint_line1, glm::vec3(0.0f), textColor, finalWorldHeight, Urbaxio::TextAlign::CENTER);
+                        } else {
+                            // Render two lines, offset vertically from the center in the panel's local space
+                            float local_y_offset = finalWorldHeight * 0.6f; // Tweak this for line spacing
+                            textRenderer.AddTextOnPanel(hint_line1, glm::vec3(0.0f, local_y_offset, 0.0f), textColor, finalWorldHeight, Urbaxio::TextAlign::CENTER);
+                            textRenderer.AddTextOnPanel(hint_line2, glm::vec3(0.0f, -local_y_offset, 0.0f), textColor, finalWorldHeight, Urbaxio::TextAlign::CENTER);
                         }
                     }
 
@@ -2492,6 +2534,8 @@ int main(int argc, char* argv[]) {
                     
                     // This call now clears the text buffers for the NEXT eye/frame
                     textRenderer.Render(view, projection);
+                    textRenderer.RenderPanelText(view, projection);
+                    textRenderer.ClearPanelModelMatrix();
                     // NEW: Blit to mirror view IF this is the left eye
                     if (i == 0) {
                         glBindFramebuffer(GL_READ_FRAMEBUFFER, swapchain.fbos[imageIndex]);
