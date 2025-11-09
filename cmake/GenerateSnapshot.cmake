@@ -58,18 +58,23 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 # cd /d C:/dev/Urbaxio
 
 # rmdir /s /q build && mkdir build && cd build
+# Кратко: cb1
 
 # cmake .. -G \"Visual Studio 17 2022\" -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+# Кратко: cb2
 
 # cmake --build . --config Debug -- /p:VcpkgEnableManifest=true
+# Кратко: bgb
 
 
 
 # 2. Incremental Build (most common)
 
 # cd /d C:/dev/Urbaxio/build
+# Кратко: cdc
 
 # cmake --build . --config Debug -- /p:VcpkgEnableManifest=true
+# Кратко: bgb
 
 
 
@@ -96,8 +101,10 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 #       Run this and send the content of 'project_structure.txt'.
 
 #       cd /d C:/dev/Urbaxio/build
+#       Кратко: cdc
 
 #       cmake --build . --target generate_structure
+#       Кратко: g2
 
 #
 
@@ -108,16 +115,20 @@ set(USER_COMMANDS "--- USER COMMANDS (Standard Workflow) ---
 #       2. Run:
 
 #          cd /d C:/dev/Urbaxio/build
+#          Кратко: cdc
 
 #          cmake --build . --target generate_partial_snapshot
+#          Кратко: g3
 
 #
 
 #    C) Generate Full Snapshot (for large changes or if requested)
 
 #       cd /d C:/dev/Urbaxio/build
+#       Кратко: cdc
 
 #       cmake --build . --target generate_snapshot
+#       Кратко: g1
 
 
 

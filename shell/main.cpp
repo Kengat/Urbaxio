@@ -1689,6 +1689,15 @@ int main(int argc, char* argv[]) {
             ImGui::SameLine();
             bool isPushPull = activeToolType == Urbaxio::Tools::ToolType::PushPull;
             if (ImGui::RadioButton("Push/Pull", isPushPull)) toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull);
+            // --- START OF MODIFICATION ---
+            ImGui::SameLine();
+            bool isPaint = activeToolType == Urbaxio::Tools::ToolType::Paint;
+            if (ImGui::RadioButton("Paint", isPaint)) toolManager.SetTool(Urbaxio::Tools::ToolType::Paint);
+            ImGui::SameLine();
+            bool isSculpt = activeToolType == Urbaxio::Tools::ToolType::Sculpt;
+            if (ImGui::RadioButton("Sculpt", isSculpt)) toolManager.SetTool(Urbaxio::Tools::ToolType::Sculpt);
+            // --- END OF MODIFICATION ---
+
 
             if (ImGui::Button("Clear Lines") && scene_ptr) { 
                 scene_ptr->ClearUserLines(); 

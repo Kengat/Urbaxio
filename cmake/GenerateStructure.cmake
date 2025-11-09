@@ -48,7 +48,9 @@ Okay, I see the issue. To fix it, I need to see the relevant files. Please follo
     ```bash
     # Run in Developer Command Prompt for VS (inside the 'build' directory)
     cd /d C:/dev/Urbaxio/build
+    # Кратко: cdc
     cmake --build . --target generate_partial_snapshot
+    # Кратко: g3
     ```
 
 4.  Send me the content of the newly generated `partial_snapshot.txt` file.
@@ -62,8 +64,10 @@ EXAMPLE FOR FULL SNAPSHOT:
 # Run in Developer Command Prompt for VS (inside the 'build' directory)
 
 cd /d C:/dev/Urbaxio/build
+# Кратко: cdc
 
 cmake --build . --target generate_snapshot
+# Кратко: g1
 
 --- END OF AI-GENERATED COMMAND ---
 
