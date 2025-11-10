@@ -191,6 +191,7 @@ else()
         "${PROJECT_SOURCE_DIR}/cad_kernel/include/cad_kernel"
         "${PROJECT_SOURCE_DIR}/cad_kernel/src"
         "${PROJECT_SOURCE_DIR}/engine/include/engine"
+        "${PROJECT_SOURCE_DIR}/engine/include/engine/geometry"
         "${PROJECT_SOURCE_DIR}/engine/src"
         "${PROJECT_SOURCE_DIR}/engine/include/engine/commands"
         "${PROJECT_SOURCE_DIR}/engine/src/commands"
