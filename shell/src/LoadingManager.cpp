@@ -185,125 +185,72 @@ void LoadingManager::worker_thread_main() {
                 VoxelizeResult result{job.objectId, std::move(grid)};
                 { std::lock_guard<std::mutex> lock(resultMutex_); resultQueue_.push(std::move(result)); }
             } else if constexpr (std::is_same_v<T, RemeshJob>) {
-                isBlockingOperation_ = false; // Remeshing is a background task
-                { std::lock_guard<std::mutex> lock(statusMutex_); 
-                  statusMessage_ = "Remeshing object " + std::to_string(job.objectId) + 
-                                  (job.useGpu ? " (GPU)..." : " (CPU)..."); }
+                isBlockingOperation_ = false; // Remeshing in background
+                { 
+                    std::lock_guard<std::mutex> lock(statusMutex_); 
+                    statusMessage_ = "Remeshing object " + std::to_string(job.objectId) + "..."; 
+                }
                 
                 CadKernel::MeshBuffers outMesh;
                 openvdb::FloatGrid::Ptr grid = job.gridCopy->grid_;
                 
-                if (grid) {
-                    // Check if GPU meshing was requested and is available
-#ifdef URBAXIO_GPU_ENABLED
-#if URBAXIO_GPU_ENABLED
-                    if (job.useGpu && Engine::GpuMeshingKernels::IsAvailable()) {
-                        std::cout << "[LoadingManager] Using GPU meshing (Path B)" << std::endl;
-                        
-                        // Upload grid to GPU
-                        Engine::GpuVoxelManager gpuManager;
-                        uint64_t gpuHandle = gpuManager.UploadGrid(job.gridCopy.get());
-                        
-                        if (gpuHandle != 0) {
-                            void* devicePtr = gpuManager.GetDeviceGridPointer(gpuHandle);
-                            
-                            // GPU Marching Cubes
-                            bool success = Engine::GpuMeshingKernels::MarchingCubes(
-                                devicePtr,
-                                0.0f, // ISO value
-                                job.gridCopy->voxelSize,
-                                outMesh
-                            );
-                            
-                            if (success && !outMesh.vertices.empty()) {
-                                // Calculate normals on CPU (could also be done on GPU)
-                                Eigen::MatrixXd V_igl(outMesh.vertices.size() / 3, 3);
-                                for(size_t i = 0; i < outMesh.vertices.size() / 3; ++i) {
-                                    V_igl(i, 0) = outMesh.vertices[i * 3 + 0];
-                                    V_igl(i, 1) = outMesh.vertices[i * 3 + 1];
-                                    V_igl(i, 2) = outMesh.vertices[i * 3 + 2];
-                                }
-                                
-                                Eigen::MatrixXi F_igl(outMesh.indices.size() / 3, 3);
-                                for (size_t i = 0; i < F_igl.rows(); ++i) {
-                                    F_igl(i, 0) = outMesh.indices[i * 3 + 0];
-                                    F_igl(i, 1) = outMesh.indices[i * 3 + 1];
-                                    F_igl(i, 2) = outMesh.indices[i * 3 + 2];
-                                }
-                                
-                                Eigen::MatrixXd N_igl;
-                                igl::per_vertex_normals(V_igl, F_igl, N_igl);
-                                
-                                outMesh.normals.resize(N_igl.rows() * 3);
-                                for (int i = 0; i < N_igl.rows(); ++i) {
-                                    outMesh.normals[i * 3 + 0] = (float)N_igl(i, 0);
-                                    outMesh.normals[i * 3 + 1] = (float)N_igl(i, 1);
-                                    outMesh.normals[i * 3 + 2] = (float)N_igl(i, 2);
-                                }
-                                
-                                outMesh.uvs.assign(V_igl.rows() * 2, 0.0f);
-                                
-                                std::cout << "[LoadingManager] GPU mesh complete: " 
-                                          << V_igl.rows() << " vertices, " 
-                                          << F_igl.rows() << " triangles" << std::endl;
-                            } else {
-                                std::cerr << "[LoadingManager] GPU meshing failed, falling back to CPU" << std::endl;
-                                job.useGpu = false; // Fall back to CPU
-                            }
-                            
-                            gpuManager.FreeGrid(gpuHandle);
-                        } else {
-                            std::cerr << "[LoadingManager] Failed to upload to GPU, using CPU" << std::endl;
-                            job.useGpu = false; // Fall back to CPU
+                if (!grid) {
+                    std::cerr << "[LoadingManager] ❌ Invalid grid in RemeshJob!" << std::endl;
+                    return;
+                }
+                
+                // Use CPU meshing (OpenVDB volumeToMesh)
+                // This is FAST with TBB and produces high-quality Dual Contouring mesh
+                std::vector<openvdb::Vec3s> points;
+                std::vector<openvdb::Vec3I> triangles;
+                std::vector<openvdb::Vec4I> quads;
+                
+                const double isoValue = 0.0;
+                const double adaptivity = 0.0; // 0.0 = uniform (like Marching Cubes)
+                
+                try {
+                    // Native sparse meshing - works directly on sparse grid
+                    openvdb::tools::volumeToMesh(
+                        *grid, 
+                        points, 
+                        triangles, 
+                        quads, 
+                        isoValue, 
+                        adaptivity
+                    );
+                    
+                    if (!points.empty() && (!triangles.empty() || !quads.empty())) {
+                        // Convert points
+                        outMesh.vertices.reserve(points.size() * 3);
+                        for (const openvdb::Vec3s& p : points) {
+                            outMesh.vertices.push_back(p.x());
+                            outMesh.vertices.push_back(p.y());
+                            outMesh.vertices.push_back(p.z());
                         }
-                    }
-#else
-                    // GPU support not compiled in
-                    if (job.useGpu) {
-                        std::cout << "[LoadingManager] GPU requested but not available (not compiled with CUDA)" << std::endl;
-                        job.useGpu = false;
-                    }
-#endif
-#endif
-                    
-                    // CPU path (or fallback from GPU)
-                    if (!job.useGpu || outMesh.vertices.empty()) {
-                    // --- START OF RE-ARCHITECTURE: Using openvdb::tools::volumeToMesh ---
-                    
-                    std::vector<openvdb::Vec3s> points;
-                    std::vector<openvdb::Vec3I> triangles;
-                    std::vector<openvdb::Vec4I> quads;
-                    const double isoValue = 0.0;
-                    const double adaptivity = 0.0; // 0.0 for uniform meshing (like Marching Cubes), > 0 for adaptive (Dual Contouring)
-                    try {
-                        // This function works directly on the sparse grid and is multi-threaded with TBB.
-                        openvdb::tools::volumeToMesh(*grid, points, triangles, quads, isoValue, adaptivity);
-                        if (!points.empty() && (!triangles.empty() || !quads.empty())) {
-                            // 1. Convert points
-                            outMesh.vertices.reserve(points.size() * 3);
-                            for (const openvdb::Vec3s& p : points) {
-                                outMesh.vertices.push_back(p.x());
-                                outMesh.vertices.push_back(p.y());
-                                outMesh.vertices.push_back(p.z());
-                            }
-                            // 2. Convert triangles and triangulate quads, FIXING winding order
-                            outMesh.indices.reserve(triangles.size() * 3 + quads.size() * 6);
-                            for (const openvdb::Vec3I& t : triangles) {
-                                outMesh.indices.push_back(t.x());
-                                outMesh.indices.push_back(t.z()); // Swapped
-                                outMesh.indices.push_back(t.y()); // Swapped
-                            }
-                            for (const openvdb::Vec4I& q : quads) {
-                                // Triangulate quad [x, y, z, w] into two triangles [x, z, y] and [x, w, z] to flip normals
-                                outMesh.indices.push_back(q.x());
-                                outMesh.indices.push_back(q.z()); // Swapped
-                                outMesh.indices.push_back(q.y()); // Swapped
-                                
-                                outMesh.indices.push_back(q.x());
-                                outMesh.indices.push_back(q.w()); // Swapped
-                                outMesh.indices.push_back(q.z()); // Swapped
-                            }
-                            // 3. Calculate normals (using existing igl code path, as it's fast)
+                        
+                        // Convert triangles and quads (fix winding order for correct normals)
+                        outMesh.indices.reserve(triangles.size() * 3 + quads.size() * 6);
+                        
+                        for (const openvdb::Vec3I& t : triangles) {
+                            // Swap winding order for correct normals
+                            outMesh.indices.push_back(t.x());
+                            outMesh.indices.push_back(t.z()); 
+                            outMesh.indices.push_back(t.y()); 
+                        }
+                        
+                        for (const openvdb::Vec4I& q : quads) {
+                            // Triangulate quad with correct winding
+                            outMesh.indices.push_back(q.x());
+                            outMesh.indices.push_back(q.z()); 
+                            outMesh.indices.push_back(q.y()); 
+                            
+                            outMesh.indices.push_back(q.x());
+                            outMesh.indices.push_back(q.w()); 
+                            outMesh.indices.push_back(q.z()); 
+                        }
+                        
+                        // Calculate normals
+                        if (!outMesh.indices.empty()) {
                             Eigen::MatrixXd V_igl(points.size(), 3);
                             for(size_t i = 0; i < points.size(); ++i) {
                                 V_igl(i, 0) = points[i].x();
@@ -317,6 +264,7 @@ void LoadingManager::worker_thread_main() {
                                 F_igl(i, 1) = outMesh.indices[i * 3 + 1];
                                 F_igl(i, 2) = outMesh.indices[i * 3 + 2];
                             }
+                            
                             Eigen::MatrixXd N_igl;
                             igl::per_vertex_normals(V_igl, F_igl, N_igl);
                             
@@ -327,21 +275,24 @@ void LoadingManager::worker_thread_main() {
                                 outMesh.normals[i * 3 + 2] = (float)N_igl(i, 2);
                             }
                             
-                            // 4. Generate placeholder UVs
+                            // Placeholder UVs
                             outMesh.uvs.assign(points.size() * 2, 0.0f);
                             
-                            std::cout << "[LoadingManager] Remesh complete (OpenVDB): " << points.size() 
-                                      << " vertices, " << outMesh.indices.size() / 3 << " triangles" << std::endl;
+                            std::cout << "[LoadingManager] ✅ Remesh complete (OpenVDB): " 
+                                      << points.size() << " vertices, " 
+                                      << (outMesh.indices.size() / 3) << " triangles" << std::endl;
                         }
-                    } catch (const openvdb::Exception& e) {
-                        std::cerr << "[LoadingManager] OpenVDB volumeToMesh failed: " << e.what() << std::endl;
                     }
-                    // --- END OF RE-ARCHITECTURE ---
-                    } // End of CPU path check
+                } catch (const openvdb::Exception& e) {
+                    std::cerr << "[LoadingManager] ❌ OpenVDB volumeToMesh failed: " << e.what() << std::endl;
                 }
                 
+                // Return result
                 RemeshResult result{job.objectId, std::move(outMesh)};
-                { std::lock_guard<std::mutex> lock(resultMutex_); resultQueue_.push(std::move(result)); }
+                {
+                    std::lock_guard<std::mutex> lock(resultMutex_);
+                    resultQueue_.push(std::move(result));
+                }
             }
         }, job_variant);
 

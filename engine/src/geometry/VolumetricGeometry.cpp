@@ -1,8 +1,8 @@
 #include "engine/geometry/VolumetricGeometry.h"
+
 #include "engine/geometry/VoxelGrid.h"
 #include "cad_kernel/MeshBuffers.h"
-
-#include <igl/marching_cubes.h>
+#include <openvdb/tools/VolumeToMesh.h>
 #include <igl/per_vertex_normals.h>
 #include <Eigen/Core>
 
@@ -25,84 +25,101 @@ const VoxelGrid* VolumetricGeometry::getGrid() const {
 
 CadKernel::MeshBuffers VolumetricGeometry::getRenderMesh(double detailLevel) const {
     CadKernel::MeshBuffers outMesh;
-    if (!grid_) {
+    if (!grid_ || !grid_->grid_) {
         return outMesh;
     }
 
-    const auto& dims = grid_->dimensions;
-    const size_t totalVoxels = dims.x * dims.y * dims.z;
-    if (totalVoxels == 0) {
-        return outMesh;
-    }
-
-    // 1. Convert sparse OpenVDB grid to dense array for Marching Cubes
-    std::vector<float> denseData = grid_->toDenseArray();
-    
     std::cout << "[VolumetricGeometry] OpenVDB stats: " 
               << grid_->getActiveVoxelCount() << " active voxels, "
               << (grid_->getMemoryUsage() / 1024.0 / 1024.0) << " MB" << std::endl;
 
-    // 2. Prepare data for libigl
-    Eigen::VectorXd S(totalVoxels);
-    Eigen::MatrixXd GV(totalVoxels, 3);
-
-    for (unsigned int z = 0; z < dims.z; ++z) {
-        for (unsigned int y = 0; y < dims.y; ++y) {
-            for (unsigned int x = 0; x < dims.x; ++x) {
-                size_t index = z * dims.x * dims.y + y * dims.x + x;
-                S(index) = denseData[index];
-                
-                GV.row(index) << 
-                    grid_->origin.x + x * grid_->voxelSize,
-                    grid_->origin.y + y * grid_->voxelSize,
-                    grid_->origin.z + z * grid_->voxelSize;
-            }
-        }
-    }
-
-    // 3. Run Marching Cubes
-    Eigen::MatrixXd V_igl; // Output vertices
-    Eigen::MatrixXi F_igl; // Output faces (indices)
+    // Use OpenVDB's native volumeToMesh - works directly on sparse grid!
+    // This is MUCH faster and uses less memory than converting to dense array
+    std::vector<openvdb::Vec3s> points;
+    std::vector<openvdb::Vec3I> triangles;
+    std::vector<openvdb::Vec4I> quads;
+    
+    const double isoValue = 0.0;
+    const double adaptivity = 0.0; // 0.0 = uniform (like Marching Cubes)
     
     try {
-        igl::marching_cubes(S, GV, (int)dims.x, (int)dims.y, (int)dims.z, 0.0, V_igl, F_igl);
-    } catch (const std::exception& e) {
-        std::cerr << "libigl marching_cubes exception: " << e.what() << std::endl;
-        return outMesh;
+        openvdb::tools::volumeToMesh(
+            *grid_->grid_, 
+            points, 
+            triangles, 
+            quads, 
+            isoValue, 
+            adaptivity
+        );
+        
+        if (!points.empty() && (!triangles.empty() || !quads.empty())) {
+            // Convert points
+            outMesh.vertices.reserve(points.size() * 3);
+            for (const openvdb::Vec3s& p : points) {
+                outMesh.vertices.push_back(p.x());
+                outMesh.vertices.push_back(p.y());
+                outMesh.vertices.push_back(p.z());
+            }
+            
+            // Convert triangles and quads (fix winding order for correct normals)
+            outMesh.indices.reserve(triangles.size() * 3 + quads.size() * 6);
+            
+            for (const openvdb::Vec3I& t : triangles) {
+                outMesh.indices.push_back(t.x());
+                outMesh.indices.push_back(t.z()); 
+                outMesh.indices.push_back(t.y()); 
+            }
+            
+            for (const openvdb::Vec4I& q : quads) {
+                // Triangulate quad with correct winding
+                outMesh.indices.push_back(q.x());
+                outMesh.indices.push_back(q.z()); 
+                outMesh.indices.push_back(q.y()); 
+                
+                outMesh.indices.push_back(q.x());
+                outMesh.indices.push_back(q.w()); 
+                outMesh.indices.push_back(q.z()); 
+            }
+            
+            // Calculate normals using libigl
+            if (!outMesh.indices.empty()) {
+                Eigen::MatrixXd V_igl(points.size(), 3);
+                for(size_t i = 0; i < points.size(); ++i) {
+                    V_igl(i, 0) = points[i].x();
+                    V_igl(i, 1) = points[i].y();
+                    V_igl(i, 2) = points[i].z();
+                }
+                
+                Eigen::MatrixXi F_igl(outMesh.indices.size() / 3, 3);
+                for (size_t i = 0; i < F_igl.rows(); ++i) {
+                    F_igl(i, 0) = outMesh.indices[i * 3 + 0];
+                    F_igl(i, 1) = outMesh.indices[i * 3 + 1];
+                    F_igl(i, 2) = outMesh.indices[i * 3 + 2];
+                }
+                
+                Eigen::MatrixXd N_igl;
+                igl::per_vertex_normals(V_igl, F_igl, N_igl);
+                
+                outMesh.normals.resize(N_igl.rows() * 3);
+                for (int i = 0; i < N_igl.rows(); ++i) {
+                    outMesh.normals[i * 3 + 0] = (float)N_igl(i, 0);
+                    outMesh.normals[i * 3 + 1] = (float)N_igl(i, 1);
+                    outMesh.normals[i * 3 + 2] = (float)N_igl(i, 2);
+                }
+                
+                // Placeholder UVs
+                outMesh.uvs.assign(points.size() * 2, 0.0f);
+                
+                std::cout << "[VolumetricGeometry] ✅ Mesh generated: " 
+                          << points.size() << " vertices, " 
+                          << (outMesh.indices.size() / 3) << " triangles" << std::endl;
+            }
+        } else {
+            std::cout << "[VolumetricGeometry] No surface generated (empty grid or no zero crossing)" << std::endl;
+        }
+    } catch (const openvdb::Exception& e) {
+        std::cerr << "[VolumetricGeometry] ❌ OpenVDB volumeToMesh failed: " << e.what() << std::endl;
     }
-
-    if (V_igl.rows() == 0 || F_igl.rows() == 0) {
-        return outMesh; // No surface generated
-    }
-
-    // 4. Convert Eigen matrices to our MeshBuffers struct
-    outMesh.vertices.resize(V_igl.rows() * 3);
-    for (int i = 0; i < V_igl.rows(); ++i) {
-        outMesh.vertices[i * 3 + 0] = (float)V_igl(i, 0);
-        outMesh.vertices[i * 3 + 1] = (float)V_igl(i, 1);
-        outMesh.vertices[i * 3 + 2] = (float)V_igl(i, 2);
-    }
-
-    outMesh.indices.resize(F_igl.rows() * 3);
-    for (int i = 0; i < F_igl.rows(); ++i) {
-        outMesh.indices[i * 3 + 0] = (unsigned int)F_igl(i, 0);
-        outMesh.indices[i * 3 + 1] = (unsigned int)F_igl(i, 1);
-        outMesh.indices[i * 3 + 2] = (unsigned int)F_igl(i, 2);
-    }
-
-    // 5. Calculate per-vertex normals
-    Eigen::MatrixXd N_igl;
-    igl::per_vertex_normals(V_igl, F_igl, N_igl);
-    
-    outMesh.normals.resize(N_igl.rows() * 3);
-    for (int i = 0; i < N_igl.rows(); ++i) {
-        outMesh.normals[i * 3 + 0] = (float)N_igl(i, 0);
-        outMesh.normals[i * 3 + 1] = (float)N_igl(i, 1);
-        outMesh.normals[i * 3 + 2] = (float)N_igl(i, 2);
-    }
-    
-    // UVs are not generated by this process.
-    outMesh.uvs.assign(V_igl.rows() * 2, 0.0f);
 
     return outMesh;
 }

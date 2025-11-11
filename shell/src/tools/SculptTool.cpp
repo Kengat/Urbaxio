@@ -141,7 +141,7 @@ void SculptTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, 
         Engine::SceneObject* obj = context.scene->get_object_by_id(sculptedObjectId_);
         auto* volGeom = obj ? dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry()) : nullptr;
         if (volGeom && volGeom->getGrid()) {
-            gridDataBeforeStroke_ = volGeom->getGrid()->toDenseArray();
+            gridDataBeforeStroke_ = volGeom->getGrid()->toFullDenseArray();
             std::cout << "[SculptTool] Mouse Down. Captured state for object " << sculptedObjectId_ 
                       << " (" << volGeom->getGrid()->getActiveVoxelCount() << " active voxels)" << std::endl;
             
@@ -167,7 +167,7 @@ void SculptTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
     }
     
     // The live grid is now in the "after" state. Capture it for the command.
-    std::vector<float> dataAfter = volGeom->getGrid()->toDenseArray();
+    std::vector<float> dataAfter = volGeom->getGrid()->toFullDenseArray();
     
     auto command = std::make_unique<Engine::SculptCommand>(
         context.scene,

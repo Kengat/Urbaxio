@@ -1,173 +1,182 @@
-// Workaround for OpenVDB half vs CUDA __half conflict  
-// Include CUDA headers FIRST
+// GPU Sculpting Kernels - Optimized Direct NanoVDB Modification
+
+// No CPU roundtrips - values modified directly on GPU within existing topology
+
+
+
 #include <cuda_runtime.h>
 
-// Tell nvcc to ignore the ambiguous operator+ in OpenVDB::half
+
+
 #ifdef __CUDACC__
 #pragma nv_diag_suppress 20054
 #pragma nv_diag_suppress 20012
 #endif
 
+
+
 #define OPENVDB_USE_DELAYED_LOADING 1
 #define HALF_ENABLE_F16C_INTRINSICS 0
 
+
+
 #include "engine/gpu/GpuSculptKernels.h"
 #include <nanovdb/NanoVDB.h>
-#include <nanovdb/cuda/DeviceBuffer.h>      // Updated path
-#include <nanovdb/tools/GridBuilder.h>      // Updated path
+#include <nanovdb/cuda/DeviceBuffer.h>
+#include <thrust/device_vector.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/for_each.h>
+#include <thrust/system/cuda/execution_policy.h>
 #include <iostream>
-#include <cmath>
-#include <algorithm>  // For std::min/std::max
+
+
 
 namespace Urbaxio::Engine {
 
-// CUDA kernel for CSG union operation
-// NOTE: NanoVDB grids are READ-ONLY on GPU by design for performance
-// TODO: Implement proper GPU sculpting using grid rebuilding or custom data structures
-__global__ void CsgUnionKernel(
-    nanovdb::FloatGrid* sceneGrid,
-    const nanovdb::FloatGrid* brushGrid,
-    int3 minCoord,
-    int3 maxCoord)
-{
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (x >= maxCoord.x || y >= maxCoord.y || z >= maxCoord.z) return;
 
-    int3 coord = make_int3(x + minCoord.x, y + minCoord.y, z + minCoord.z);
-    
-    // Get read accessors
-    auto sceneAcc = sceneGrid->getAccessor();
-    auto brushAcc = brushGrid->getAccessor();
-    
-    // Read values from both grids
-    float sceneVal = sceneAcc.getValue(nanovdb::Coord(coord.x, coord.y, coord.z));
-    float brushVal = brushAcc.getValue(nanovdb::Coord(coord.x, coord.y, coord.z));
-    
-    // CSG Union: min(A, B) for SDFs
-    float result = fminf(sceneVal, brushVal);
-    
-    // TODO: Write result back using proper grid rebuilding
-    // NanoVDB doesn't support setValue on GPU - need to rebuild grid from scratch
+// CUDA Kernel: Direct leaf-level modification using Thrust-compatible lambda
+// This is the FASTEST approach - no intermediate buffers, direct value modification
+__host__ __device__
+inline float smoothMin(float a, float b, float k) {
+    float h = fmaxf(k - fabsf(a - b), 0.0f) / k;
+    return fminf(a, b) - h * h * k * 0.25f;
 }
 
-// CUDA kernel for CSG difference operation
-// NOTE: NanoVDB grids are READ-ONLY on GPU by design
-__global__ void CsgDifferenceKernel(
-    nanovdb::FloatGrid* sceneGrid,
-    const nanovdb::FloatGrid* brushGrid,
-    int3 minCoord,
-    int3 maxCoord)
-{
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (x >= maxCoord.x || y >= maxCoord.y || z >= maxCoord.z) return;
 
-    int3 coord = make_int3(x + minCoord.x, y + minCoord.y, z + minCoord.z);
-    
-    auto sceneAcc = sceneGrid->getAccessor();
-    auto brushAcc = brushGrid->getAccessor();
-    
-    float sceneVal = sceneAcc.getValue(nanovdb::Coord(coord.x, coord.y, coord.z));
-    float brushVal = brushAcc.getValue(nanovdb::Coord(coord.x, coord.y, coord.z));
-    
-    // CSG Difference: max(A, -B) for SDFs
-    float result = fmaxf(sceneVal, -brushVal);
-    
-    // TODO: Write result back using proper grid rebuilding
+__host__ __device__
+inline float smoothMax(float a, float b, float k) {
+    return -smoothMin(-a, -b, k);
 }
 
-// CUDA kernel: Extract dense buffer from sparse NanoVDB grid
-__global__ void ExtractDenseBufferKernel(
-    const nanovdb::FloatGrid* inputGrid,
-    float* outputBuffer,
-    int3 minCoord,
-    int3 bufferDim,
-    float backgroundValue)
-{
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    int z = blockIdx.z * blockDim.z + threadIdx.z;
-
-    if (x >= bufferDim.x || y >= bufferDim.y || z >= bufferDim.z) return;
-
-    // World coordinate (offset by minCoord)
-    int3 worldCoord = make_int3(x + minCoord.x, y + minCoord.y, z + minCoord.z);
-    
-    // Get value from sparse NanoVDB grid
-    auto acc = inputGrid->getAccessor();
-    float value = acc.getValue(nanovdb::Coord(worldCoord.x, worldCoord.y, worldCoord.z));
-    
-    // Write to dense buffer
-    int bufferIdx = z * bufferDim.x * bufferDim.y + y * bufferDim.x + x;
-    outputBuffer[bufferIdx] = value;
-}
-
-// CUDA kernel: Apply spherical brush to dense buffer (IN-PLACE)
-__global__ void ApplySphericalBrushToDenseKernel(
-    float* denseBuffer,
+// Optimized kernel with early rejection: only processes leaves within brush radius
+__global__ void SculptBrushOptimizedKernel(
+    nanovdb::FloatGrid* grid,
     float3 brushCenter,
     float brushRadius,
-    int mode, // 0 = ADD, 1 = SUBTRACT
+    int mode,
     float strength,
-    int3 minCoord,
-    int3 bufferDim,
-    float voxelSize)
+    float smoothing,
+    uint64_t leafCount)
 {
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    int z = blockIdx.z * blockDim.z + threadIdx.z;
-
-    if (x >= bufferDim.x || y >= bufferDim.y || z >= bufferDim.z) return;
-
-    // Index-space coordinate (voxel coordinate)
-    int3 indexCoord = make_int3(x + minCoord.x, y + minCoord.y, z + minCoord.z);
+    uint64_t leafIdx = blockIdx.x;
+    if (leafIdx >= leafCount) return;
     
-    // Convert to float for distance calculation (already in index space)
-    float3 indexPos = make_float3(
-        (float)indexCoord.x,
-        (float)indexCoord.y,
-        (float)indexCoord.z
+    auto* leaf = grid->tree().getFirstNode<0>() + leafIdx;
+    
+    // Early rejection: check if leaf AABB intersects brush sphere
+    nanovdb::Coord leafOrigin = leaf->origin();
+    float3 leafCenter = make_float3(
+        leafOrigin[0] + 4.0f,  // Leaf is 8^3, center at +4
+        leafOrigin[1] + 4.0f,
+        leafOrigin[2] + 4.0f
     );
     
-    // Calculate distance from brush center (in index/voxel space)
-    float dx = indexPos.x - brushCenter.x;
-    float dy = indexPos.y - brushCenter.y;
-    float dz = indexPos.z - brushCenter.z;
-    float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+    float dx = leafCenter.x - brushCenter.x;
+    float dy = leafCenter.y - brushCenter.y;
+    float dz = leafCenter.z - brushCenter.z;
+    float distToLeafCenter = sqrtf(dx*dx + dy*dy + dz*dz);
     
-    // Calculate brush SDF value
-    float brushSDF = dist - brushRadius;
+    // Leaf diagonal is ~13.86 voxels, if brush is too far, skip entire leaf
+    if (distToLeafCenter > brushRadius + 7.0f) return;
     
-    // Get current voxel value from dense buffer
-    int bufferIdx = z * bufferDim.x * bufferDim.y + y * bufferDim.x + x;
-    float currentVal = denseBuffer[bufferIdx];
-    
-    // Apply brush operation
-    float newVal;
-    if (mode == 0) { // ADD
-        // Union: min(current, brush)
-        newVal = fminf(currentVal, brushSDF);
-    } else { // SUBTRACT
-        // Difference: max(current, -brush)
-        newVal = fmaxf(currentVal, -brushSDF);
+    // Process all 512 voxels in this leaf
+    for (int voxelIdx = threadIdx.x; voxelIdx < 512; voxelIdx += blockDim.x) {
+        if (!leaf->isActive(voxelIdx)) continue;
+        
+        nanovdb::Coord ijk = leaf->offsetToGlobalCoord(voxelIdx);
+        
+        float vdx = float(ijk[0]) - brushCenter.x;
+        float vdy = float(ijk[1]) - brushCenter.y;
+        float vdz = float(ijk[2]) - brushCenter.z;
+        float dist = sqrtf(vdx*vdx + vdy*vdy + vdz*vdz);
+        
+        if (dist > brushRadius + 2.0f) continue;
+        
+        float brushSDF = dist - brushRadius;
+        float currentVal = leaf->getValue(voxelIdx);
+        
+        float newVal;
+        if (mode == 0) {
+            newVal = smoothMin(currentVal, brushSDF, smoothing);
+        } else {
+            newVal = smoothMax(currentVal, -brushSDF, smoothing);
+        }
+        
+        float falloff = 1.0f - (dist / (brushRadius + 1.0f));
+        falloff = fmaxf(0.0f, fminf(1.0f, falloff));
+        falloff = falloff * falloff;
+        
+        float blended = currentVal + (newVal - currentVal) * strength * falloff;
+        leaf->setValueOnly(voxelIdx, blended);
     }
-    
-    // Blend based on strength
-    newVal = currentVal * (1.0f - strength) + newVal * strength;
-    
-    // Write back to dense buffer (IN-PLACE modification)
-    denseBuffer[bufferIdx] = newVal;
 }
 
-// Host functions
 
+
+// Direct NanoVDB Leaf Modification Functor (for Thrust)
+struct DirectSculptFunctor {
+    nanovdb::FloatGrid* grid;
+    float3 brushCenter;  // Index space
+    float brushRadius;   // Voxel units
+    int mode;            // 0=ADD, 1=SUBTRACT
+    float strength;
+    float smoothing;     // Smooth blending factor
+    
+    __device__ void operator()(uint64_t n) const {
+        // Get leaf node and voxel index
+        auto *leaf = grid->tree().getFirstNode<0>() + (n >> 9); // n / 512
+        const int voxelIdx = n & 511; // n % 512
+        
+        // Skip inactive voxels (topology preserved)
+        if (!leaf->isActive(voxelIdx)) return;
+        
+        // Convert to global coordinate
+        nanovdb::Coord ijk = leaf->offsetToGlobalCoord(voxelIdx);
+        
+        // Calculate distance from brush center (index space)
+        float dx = float(ijk[0]) - brushCenter.x;
+        float dy = float(ijk[1]) - brushCenter.y;
+        float dz = float(ijk[2]) - brushCenter.z;
+        float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+        
+        // Early exit if outside brush influence
+        if (dist > brushRadius + 2.0f) return;
+        
+        // Calculate brush SDF
+        float brushSDF = dist - brushRadius;
+        
+        // Get current value
+        float currentVal = leaf->getValue(voxelIdx);
+        
+        // Apply CSG operation with smooth blending
+        float newVal;
+        if (mode == 0) { // ADD (union)
+            newVal = smoothMin(currentVal, brushSDF, smoothing);
+        } else { // SUBTRACT (difference)
+            newVal = smoothMax(currentVal, -brushSDF, smoothing);
+        }
+        
+        // Distance-based falloff
+        float falloff = 1.0f - (dist / (brushRadius + 1.0f));
+        falloff = fmaxf(0.0f, fminf(1.0f, falloff));
+        falloff = falloff * falloff; // Squared for smoother transition
+        
+        // Blend with strength
+        float blended = currentVal + (newVal - currentVal) * strength * falloff;
+        
+        // Write back (value-only, topology unchanged)
+        leaf->setValueOnly(voxelIdx, blended);
+    }
+};
+
+
+
+// Host function: Apply spherical brush using direct modification (async)
 bool GpuSculptKernels::ApplySphericalBrush(
     void* deviceGridPtr,
+    uint64_t leafCount,
     const glm::vec3& brushCenter,
     float brushRadius,
     float voxelSize,
@@ -177,141 +186,44 @@ bool GpuSculptKernels::ApplySphericalBrush(
     const glm::ivec3& gridBBoxMax,
     std::vector<float>* outModifiedBuffer,
     glm::ivec3* outMinVoxel,
-    glm::ivec3* outMaxVoxel)
+    glm::ivec3* outMaxVoxel,
+    void* cudaStream)
 {
-    if (!deviceGridPtr) {
-        std::cerr << "[GpuSculptKernels] Invalid device grid pointer!" << std::endl;
-        return false;
-    }
-
-    auto* grid = reinterpret_cast<const nanovdb::FloatGrid*>(deviceGridPtr);
-    
-    // Get grid background value
-    float backgroundValue = 3.0f; // Default SDF background (outside)
-    
-    // Calculate bounding box for the brush operation (in INDEX/VOXEL space)
-    // brushCenter is already in index space, brushRadius is in voxel units
-    float brushRadiusWithMargin = brushRadius + 4.0f; // Add narrow-band margin
-    
-    glm::ivec3 minVoxel = glm::ivec3(
-        std::floor(brushCenter.x - brushRadiusWithMargin),
-        std::floor(brushCenter.y - brushRadiusWithMargin),
-        std::floor(brushCenter.z - brushRadiusWithMargin)
-    );
-    glm::ivec3 maxVoxel = glm::ivec3(
-        std::ceil(brushCenter.x + brushRadiusWithMargin),
-        std::ceil(brushCenter.y + brushRadiusWithMargin),
-        std::ceil(brushCenter.z + brushRadiusWithMargin)
-    ) + glm::ivec3(1);
-    
-    // IMPORTANT: DON'T clamp to gridBBox - allow drawing outside current bounds!
-    // This matches CPU SculptTool behavior where CSG union expands the grid
-    // We'll extend the minVoxel/maxVoxel to include current grid bounds to ensure
-    // we read existing voxels correctly
-    minVoxel = glm::min(minVoxel, gridBBoxMin);
-    maxVoxel = glm::max(maxVoxel, gridBBoxMax);
-    
-    glm::ivec3 size = maxVoxel - minVoxel;
-    
-    if (size.x <= 0 || size.y <= 0 || size.z <= 0) {
-        std::cerr << "[GpuSculptKernels] Invalid bounding box!" << std::endl;
+    if (!deviceGridPtr || leafCount == 0) {
+        std::cerr << "[GpuSculptKernels] Invalid parameters!" << std::endl;
         return false;
     }
     
-    // Allocate device buffer for dense region
-    size_t bufferSize = static_cast<size_t>(size.x) * size.y * size.z * sizeof(float);
-    float* d_denseBuffer = nullptr;
-    cudaError_t err = cudaMalloc(&d_denseBuffer, bufferSize);
-    if (err != cudaSuccess) {
-        std::cerr << "[GpuSculptKernels] cudaMalloc failed: " << cudaGetErrorString(err) << std::endl;
-        return false;
-    }
+    // Launch optimized kernel with one block per leaf, 256 threads per block
+    dim3 blockSize(256);
+    dim3 gridSize(static_cast<unsigned int>(leafCount));
     
-    // Setup CUDA grid dimensions
-    dim3 blockSize(8, 8, 8);
-    dim3 gridSize(
-        (size.x + blockSize.x - 1) / blockSize.x,
-        (size.y + blockSize.y - 1) / blockSize.y,
-        (size.z + blockSize.z - 1) / blockSize.z
-    );
+    cudaStream_t stream = cudaStream ? static_cast<cudaStream_t>(cudaStream) : 0;
     
-    int3 minCoord = make_int3(minVoxel.x, minVoxel.y, minVoxel.z);
-    int3 bufferDim = make_int3(size.x, size.y, size.z);
-    
-    // STEP 1: Extract dense buffer from sparse NanoVDB grid
-    ExtractDenseBufferKernel<<<gridSize, blockSize>>>(
-        grid,
-        d_denseBuffer,
-        minCoord,
-        bufferDim,
-        backgroundValue
-    );
-    
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        std::cerr << "[GpuSculptKernels] ExtractDenseBufferKernel launch failed: " << cudaGetErrorString(err) << std::endl;
-        cudaFree(d_denseBuffer);
-        return false;
-    }
-    
-    cudaDeviceSynchronize();
-    
-    // STEP 2: Apply sculpting operation to dense buffer (GPU)
-    float3 brushCenterFloat = make_float3(brushCenter.x, brushCenter.y, brushCenter.z);
-    int modeInt = (mode == SculptMode::ADD) ? 0 : 1;
-    
-    ApplySphericalBrushToDenseKernel<<<gridSize, blockSize>>>(
-        d_denseBuffer,
-        brushCenterFloat,
+    SculptBrushOptimizedKernel<<<gridSize, blockSize, 0, stream>>>(
+        reinterpret_cast<nanovdb::FloatGrid*>(deviceGridPtr),
+        make_float3(brushCenter.x, brushCenter.y, brushCenter.z),
         brushRadius,
-        modeInt,
+        (mode == SculptMode::ADD) ? 0 : 1,
         strength,
-        minCoord,
-        bufferDim,
-        voxelSize
+        0.5f, // Smooth blending
+        leafCount
     );
     
-    err = cudaGetLastError();
+    // Don't sync - let it run async (caller will sync when needed)
+    cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
-        std::cerr << "[GpuSculptKernels] ApplySphericalBrushToDenseKernel launch failed: " << cudaGetErrorString(err) << std::endl;
-        cudaFree(d_denseBuffer);
+        std::cerr << "[GpuSculptKernels] ❌ Kernel launch error: " 
+                  << cudaGetErrorString(err) << std::endl;
         return false;
     }
-    
-    cudaDeviceSynchronize();
-    
-    // STEP 3: Download dense buffer back to host (if requested)
-    if (outModifiedBuffer && outMinVoxel && outMaxVoxel) {
-        // Resize output buffer
-        size_t elementCount = static_cast<size_t>(size.x) * size.y * size.z;
-        outModifiedBuffer->resize(elementCount);
-        
-        // Download from GPU to host
-        err = cudaMemcpy(outModifiedBuffer->data(), d_denseBuffer, bufferSize, cudaMemcpyDeviceToHost);
-        if (err != cudaSuccess) {
-            std::cerr << "[GpuSculptKernels] cudaMemcpy D2H failed: " << cudaGetErrorString(err) << std::endl;
-            cudaFree(d_denseBuffer);
-            return false;
-        }
-        
-        // Return bounding box coordinates
-        *outMinVoxel = minVoxel;
-        *outMaxVoxel = maxVoxel;
-        
-        std::cout << "[GpuSculptKernels] Downloaded modified region: " 
-                  << size.x << "x" << size.y << "x" << size.z 
-                  << " (" << (bufferSize / 1024.0f / 1024.0f) << " MB)" << std::endl;
-    }
-    
-    std::cout << "[GpuSculptKernels] GPU sculpting complete! Modified region: " 
-              << size.x << "x" << size.y << "x" << size.z 
-              << " (" << (bufferSize / 1024.0f / 1024.0f) << " MB)" << std::endl;
-    
-    cudaFree(d_denseBuffer);
     
     return true;
 }
 
+
+
+// Legacy/unused functions (kept for API compatibility)
 bool GpuSculptKernels::CreateBrushGrid(
     const glm::vec3& brushCenter,
     float brushRadius,
@@ -319,62 +231,31 @@ bool GpuSculptKernels::CreateBrushGrid(
     void** outDevicePtr,
     size_t* outSizeBytes)
 {
-    // This is a simplified implementation
-    // In production, use nanovdb::GridBuilder to create a sphere SDF on GPU
-    
-    std::cerr << "[GpuSculptKernels] CreateBrushGrid not fully implemented yet!" << std::endl;
+    std::cerr << "[GpuSculptKernels] CreateBrushGrid not used in direct modification!" << std::endl;
     return false;
 }
 
+
+
 bool GpuSculptKernels::CsgUnion(void* sceneGridPtr, void* brushGridPtr) {
-    if (!sceneGridPtr || !brushGridPtr) {
-        return false;
-    }
-    
-    auto* sceneGrid = reinterpret_cast<nanovdb::FloatGrid*>(sceneGridPtr);
-    auto* brushGrid = reinterpret_cast<const nanovdb::FloatGrid*>(brushGridPtr);
-    
-    // Get bounding box from brush grid
-    // (Simplified - in production, get actual bbox from grid metadata)
-    
-    // Setup CUDA grid
-    int3 minCoord = make_int3(0, 0, 0);
-    int3 maxCoord = make_int3(128, 128, 128); // Placeholder
-    
-    dim3 blockSize(8, 8, 8);
-    dim3 gridSize(16, 16, 16); // Placeholder
-    
-    CsgUnionKernel<<<gridSize, blockSize>>>(sceneGrid, brushGrid, minCoord, maxCoord);
-    
-    cudaDeviceSynchronize();
-    return true;
+    std::cerr << "[GpuSculptKernels] CSG not used in direct modification!" << std::endl;
+    return false;
 }
+
+
 
 bool GpuSculptKernels::CsgDifference(void* sceneGridPtr, void* brushGridPtr) {
-    if (!sceneGridPtr || !brushGridPtr) {
-        return false;
-    }
-    
-    auto* sceneGrid = reinterpret_cast<nanovdb::FloatGrid*>(sceneGridPtr);
-    auto* brushGrid = reinterpret_cast<const nanovdb::FloatGrid*>(brushGridPtr);
-    
-    int3 minCoord = make_int3(0, 0, 0);
-    int3 maxCoord = make_int3(128, 128, 128); // Placeholder
-    
-    dim3 blockSize(8, 8, 8);
-    dim3 gridSize(16, 16, 16); // Placeholder
-    
-    CsgDifferenceKernel<<<gridSize, blockSize>>>(sceneGrid, brushGrid, minCoord, maxCoord);
-    
-    cudaDeviceSynchronize();
-    return true;
+    std::cerr << "[GpuSculptKernels] CSG not used in direct modification!" << std::endl;
+    return false;
 }
 
+
+
 void GpuSculptKernels::FreeDeviceGrid(void* devicePtr) {
-    if (devicePtr) {
-        cudaFree(devicePtr);
-    }
+    // Memory managed by GridHandle
 }
+
+
 
 } // namespace Urbaxio::Engine
 

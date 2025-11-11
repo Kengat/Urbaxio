@@ -27,6 +27,9 @@ public:
     void RenderUI() override;
 
 private:
+    bool applyBrushGPU(const glm::vec3& brushWorldPos);
+    bool applyBrushBatchGPU(); // Apply batched strokes
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

@@ -25,6 +25,7 @@ struct GpuVoxelManager::Impl {
     struct GpuGridHandle {
         void* nanoHandlePtr; // Opaque pointer to NanoGridHandle (managed by converter)
         size_t sizeBytes;
+        uint64_t leafCount;  // Number of leaf nodes (stored on CPU)
     };
     
     std::unordered_map<uint64_t, GpuGridHandle> gridHandles;
@@ -74,12 +75,13 @@ uint64_t GpuVoxelManager::UploadGrid(const VoxelGrid* grid) {
         return 0;
     }
 
-    // Get size from handle
+    // Get size and leaf count from handle
     size_t sizeBytes = GetSizeFromHandle(nanoHandlePtr);
+    uint64_t leafCount = GetLeafCountFromHandle(nanoHandlePtr);
 
     // Store handle with unique ID
     uint64_t handleId = nextHandleId_++;
-    impl_->gridHandles[handleId] = {nanoHandlePtr, sizeBytes};
+    impl_->gridHandles[handleId] = {nanoHandlePtr, sizeBytes, leafCount};
 
     std::cout << "[GpuVoxelManager] Uploaded grid with ID " << handleId 
               << " (" << (sizeBytes / 1024.0 / 1024.0) << " MB)" << std::endl;
@@ -146,6 +148,15 @@ size_t GpuVoxelManager::GetGridMemoryUsage(uint64_t handle) const {
     auto it = impl_->gridHandles.find(handle);
     if (it != impl_->gridHandles.end()) {
         return it->second.sizeBytes;
+    }
+    return 0;
+}
+
+// Get leaf count
+uint64_t GpuVoxelManager::GetLeafCount(uint64_t handle) const {
+    auto it = impl_->gridHandles.find(handle);
+    if (it != impl_->gridHandles.end()) {
+        return it->second.leafCount;
     }
     return 0;
 }

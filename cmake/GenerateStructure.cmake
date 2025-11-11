@@ -85,7 +85,10 @@ set(SOURCE_DIRS
     "${PROJECT_SOURCE_DIR}/cad_kernel/include/cad_kernel"
     "${PROJECT_SOURCE_DIR}/cad_kernel/src"
     "${PROJECT_SOURCE_DIR}/engine/include/engine"
+    "${PROJECT_SOURCE_DIR}/engine/include/engine/geometry"
     "${PROJECT_SOURCE_DIR}/engine/src"
+    "${PROJECT_SOURCE_DIR}/engine/src/geometry"
+    "${PROJECT_SOURCE_DIR}/engine/src/gpu"
     "${PROJECT_SOURCE_DIR}/engine/include/engine/commands"
     "${PROJECT_SOURCE_DIR}/engine/src/commands"
     "${PROJECT_SOURCE_DIR}/shell"
@@ -101,7 +104,7 @@ set(SOURCE_DIRS
 
 # --- File Patterns to Include ---
 
-set(SOURCE_PATTERNS "*.h" "*.cpp" "*.cmake" "CMakeLists.txt" "*.json" ".gitignore" "*.png" "*.obj" "*.ttf" "*.ico")
+set(SOURCE_PATTERNS "*.h" "*.cpp" "*.cmake" "CMakeLists.txt" "*.json" ".gitignore" "*.png" "*.obj" "*.ttf" "*.ico" "*.cu" "*.cuh")
 
 # --- Collect all file paths ---
 

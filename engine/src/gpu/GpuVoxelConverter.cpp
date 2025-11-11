@@ -1,172 +1,255 @@
-// GPU Voxel Converter - CPU-side OpenVDB <-> NanoVDB conversion
-// This file handles CPU-side conversion only (OpenVDB -> NanoVDB host buffer)
-// GPU upload is handled in .cu files
+// GPU Voxel Converter - Optimized OpenVDB <-> NanoVDB conversion
+// Minimal copies, persistent GPU memory for sculpting sessions
 
-// CRITICAL: Define this BEFORE including NanoVDB headers to enable openToNanoVDB
+
+
 #define NANOVDB_USE_OPENVDB
+
+
 
 #include "engine/geometry/VoxelGrid.h"
 #include <openvdb/openvdb.h>
-#include <nanovdb/tools/CreateNanoGrid.h> // OpenVDB -> NanoVDB conversion
-#include <nanovdb/tools/NanoToOpenVDB.h>  // NanoVDB -> OpenVDB conversion
-#include <nanovdb/HostBuffer.h>           // Host buffer (CPU only)
-#include <nanovdb/GridHandle.h>           // Grid handle
-#include <cuda_runtime.h>                 // For cudaMalloc/cudaMemcpy
+#include <nanovdb/tools/CreateNanoGrid.h>
+#include <nanovdb/tools/NanoToOpenVDB.h>
+#include <nanovdb/HostBuffer.h>
+#include <nanovdb/GridHandle.h>
+#include <cuda_runtime.h>
 #include <iostream>
+
+
 
 namespace Urbaxio::Engine {
 
-// Forward declaration of internal handle storage
-// NOTE: Store raw buffer data, not GridHandle (to avoid CUDA linker issues)
+
+
+// Internal handle storage
 struct NanoGridHandle {
-    void* hostData;      // Raw host buffer data
-    size_t sizeBytes;    // Size of buffer
-    void* deviceData;    // Device pointer (uploaded by CUDA code)
+    void* hostData;      // Host buffer (for persistence)
+    size_t sizeBytes;
+    void* deviceData;    // Device pointer
+    bool isSequential;   // Required for direct leaf access
+    uint64_t leafCount;  // Number of leaf nodes (stored on CPU to avoid GPU access)
 };
 
-// Convert OpenVDB grid to NanoVDB and upload to GPU
-// Returns opaque pointer to NanoGridHandle (caller must cast and manage lifetime)
+
+
+// Convert OpenVDB to NanoVDB and upload to GPU (optimized path)
 void* ConvertAndUploadToGpu(const VoxelGrid* voxelGrid) {
     if (!voxelGrid || !voxelGrid->grid_) {
-        std::cerr << "[GpuVoxelConverter] Invalid input grid!" << std::endl;
+        std::cerr << "[GpuVoxelConverter] ❌ Invalid input grid!" << std::endl;
         return nullptr;
     }
 
+
+
     try {
-        // Step 1: Convert OpenVDB FloatGrid to NanoVDB (host buffer only)
-        // openToNanoVDB accepts a shared_ptr and creates a NanoVDB grid in host memory
-        
-        // Cast to GridBase::Ptr (required by openToNanoVDB API)
+        // Convert OpenVDB -> NanoVDB with sequential leaf ordering
+        // This is CRITICAL for direct leaf access in sculpting
         openvdb::GridBase::Ptr baseGrid = voxelGrid->grid_;
         
-        // Convert with default settings (creates HostBuffer)
+        std::cout << "[GpuVoxelConverter] Converting OpenVDB (" 
+                  << voxelGrid->getActiveVoxelCount() << " active voxels)..." << std::endl;
+        
+        // Create NanoVDB with HostBuffer
         auto nanoHandle = nanovdb::tools::openToNanoVDB<nanovdb::HostBuffer>(baseGrid);
         
         if (!nanoHandle) {
-            std::cerr << "[GpuVoxelConverter] Failed to convert OpenVDB to NanoVDB!" << std::endl;
+            std::cerr << "[GpuVoxelConverter] ❌ Conversion failed!" << std::endl;
             return nullptr;
         }
 
-        size_t sizeBytes = nanoHandle.size();
-        std::cout << "[GpuVoxelConverter] Converted OpenVDB grid (" 
-                  << voxelGrid->getActiveVoxelCount() << " active voxels) to NanoVDB ("
-                  << sizeBytes << " bytes)" << std::endl;
 
-        // Step 2: Allocate device memory and upload raw data
+
+        size_t sizeBytes = nanoHandle.size();
+        
+        // Get grid and verify it's sequential (ON CPU - before upload to GPU)
+        auto* nanoGrid = nanoHandle.grid<float>();
+        bool isSeq = nanoGrid->isSequential<0>();
+        uint64_t leafCount = nanoGrid->tree().nodeCount(0); // Get leaf count on CPU
+        
+        std::cout << "[GpuVoxelConverter] ✅ NanoVDB created: " 
+                  << (sizeBytes / 1024.0 / 1024.0) << " MB, "
+                  << (isSeq ? "SEQUENTIAL" : "NOT SEQUENTIAL") << ", "
+                  << leafCount << " leaves" << std::endl;
+        
+        if (!isSeq) {
+            std::cerr << "[GpuVoxelConverter] ⚠️ WARNING: Grid not sequential! "
+                      << "Direct modification may not work correctly." << std::endl;
+        }
+
+
+
+        // Allocate GPU memory
         void* d_data = nullptr;
         cudaError_t err = cudaMalloc(&d_data, sizeBytes);
         if (err != cudaSuccess) {
-            std::cerr << "[GpuVoxelConverter] cudaMalloc failed: " << cudaGetErrorString(err) << std::endl;
+            std::cerr << "[GpuVoxelConverter] ❌ cudaMalloc failed: " 
+                      << cudaGetErrorString(err) << std::endl;
             return nullptr;
         }
 
-        // Copy host data to device
+
+
+        // Upload to GPU
         err = cudaMemcpy(d_data, nanoHandle.data(), sizeBytes, cudaMemcpyHostToDevice);
         if (err != cudaSuccess) {
-            std::cerr << "[GpuVoxelConverter] cudaMemcpy failed: " << cudaGetErrorString(err) << std::endl;
+            std::cerr << "[GpuVoxelConverter] ❌ cudaMemcpy failed: " 
+                      << cudaGetErrorString(err) << std::endl;
             cudaFree(d_data);
             return nullptr;
         }
 
-        std::cout << "[GpuVoxelConverter] Uploaded to GPU: " 
+
+
+        std::cout << "[GpuVoxelConverter] ✅ Uploaded to GPU: " 
                   << (sizeBytes / 1024.0 / 1024.0) << " MB" << std::endl;
 
-        // Step 3: Store handle info (raw pointers to avoid CUDA linker issues)
+
+
+        // Store handle (with metadata captured on CPU)
         auto* handlePtr = new NanoGridHandle{
-            nullptr,      // hostData (not stored - nanoHandle will be destroyed)
+            nullptr,      // Don't keep host copy (save memory)
             sizeBytes,
-            d_data        // deviceData
+            d_data,
+            isSeq,
+            leafCount      // Store leaf count (captured on CPU before upload)
         };
+
+
 
         return handlePtr;
 
+
+
     } catch (const std::exception& e) {
-        std::cerr << "[GpuVoxelConverter] Exception during conversion: " << e.what() << std::endl;
+        std::cerr << "[GpuVoxelConverter] ❌ Exception: " << e.what() << std::endl;
         return nullptr;
     }
 }
 
-// Download NanoVDB grid from GPU and convert back to OpenVDB
+
+
+// Download and convert back to OpenVDB (for checkpoints/undo)
 bool DownloadAndConvertFromGpu(void* nanoHandlePtr, VoxelGrid* outVoxelGrid) {
     if (!nanoHandlePtr || !outVoxelGrid) {
-        std::cerr << "[GpuVoxelConverter] Invalid input parameters!" << std::endl;
+        std::cerr << "[GpuVoxelConverter] ❌ Invalid parameters!" << std::endl;
         return false;
     }
+
+
 
     try {
         auto* handlePtr = reinterpret_cast<NanoGridHandle*>(nanoHandlePtr);
         
-        // Step 1: Download device data to host
+        std::cout << "[GpuVoxelConverter] Downloading from GPU: " 
+                  << (handlePtr->sizeBytes / 1024.0 / 1024.0) << " MB..." << std::endl;
+        
+        // Download from GPU
         std::vector<char> hostBuffer(handlePtr->sizeBytes);
-        cudaError_t err = cudaMemcpy(hostBuffer.data(), handlePtr->deviceData, 
-                                     handlePtr->sizeBytes, cudaMemcpyDeviceToHost);
+        cudaError_t err = cudaMemcpy(
+            hostBuffer.data(), 
+            handlePtr->deviceData, 
+            handlePtr->sizeBytes, 
+            cudaMemcpyDeviceToHost
+        );
+        
         if (err != cudaSuccess) {
-            std::cerr << "[GpuVoxelConverter] cudaMemcpy D2H failed: " << cudaGetErrorString(err) << std::endl;
+            std::cerr << "[GpuVoxelConverter] ❌ cudaMemcpy D2H failed: " 
+                      << cudaGetErrorString(err) << std::endl;
             return false;
         }
 
-        // Step 2: Create GridHandle from host buffer
-        // createFull wraps existing memory (doesn't copy again)
-        nanovdb::HostBuffer buffer = nanovdb::HostBuffer::createFull(handlePtr->sizeBytes, hostBuffer.data());
+
+
+        // Create GridHandle from downloaded data
+        nanovdb::HostBuffer buffer = nanovdb::HostBuffer::createFull(
+            handlePtr->sizeBytes, 
+            hostBuffer.data()
+        );
         nanovdb::GridHandle<nanovdb::HostBuffer> hostHandle(std::move(buffer));
         
-        // Step 3: Convert NanoVDB to OpenVDB
+        // Convert NanoVDB -> OpenVDB
         openvdb::GridBase::Ptr baseGrid = nanovdb::tools::nanoToOpenVDB(hostHandle);
         
         if (!baseGrid) {
-            std::cerr << "[GpuVoxelConverter] Failed to convert NanoVDB to OpenVDB!" << std::endl;
+            std::cerr << "[GpuVoxelConverter] ❌ NanoVDB->OpenVDB conversion failed!" << std::endl;
             return false;
         }
 
-        // Step 4: Cast to FloatGrid
+
+
+        // Cast to FloatGrid
         auto floatGrid = openvdb::gridPtrCast<openvdb::FloatGrid>(baseGrid);
         if (!floatGrid) {
-            std::cerr << "[GpuVoxelConverter] Grid is not a FloatGrid!" << std::endl;
+            std::cerr << "[GpuVoxelConverter] ❌ Not a FloatGrid!" << std::endl;
             return false;
         }
 
-        // Step 5: Update metadata
-        floatGrid->setName("SDF_Grid_Downloaded");
+
+
+        // Update metadata
+        floatGrid->setName("SDF_Grid");
         floatGrid->setGridClass(openvdb::GRID_LEVEL_SET);
         
-        // Preserve original transform if needed
+        // Preserve transform if possible
         if (outVoxelGrid->grid_ && outVoxelGrid->grid_->transformPtr()) {
             floatGrid->setTransform(outVoxelGrid->grid_->transformPtr());
         }
 
-        std::cout << "[GpuVoxelConverter] Downloaded and converted: " 
+
+
+        std::cout << "[GpuVoxelConverter] ✅ Downloaded: " 
                   << floatGrid->activeVoxelCount() << " active voxels" << std::endl;
 
-        // Step 6: Replace the grid
+
+
+        // Replace grid
         outVoxelGrid->grid_ = floatGrid;
         outVoxelGrid->backgroundValue_ = floatGrid->background();
         outVoxelGrid->updateDimensions();
 
+
+
         return true;
 
+
+
     } catch (const std::exception& e) {
-        std::cerr << "[GpuVoxelConverter] Exception during download: " << e.what() << std::endl;
+        std::cerr << "[GpuVoxelConverter] ❌ Exception: " << e.what() << std::endl;
         return false;
     }
 }
 
-// Get device pointer from NanoGridHandle
+
+
+// Get device pointer from handle
 void* GetDevicePointerFromHandle(void* nanoHandlePtr) {
     if (!nanoHandlePtr) return nullptr;
-    
     auto* handlePtr = reinterpret_cast<NanoGridHandle*>(nanoHandlePtr);
     return handlePtr->deviceData;
 }
 
-// Get size in bytes from NanoGridHandle
+
+
+// Get size from handle
 size_t GetSizeFromHandle(void* nanoHandlePtr) {
     if (!nanoHandlePtr) return 0;
-    
     auto* handlePtr = reinterpret_cast<NanoGridHandle*>(nanoHandlePtr);
     return handlePtr->sizeBytes;
 }
 
-// Free NanoGridHandle
+
+
+// Get leaf count from handle (stored on CPU to avoid GPU access)
+uint64_t GetLeafCountFromHandle(void* nanoHandlePtr) {
+    if (!nanoHandlePtr) return 0;
+    auto* handlePtr = reinterpret_cast<NanoGridHandle*>(nanoHandlePtr);
+    return handlePtr->leafCount;
+}
+
+
+
+// Free handle
 void FreeNanoHandle(void* nanoHandlePtr) {
     if (nanoHandlePtr) {
         auto* handlePtr = reinterpret_cast<NanoGridHandle*>(nanoHandlePtr);
@@ -174,55 +257,24 @@ void FreeNanoHandle(void* nanoHandlePtr) {
             cudaFree(handlePtr->deviceData);
         }
         delete handlePtr;
+        std::cout << "[GpuVoxelConverter] ✅ Freed GPU memory" << std::endl;
     }
 }
 
-// Apply modified dense region back to OpenVDB grid
+
+
+// NOT USED in optimized path - grid modified in-place on GPU
 bool ApplyModifiedRegionToVoxelGrid(
     VoxelGrid* voxelGrid,
     const std::vector<float>& denseBuffer,
     const glm::ivec3& minVoxel,
     const glm::ivec3& maxVoxel)
 {
-    if (!voxelGrid || !voxelGrid->grid_) {
-        std::cerr << "[GpuVoxelConverter] Invalid voxel grid!" << std::endl;
-        return false;
-    }
-
-    glm::ivec3 size = maxVoxel - minVoxel;
-    size_t expectedSize = static_cast<size_t>(size.x) * size.y * size.z;
-    
-    if (denseBuffer.size() != expectedSize) {
-        std::cerr << "[GpuVoxelConverter] Dense buffer size mismatch! Expected " 
-                  << expectedSize << ", got " << denseBuffer.size() << std::endl;
-        return false;
-    }
-
-    // Get accessor for writing to the OpenVDB grid
-    auto accessor = voxelGrid->grid_->getAccessor();
-    
-    // Copy dense buffer values back to sparse OpenVDB grid
-    for (int z = 0; z < size.z; ++z) {
-        for (int y = 0; y < size.y; ++y) {
-            for (int x = 0; x < size.x; ++x) {
-                int worldX = minVoxel.x + x;
-                int worldY = minVoxel.y + y;
-                int worldZ = minVoxel.z + z;
-                
-                size_t bufferIdx = static_cast<size_t>(z) * size.x * size.y + y * size.x + x;
-                float value = denseBuffer[bufferIdx];
-                
-                // Write value to OpenVDB grid
-                accessor.setValue(openvdb::Coord(worldX, worldY, worldZ), value);
-            }
-        }
-    }
-    
-    std::cout << "[GpuVoxelConverter] Applied modified region to OpenVDB grid: " 
-              << size.x << "x" << size.y << "x" << size.z << " voxels" << std::endl;
-    
-    return true;
+    std::cerr << "[GpuVoxelConverter] ApplyModifiedRegionToVoxelGrid NOT USED in optimized path!" << std::endl;
+    return false;
 }
+
+
 
 } // namespace Urbaxio::Engine
 

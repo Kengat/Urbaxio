@@ -1,64 +1,52 @@
+
 #pragma once
 
-#include <cstdint>
+
+
 #include <glm/glm.hpp>
+
+#include <vector>
+
+
 
 namespace Urbaxio::Engine {
 
-/**
- * @brief GPU kernels for volumetric sculpting operations
- * 
- * These kernels perform CSG-like operations directly on NanoVDB grids in GPU memory.
- * All operations are performed in parallel across GPU threads.
- */
+
+
 class GpuSculptKernels {
 public:
     enum class SculptMode {
-        ADD,        // Add material (CSG Union)
-        SUBTRACT,   // Remove material (CSG Difference)
-        SMOOTH      // Smooth surface
+        ADD = 0,
+        SUBTRACT = 1
     };
 
-    /**
-     * @brief Apply a spherical brush to a NanoVDB grid on GPU
-     * 
-     * @param deviceGridPtr Device pointer to the NanoVDB grid
-     * @param brushCenter World-space position of the brush center
-     * @param brushRadius Radius of the brush in world units
-     * @param voxelSize Size of a voxel in world units
-     * @param mode Sculpting mode (add/subtract/smooth)
-     * @param strength Brush strength (0.0 to 1.0)
-     * @param gridBBoxMin Grid bounding box minimum (from CPU-side VoxelGrid)
-     * @param gridBBoxMax Grid bounding box maximum (from CPU-side VoxelGrid)
-     * @param outModifiedBuffer [Optional] Output host buffer with modified dense region
-     * @param outMinVoxel [Optional] Output min coordinate of modified region
-     * @param outMaxVoxel [Optional] Output max coordinate of modified region
-     * @return True if successful
-     */
+
+
+    // Primary sculpting function: Direct NanoVDB modification on GPU
+    // Modifies values within existing topology (no new voxels can be added)
+    // brushCenter: Position in INDEX/VOXEL space (NOT world space)
+    // brushRadius: Radius in VOXEL units (NOT world units)
+    // leafCount: Number of leaf nodes (must be obtained on CPU before upload)
+    // Returns: true if successful, false on error
     static bool ApplySphericalBrush(
-        void* deviceGridPtr,
-        const glm::vec3& brushCenter,
-        float brushRadius,
-        float voxelSize,
+        void* deviceGridPtr,           // NanoVDB grid on GPU
+        uint64_t leafCount,            // Number of leaf nodes (from CPU metadata)
+        const glm::vec3& brushCenter,  // In INDEX space
+        float brushRadius,             // In VOXEL units
+        float voxelSize,               // For reference only
         SculptMode mode,
-        float strength,
-        const glm::ivec3& gridBBoxMin,
-        const glm::ivec3& gridBBoxMax,
-        std::vector<float>* outModifiedBuffer = nullptr,
+        float strength = 1.0f,
+        const glm::ivec3& gridBBoxMin = glm::ivec3(0), // Current grid bounds (for UI/debugging)
+        const glm::ivec3& gridBBoxMax = glm::ivec3(0),
+        std::vector<float>* outModifiedBuffer = nullptr,  // Unused in optimized path
         glm::ivec3* outMinVoxel = nullptr,
-        glm::ivec3* outMaxVoxel = nullptr
+        glm::ivec3* outMaxVoxel = nullptr,
+        void* cudaStream = nullptr     // CUDA stream for async execution
     );
 
-    /**
-     * @brief Create a temporary brush grid on GPU
-     * 
-     * @param brushCenter Center of the brush in world space
-     * @param brushRadius Radius in world units
-     * @param voxelSize Voxel size in world units
-     * @param outDevicePtr Output device pointer to the created brush grid
-     * @param outSizeBytes Output size of the created grid in bytes
-     * @return True if successful
-     */
+
+
+    // Legacy functions (kept for API compatibility, not used in optimized path)
     static bool CreateBrushGrid(
         const glm::vec3& brushCenter,
         float brushRadius,
@@ -67,31 +55,14 @@ public:
         size_t* outSizeBytes
     );
 
-    /**
-     * @brief Perform CSG union between two grids on GPU
-     * 
-     * @param sceneGridPtr Device pointer to the scene grid (modified in-place)
-     * @param brushGridPtr Device pointer to the brush grid (read-only)
-     * @return True if successful
-     */
+
+
     static bool CsgUnion(void* sceneGridPtr, void* brushGridPtr);
-
-    /**
-     * @brief Perform CSG difference between two grids on GPU
-     * 
-     * @param sceneGridPtr Device pointer to the scene grid (modified in-place)
-     * @param brushGridPtr Device pointer to the brush grid (read-only)
-     * @return True if successful
-     */
     static bool CsgDifference(void* sceneGridPtr, void* brushGridPtr);
-
-    /**
-     * @brief Free a temporary GPU grid
-     * 
-     * @param devicePtr Device pointer to free
-     */
     static void FreeDeviceGrid(void* devicePtr);
 };
+
+
 
 } // namespace Urbaxio::Engine
 

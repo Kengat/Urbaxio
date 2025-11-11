@@ -117,12 +117,11 @@ struct VoxelGrid {
         }
     }
 
-    // Convert sparse OpenVDB grid to dense array (needed for Undo/Redo)
-    // NEW: Uses actual active bounds, not fixed dimensions
+    // Convert sparse OpenVDB grid to dense array using ACTIVE BOUNDS
+    // This is memory-efficient but can't be used for Undo/Redo (bbox changes)
     std::vector<float> toDenseArray() const {
         openvdb::CoordBBox bbox = getActiveBounds();
         if (bbox.empty()) {
-            // Empty grid - return minimal array
             return std::vector<float>(1, backgroundValue_);
         }
         
@@ -141,6 +140,23 @@ struct VoxelGrid {
                     int worldZ = minCoord.z + z;
                     size_t index = z * size.x * size.y + y * size.x + x;
                     denseData[index] = accessor.getValue(openvdb::Coord(worldX, worldY, worldZ));
+                }
+            }
+        }
+        return denseData;
+    }
+
+    // NEW: Convert to FULL dense array using logical dimensions
+    // This is needed for Undo/Redo to maintain consistent array sizes
+    std::vector<float> toFullDenseArray() const {
+        std::vector<float> denseData(dimensions.x * dimensions.y * dimensions.z, backgroundValue_);
+        
+        auto accessor = grid_->getConstAccessor();
+        for (unsigned int z = 0; z < dimensions.z; ++z) {
+            for (unsigned int y = 0; y < dimensions.y; ++y) {
+                for (unsigned int x = 0; x < dimensions.x; ++x) {
+                    size_t index = z * dimensions.x * dimensions.y + y * dimensions.x + x;
+                    denseData[index] = accessor.getValue(openvdb::Coord(x, y, z));
                 }
             }
         }

@@ -68,6 +68,13 @@ public:
     size_t GetGridMemoryUsage(uint64_t handleId) const;
     
     /**
+     * @brief Get leaf count of a specific grid (stored on CPU to avoid GPU access)
+     * @param handleId The GPU grid handle ID
+     * @return Number of leaf nodes (0 if invalid)
+     */
+    uint64_t GetLeafCount(uint64_t handleId) const;
+    
+    /**
      * @brief Clear all GPU grids
      */
     void ClearAll();
