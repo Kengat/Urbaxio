@@ -14,6 +14,9 @@
 #include <memory>
 #include <SDL2/SDL_mouse.h>
 #include <limits>
+#include <openvdb/tools/Composite.h>
+#include <openvdb/tools/LevelSetSphere.h>
+#include <openvdb/math/Transform.h>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/geometric.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -91,21 +94,44 @@ void SculptTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, 
         Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / (float)*context.display_h), currentRayOrigin, currentRayDir);
     }
     
+    // Use ray-mesh intersection instead of ray-AABB to find the precise hit point
     float closestHitDist = std::numeric_limits<float>::max();
     uint64_t hitObjectId = 0;
     glm::vec3 hitPosition;
+    bool hit = false;
 
     for (auto* obj : context.scene->get_all_objects()) {
-        if (obj && dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry())) {
-            float t;
-            if (obj->aabbValid && RayAABBIntersect(currentRayOrigin, currentRayDir, obj->aabbMin, obj->aabbMax, t)) {
-                if (t < closestHitDist) {
-                    closestHitDist = t;
+        if (!obj || !dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry()) || !obj->hasMesh()) {
+            continue;
+        }
+        
+        // Broad phase: check AABB first
+        if (!obj->aabbValid) continue;
+        float t_aabb;
+        if (!RayAABBIntersect(currentRayOrigin, currentRayDir, obj->aabbMin, obj->aabbMax, t_aabb)) {
+            continue;
+        }
+
+        // Narrow phase: check triangles
+        const auto& mesh = obj->getMeshBuffers();
+        for (size_t i = 0; i < mesh.indices.size(); i += 3) {
+            unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
+            glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+            glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+            glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+            float t_tri;
+            if (SnappingSystem::RayTriangleIntersect(currentRayOrigin, currentRayDir, v0, v1, v2, t_tri)) {
+                if (t_tri > 0 && t_tri < closestHitDist) {
+                    closestHitDist = t_tri;
                     hitObjectId = obj->get_id();
-                    hitPosition = currentRayOrigin + currentRayDir * t;
+                    hit = true;
                 }
             }
         }
+    }
+
+    if(hit) {
+        hitPosition = currentRayOrigin + currentRayDir * closestHitDist;
     }
 
     if (hitObjectId != 0) {
@@ -115,11 +141,7 @@ void SculptTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, 
         Engine::SceneObject* obj = context.scene->get_object_by_id(sculptedObjectId_);
         auto* volGeom = obj ? dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry()) : nullptr;
         if (volGeom && volGeom->getGrid()) {
-            // --- CAPTURE BOTH 'BEFORE' AND 'WORKING' STATES from OpenVDB ---
-            // Convert sparse grid to dense array for Undo/Redo
             gridDataBeforeStroke_ = volGeom->getGrid()->toDenseArray();
-            workingGridData_ = gridDataBeforeStroke_; // Start with a fresh copy
-            
             std::cout << "[SculptTool] Mouse Down. Captured state for object " << sculptedObjectId_ 
                       << " (" << volGeom->getGrid()->getActiveVoxelCount() << " active voxels)" << std::endl;
             
@@ -140,33 +162,32 @@ void SculptTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
     Engine::SceneObject* obj = context.scene->get_object_by_id(sculptedObjectId_);
     auto* volGeom = obj ? dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry()) : nullptr;
     if (!volGeom || !volGeom->getGrid()) {
-        sculptedObjectId_ = 0;
-        gridDataBeforeStroke_.clear();
-        workingGridData_.clear();
+        reset();
         return;
     }
     
-    // IMPORTANT: Ensure final state is committed to OpenVDB before saving to undo stack
-    volGeom->getGrid()->fromDenseArray(workingGridData_);
+    // The live grid is now in the "after" state. Capture it for the command.
+    std::vector<float> dataAfter = volGeom->getGrid()->toDenseArray();
     
-    // The final state of our stroke is in the working copy
     auto command = std::make_unique<Engine::SculptCommand>(
         context.scene,
         sculptedObjectId_,
-        std::move(gridDataBeforeStroke_),
-        std::move(workingGridData_)
+        std::move(gridDataBeforeStroke_), // 'before' state was captured on mouse down
+        std::move(dataAfter)
     );
     context.scene->getCommandManager()->ExecuteCommand(std::move(command));
 
-    // ASYNC REMESH: Request mesh update in background (NO WAIT!)
+    // Request async remesh. Crucially, we keep the old mesh for rendering until
+    // the new one is ready. The AABB has already been updated in applyBrush,
+    // so subsequent raycasts will work correctly.
     if (context.loadingManager) {
         context.loadingManager->RequestRemesh(context.scene, sculptedObjectId_);
-        std::cout << "[SculptTool] Async remesh requested. Continue sculpting!" << std::endl;
+        obj->markMeshAsClean(); // Prevents synchronous remesh
+        std::cout << "[SculptTool] Async remesh requested." << std::endl;
     } else {
-        // NO FALLBACK - keep old mesh if no loader
-        std::cout << "[SculptTool] WARNING: No LoadingManager, mesh not updated!" << std::endl;
+        obj->invalidateMeshCache(); // Fallback to synchronous remesh
+        std::cout << "[SculptTool] WARNING: No LoadingManager, performing synchronous remesh." << std::endl;
     }
-
     sculptedObjectId_ = 0;
 }
 
@@ -183,36 +204,58 @@ void SculptTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, co
         Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / (float)*context.display_h), currentRayOrigin, currentRayDir);
     }
 
-    glm::vec3 brushPos = snap.worldPoint;
+    glm::vec3 brushPos;
     bool hitSurface = false;
     float closestHitDist = std::numeric_limits<float>::max();
     
+    // Use ray-mesh intersection instead of ray-AABB to find the precise hit point
+    std::vector<Engine::SceneObject*> objectsToTest;
     if (sculptedObjectId_ != 0) { // If we are sculpting, only check the target object
         Engine::SceneObject* obj = context.scene->get_object_by_id(sculptedObjectId_);
-        float t;
-        if (obj && obj->aabbValid && RayAABBIntersect(currentRayOrigin, currentRayDir, obj->aabbMin, obj->aabbMax, t)) {
-            closestHitDist = t;
-            brushPos = currentRayOrigin + currentRayDir * t;
-            hitSurface = true;
-        }
-    } else { // Otherwise, find a new target
+        if (obj) objectsToTest.push_back(obj);
+    } else { // Otherwise, find a new target among all volumetric objects
         for (auto* obj : context.scene->get_all_objects()) {
             if (obj && dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry())) {
-                float t;
-                if (obj->aabbValid && RayAABBIntersect(currentRayOrigin, currentRayDir, obj->aabbMin, obj->aabbMax, t)) {
-                    if (t < closestHitDist) {
-                        closestHitDist = t;
-                        brushPos = currentRayOrigin + currentRayDir * t;
-                        hitSurface = true;
-                    }
-                }
+                objectsToTest.push_back(obj);
             }
         }
     }
 
+    for (auto* obj : objectsToTest) {
+        // Broad phase
+        if (!obj->aabbValid || !obj->hasMesh()) continue;
+        float t_aabb;
+        if (!RayAABBIntersect(currentRayOrigin, currentRayDir, obj->aabbMin, obj->aabbMax, t_aabb)) {
+            continue;
+        }
+        if (t_aabb > closestHitDist) continue; // AABB is further than an already found triangle hit
+
+        // Narrow phase
+        const auto& mesh = obj->getMeshBuffers();
+        for (size_t i = 0; i < mesh.indices.size(); i += 3) {
+            unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
+            glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+            glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
+            glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+            float t_tri;
+            if (SnappingSystem::RayTriangleIntersect(currentRayOrigin, currentRayDir, v0, v1, v2, t_tri)) {
+                if (t_tri > 0 && t_tri < closestHitDist) {
+                    closestHitDist = t_tri;
+                    hitSurface = true;
+                }
+            }
+        }
+    }
+    
+    if (hitSurface) {
+        brushPos = currentRayOrigin + currentRayDir * closestHitDist;
+    } else {
+        // Fallback to snapping result if no mesh was hit (e.g. empty space)
+        brushPos = snap.worldPoint;
+    }
+
     if (isSculpting_ && hitSurface) {
-        // --- OPTIMIZED: Smoother strokes with smaller distance ---
-        const float MIN_BRUSH_DISTANCE_FACTOR = 0.1f; // Apply brush every 10% of its radius (smoother)
+        const float MIN_BRUSH_DISTANCE_FACTOR = 0.1f;
         float min_dist_sq = (brushRadius_ * MIN_BRUSH_DISTANCE_FACTOR) * (brushRadius_ * MIN_BRUSH_DISTANCE_FACTOR);
 
         if (glm::distance2(brushPos, lastBrushApplyPos_) > min_dist_sq) {
@@ -227,65 +270,61 @@ void SculptTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, co
 bool SculptTool::applyBrush(const glm::vec3& brushWorldPos) {
     if (sculptedObjectId_ == 0) return false;
 
-    bool subtract = *context.ctrlDown; 
-    
-    // --- OPTIMIZED: Work directly with workingGridData_, update OpenVDB less frequently ---
     Engine::SceneObject* obj = context.scene->get_object_by_id(sculptedObjectId_);
     auto* volGeom = obj ? dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry()) : nullptr;
     if (!volGeom || !volGeom->getGrid()) return false;
-    Engine::VoxelGrid* grid = volGeom->getGrid();
     
-    glm::vec3 localPos = (brushWorldPos - grid->origin) / grid->voxelSize;
-    float radiusInVoxels = brushRadius_ / grid->voxelSize;
-
-    glm::ivec3 min_bound = glm::max(glm::ivec3(0), glm::ivec3(glm::floor(localPos - radiusInVoxels)));
-    glm::ivec3 max_bound = glm::min(glm::ivec3(grid->dimensions) - 1, glm::ivec3(glm::ceil(localPos + radiusInVoxels)));
+    openvdb::FloatGrid::Ptr sceneGrid = volGeom->getGrid()->grid_;
+    if (!sceneGrid) return false;
+    // --- START OF RE-ARCHITECTURE: Correct CSG brush transformation ---
     
-    bool gridModified = false;
+    // 1. Get the scene's voxel size to calculate brush radius in voxel units.
+    float sceneVoxelSize = volGeom->getGrid()->voxelSize;
+    float brushRadiusInVoxels = brushRadius_ / sceneVoxelSize;
+    // 2. Convert the brush's world position into the scene grid's local index space.
+    // This is the key step to align the brush with the scene.
+    openvdb::Vec3d brushIndexPos = sceneGrid->transform().worldToIndex(
+        openvdb::Vec3d(brushWorldPos.x, brushWorldPos.y, brushWorldPos.z)
+    );
+    // 3. Create a brush grid centered at the calculated INDEX position.
+    // We use a voxel size of 1.0 because we are defining the sphere in index space.
+    openvdb::FloatGrid::Ptr brushGrid =
+        openvdb::tools::createLevelSetSphere<openvdb::FloatGrid>(
+            brushRadiusInVoxels,                             // Radius in voxel units
+            openvdb::Vec3f(brushIndexPos.x(), brushIndexPos.y(), brushIndexPos.z()), // Center in index units
+            1.0f,                                            // Voxel size is 1.0 in index space
+            brushRadiusInVoxels + 4.0f);                     // Use a wide narrow-band to prevent clipping
     
-    // OPTIMIZATION: Update dense array in memory (fast)
-    for (int z = min_bound.z; z <= max_bound.z; ++z) {
-        for (int y = min_bound.y; y <= max_bound.y; ++y) {
-            for (int x = min_bound.x; x <= max_bound.x; ++x) {
-                size_t index = z * grid->dimensions.x * grid->dimensions.y + y * grid->dimensions.x + x;
-                
-                // FIX: Read CURRENT working state, not the original!
-                // This allows strokes to accumulate changes
-                float& current_sdf = workingGridData_[index];
-
-                if (std::abs(current_sdf) > brushRadius_ * 1.5f) {
-                    continue;
-                }
-
-                glm::vec3 voxelLocalPos(x, y, z);
-                float dist_to_brush_center = glm::distance(voxelLocalPos, localPos);
-
-                if (dist_to_brush_center < radiusInVoxels) {
-                    // IMPROVED: Smoother falloff with squared smoothstep
-                    float falloff = 1.0f - (dist_to_brush_center / radiusInVoxels);
-                    falloff = glm::smoothstep(0.0f, 1.0f, falloff);
-                    falloff = falloff * falloff; // Squared for even smoother blending
-                    
-                    float displacement = brushStrength_ * falloff * grid->voxelSize * 10.0f; 
-
-                    // ACCUMULATE changes additively
-                    if (subtract) {
-                        current_sdf += displacement;  // Move surface outward (subtract material)
-                    } else {
-                        current_sdf -= displacement;  // Move surface inward (add material)
-                    }
-                    gridModified = true;
-                }
-            }
+    // 4. CRITICAL FIX: Make the brush grid and scene grid share the exact same transform.
+    // This tells the CSG operation that they exist in the same space, and the index-space
+    // geometry we just created will align perfectly.
+    brushGrid->setTransform(sceneGrid->transform().copy());
+    brushGrid->setGridClass(openvdb::GRID_LEVEL_SET);
+    // 5. Perform the CSG operation. Now that transforms match, this will work correctly.
+    try {
+        if (*context.ctrlDown) { // Remove material (A - B)
+            openvdb::tools::csgDifference(*sceneGrid, *brushGrid);
+        } else { // Add material (A u B)
+            openvdb::tools::csgUnion(*sceneGrid, *brushGrid);
         }
+        
+        // Update the object's AABB immediately after modification
+        openvdb::CoordBBox bbox = sceneGrid->evalActiveVoxelBoundingBox();
+        if (!bbox.empty()) {
+            openvdb::Vec3d worldMin = sceneGrid->indexToWorld(bbox.min());
+            openvdb::Vec3d worldMax = sceneGrid->indexToWorld(bbox.max());
+            obj->aabbMin = glm::vec3(worldMin.x(), worldMin.y(), worldMin.z());
+            obj->aabbMax = glm::vec3(worldMax.x(), worldMax.y(), worldMax.z());
+            obj->aabbValid = true;
+        } else {
+            obj->aabbValid = false; // Grid is empty
+        }
+    } catch (const openvdb::Exception& e) {
+        std::cerr << "OpenVDB exception during CSG operation: " << e.what() << std::endl;
+        return false;
     }
-    
-    // --- NO LIVE PREVIEW: We don't update mesh during sculpting! ---
-    // Working data is only in memory (workingGridData_)
-    // Mesh update happens asynchronously ONLY on Mouse Up
-    // This gives INSTANT response with NO lag!
-    
-    return gridModified;
+    // --- END OF RE-ARCHITECTURE ---
+    return true;
 }
 
 void SculptTool::updateBrushCursor(const glm::vec3& position, bool visible) {

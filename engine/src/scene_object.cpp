@@ -137,7 +137,7 @@ namespace Urbaxio::Engine {
         // FIX: Create a default mesh group for the entire mesh so renderer can batch it
         if (!mesh_buffers_cache_.isEmpty()) {
             MeshGroup defaultGroup;
-            defaultGroup.materialName = "DefaultMaterial";  // Will use default material
+            defaultGroup.materialName = "Default";  // FIX: Will use default material
             defaultGroup.startIndex = 0;
             defaultGroup.indexCount = mesh_buffers_cache_.indices.size();
             meshGroups.push_back(defaultGroup);

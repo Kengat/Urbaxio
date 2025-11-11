@@ -33,8 +33,10 @@ struct VoxelGrid {
         grid_->setName("SDF_Grid");
         grid_->setGridClass(openvdb::GRID_LEVEL_SET);
         
-        // Set voxel size transform
-        grid_->setTransform(openvdb::math::Transform::createLinearTransform(voxelSize));
+        // Set voxel size and origin transform
+        auto xform = openvdb::math::Transform::createLinearTransform(voxelSize);
+        xform->postTranslate(openvdb::Vec3d(worldOrigin.x, worldOrigin.y, worldOrigin.z));
+        grid_->setTransform(xform);
     }
 
     // Get value at voxel coordinates (read-only, efficient)

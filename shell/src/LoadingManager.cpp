@@ -9,9 +9,10 @@
 #include <TopoDS_Shape.hxx>
 #include <BinTools.hxx>
 #include <sstream>
+#include <openvdb/tools/VolumeToMesh.h>
+#include <openvdb/Types.h>
+#include <cstring>
 
-// For Marching Cubes
-#include <igl/marching_cubes.h>
 #include <igl/per_vertex_normals.h>
 #include <Eigen/Core>
 
@@ -174,62 +175,62 @@ void LoadingManager::worker_thread_main() {
                 VoxelizeResult result{job.objectId, std::move(grid)};
                 { std::lock_guard<std::mutex> lock(resultMutex_); resultQueue_.push(std::move(result)); }
             } else if constexpr (std::is_same_v<T, RemeshJob>) {
-                isBlockingOperation_ = false; // DOES NOT BLOCK UI (silent background operation)
+                isBlockingOperation_ = false; // Remeshing is a background task
                 { std::lock_guard<std::mutex> lock(statusMutex_); statusMessage_ = "Remeshing object " + std::to_string(job.objectId) + "..."; }
                 
-                // Run Marching Cubes on the copied grid (THIS IS THE EXPENSIVE OPERATION)
                 CadKernel::MeshBuffers outMesh;
-                Engine::VoxelGrid* grid = job.gridCopy.get();
+                openvdb::FloatGrid::Ptr grid = job.gridCopy->grid_;
                 
                 if (grid) {
-                    const auto& dims = grid->dimensions;
-                    const size_t totalVoxels = dims.x * dims.y * dims.z;
+                    // --- START OF RE-ARCHITECTURE: Using openvdb::tools::volumeToMesh ---
                     
-                    // Convert sparse OpenVDB grid to dense array for Marching Cubes
-                    std::vector<float> denseData = grid->toDenseArray();
-                    
-                    // Prepare data for libigl
-                    Eigen::VectorXd S(totalVoxels);
-                    Eigen::MatrixXd GV(totalVoxels, 3);
-                    
-                    for (unsigned int z = 0; z < dims.z; ++z) {
-                        for (unsigned int y = 0; y < dims.y; ++y) {
-                            for (unsigned int x = 0; x < dims.x; ++x) {
-                                size_t index = z * dims.x * dims.y + y * dims.x + x;
-                                S(index) = denseData[index];
-                                
-                                GV.row(index) << 
-                                    grid->origin.x + x * grid->voxelSize,
-                                    grid->origin.y + y * grid->voxelSize,
-                                    grid->origin.z + z * grid->voxelSize;
-                            }
-                        }
-                    }
-                    
-                    // Run Marching Cubes
-                    Eigen::MatrixXd V_igl;
-                    Eigen::MatrixXi F_igl;
-                    
+                    std::vector<openvdb::Vec3s> points;
+                    std::vector<openvdb::Vec3I> triangles;
+                    std::vector<openvdb::Vec4I> quads;
+                    const double isoValue = 0.0;
+                    const double adaptivity = 0.0; // 0.0 for uniform meshing (like Marching Cubes), > 0 for adaptive (Dual Contouring)
                     try {
-                        igl::marching_cubes(S, GV, (int)dims.x, (int)dims.y, (int)dims.z, 0.0, V_igl, F_igl);
-                        
-                        if (V_igl.rows() > 0 && F_igl.rows() > 0) {
-                            // Convert to MeshBuffers
-                            outMesh.vertices.resize(V_igl.rows() * 3);
-                            for (int i = 0; i < V_igl.rows(); ++i) {
-                                outMesh.vertices[i * 3 + 0] = (float)V_igl(i, 0);
-                                outMesh.vertices[i * 3 + 1] = (float)V_igl(i, 1);
-                                outMesh.vertices[i * 3 + 2] = (float)V_igl(i, 2);
+                        // This function works directly on the sparse grid and is multi-threaded with TBB.
+                        openvdb::tools::volumeToMesh(*grid, points, triangles, quads, isoValue, adaptivity);
+                        if (!points.empty() && (!triangles.empty() || !quads.empty())) {
+                            // 1. Convert points
+                            outMesh.vertices.reserve(points.size() * 3);
+                            for (const openvdb::Vec3s& p : points) {
+                                outMesh.vertices.push_back(p.x());
+                                outMesh.vertices.push_back(p.y());
+                                outMesh.vertices.push_back(p.z());
+                            }
+                            // 2. Convert triangles and triangulate quads, FIXING winding order
+                            outMesh.indices.reserve(triangles.size() * 3 + quads.size() * 6);
+                            for (const openvdb::Vec3I& t : triangles) {
+                                outMesh.indices.push_back(t.x());
+                                outMesh.indices.push_back(t.z()); // Swapped
+                                outMesh.indices.push_back(t.y()); // Swapped
+                            }
+                            for (const openvdb::Vec4I& q : quads) {
+                                // Triangulate quad [x, y, z, w] into two triangles [x, z, y] and [x, w, z] to flip normals
+                                outMesh.indices.push_back(q.x());
+                                outMesh.indices.push_back(q.z()); // Swapped
+                                outMesh.indices.push_back(q.y()); // Swapped
+                                
+                                outMesh.indices.push_back(q.x());
+                                outMesh.indices.push_back(q.w()); // Swapped
+                                outMesh.indices.push_back(q.z()); // Swapped
+                            }
+                            // 3. Calculate normals (using existing igl code path, as it's fast)
+                            Eigen::MatrixXd V_igl(points.size(), 3);
+                            for(size_t i = 0; i < points.size(); ++i) {
+                                V_igl(i, 0) = points[i].x();
+                                V_igl(i, 1) = points[i].y();
+                                V_igl(i, 2) = points[i].z();
                             }
                             
-                            outMesh.indices.resize(F_igl.rows() * 3);
-                            for (int i = 0; i < F_igl.rows(); ++i) {
-                                outMesh.indices[i * 3 + 0] = (unsigned int)F_igl(i, 0);
-                                outMesh.indices[i * 3 + 1] = (unsigned int)F_igl(i, 1);
-                                outMesh.indices[i * 3 + 2] = (unsigned int)F_igl(i, 2);
+                            Eigen::MatrixXi F_igl(outMesh.indices.size() / 3, 3);
+                            for (size_t i = 0; i < F_igl.rows(); ++i) {
+                                F_igl(i, 0) = outMesh.indices[i * 3 + 0];
+                                F_igl(i, 1) = outMesh.indices[i * 3 + 1];
+                                F_igl(i, 2) = outMesh.indices[i * 3 + 2];
                             }
-                            
-                            // Calculate normals
                             Eigen::MatrixXd N_igl;
                             igl::per_vertex_normals(V_igl, F_igl, N_igl);
                             
@@ -240,14 +241,16 @@ void LoadingManager::worker_thread_main() {
                                 outMesh.normals[i * 3 + 2] = (float)N_igl(i, 2);
                             }
                             
-                            outMesh.uvs.assign(V_igl.rows() * 2, 0.0f);
+                            // 4. Generate placeholder UVs
+                            outMesh.uvs.assign(points.size() * 2, 0.0f);
                             
-                            std::cout << "[LoadingManager] Remesh complete: " << V_igl.rows() 
-                                      << " vertices, " << F_igl.rows() << " triangles" << std::endl;
+                            std::cout << "[LoadingManager] Remesh complete (OpenVDB): " << points.size() 
+                                      << " vertices, " << outMesh.indices.size() / 3 << " triangles" << std::endl;
                         }
-                    } catch (const std::exception& e) {
-                        std::cerr << "[LoadingManager] Marching Cubes failed: " << e.what() << std::endl;
+                    } catch (const openvdb::Exception& e) {
+                        std::cerr << "[LoadingManager] OpenVDB volumeToMesh failed: " << e.what() << std::endl;
                     }
+                    // --- END OF RE-ARCHITECTURE ---
                 }
                 
                 RemeshResult result{job.objectId, std::move(outMesh)};
