@@ -193,6 +193,7 @@ else()
         "${PROJECT_SOURCE_DIR}/engine/include/engine"
         "${PROJECT_SOURCE_DIR}/engine/include/engine/geometry"
         "${PROJECT_SOURCE_DIR}/engine/src"
+        "${PROJECT_SOURCE_DIR}/engine/src/gpu"
         "${PROJECT_SOURCE_DIR}/engine/include/engine/commands"
         "${PROJECT_SOURCE_DIR}/engine/src/commands"
         "${PROJECT_SOURCE_DIR}/shell"
@@ -205,7 +206,7 @@ else()
         "${PROJECT_SOURCE_DIR}/cmake"
     )
     # File Extensions/Names to Include
-    set(SOURCE_PATTERNS "*.h" "*.cpp" "*.cmake" "CMakeLists.txt" "*.json" ".gitignore")
+    set(SOURCE_PATTERNS "*.h" "*.cpp" "*.cmake" "CMakeLists.txt" "*.json" ".gitignore" "*.cu" "*.cuh")
     
     foreach(dir ${SOURCE_DIRS})
         foreach(pattern ${SOURCE_PATTERNS})
