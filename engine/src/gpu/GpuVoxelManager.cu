@@ -8,10 +8,7 @@
 
 // Include the header to get the full class definition
 #include "engine/gpu/GpuVoxelManager.h"
-
-// NanoVDB headers
-#include <nanovdb/GridHandle.h>
-#include <nanovdb/cuda/DeviceBuffer.h>
+#include "engine/gpu/GpuVoxelConverter.h" // CPU-side converter
 
 // Forward declare VoxelGrid to avoid OpenVDB includes
 namespace Urbaxio {
@@ -23,9 +20,10 @@ namespace Engine {
 namespace Urbaxio::Engine {
 
 // Impl structure definition
+// Now stores opaque pointers from GpuVoxelConverter instead of direct NanoVDB handles
 struct GpuVoxelManager::Impl {
     struct GpuGridHandle {
-        nanovdb::GridHandle<nanovdb::cuda::DeviceBuffer> handle;
+        void* nanoHandlePtr; // Opaque pointer to NanoGridHandle (managed by converter)
         size_t sizeBytes;
     };
     
@@ -57,7 +55,7 @@ GpuVoxelManager::GpuVoxelManager() : impl_(std::make_unique<Impl>()), nextHandle
 // Destructor
 GpuVoxelManager::~GpuVoxelManager() = default;
 
-// Upload grid (placeholder - needs CPU-side converter)
+// Upload grid - uses CPU-side converter
 uint64_t GpuVoxelManager::UploadGrid(const VoxelGrid* grid) {
     if (!impl_->gpuAvailable) {
         std::cerr << "[GpuVoxelManager] GPU not available!" << std::endl;
@@ -69,13 +67,27 @@ uint64_t GpuVoxelManager::UploadGrid(const VoxelGrid* grid) {
         return 0;
     }
 
-    // TODO: Implement OpenVDB -> NanoVDB conversion
-    // This must be done in a separate CPU-side .cpp file to avoid including OpenVDB here
-    std::cerr << "[GpuVoxelManager] UploadGrid not yet implemented (requires CPU-side converter)" << std::endl;
-    return 0;
+    // Use CPU-side converter to convert OpenVDB -> NanoVDB -> GPU
+    void* nanoHandlePtr = ConvertAndUploadToGpu(grid);
+    if (!nanoHandlePtr) {
+        std::cerr << "[GpuVoxelManager] Failed to convert and upload grid!" << std::endl;
+        return 0;
+    }
+
+    // Get size from handle
+    size_t sizeBytes = GetSizeFromHandle(nanoHandlePtr);
+
+    // Store handle with unique ID
+    uint64_t handleId = nextHandleId_++;
+    impl_->gridHandles[handleId] = {nanoHandlePtr, sizeBytes};
+
+    std::cout << "[GpuVoxelManager] Uploaded grid with ID " << handleId 
+              << " (" << (sizeBytes / 1024.0 / 1024.0) << " MB)" << std::endl;
+
+    return handleId;
 }
 
-// Download grid (placeholder)
+// Download grid - uses CPU-side converter
 bool GpuVoxelManager::DownloadGrid(uint64_t handle, VoxelGrid* outGrid) {
     if (!impl_->gpuAvailable) return false;
     
@@ -85,17 +97,31 @@ bool GpuVoxelManager::DownloadGrid(uint64_t handle, VoxelGrid* outGrid) {
         return false;
     }
 
-    // TODO: Download NanoVDB grid from GPU and convert back to OpenVDB
-    std::cerr << "[GpuVoxelManager] DownloadGrid not yet implemented" << std::endl;
-    return false;
+    if (!outGrid) {
+        std::cerr << "[GpuVoxelManager] Invalid output grid!" << std::endl;
+        return false;
+    }
+
+    // Use CPU-side converter to download GPU -> NanoVDB -> OpenVDB
+    bool success = DownloadAndConvertFromGpu(it->second.nanoHandlePtr, outGrid);
+    
+    if (success) {
+        std::cout << "[GpuVoxelManager] Downloaded grid with ID " << handle << std::endl;
+    } else {
+        std::cerr << "[GpuVoxelManager] Failed to download grid with ID " << handle << std::endl;
+    }
+
+    return success;
 }
 
 // Release grid
 void GpuVoxelManager::ReleaseGrid(uint64_t handle) {
     auto it = impl_->gridHandles.find(handle);
     if (it != impl_->gridHandles.end()) {
-        std::cout << "[GpuVoxelManager] Released GPU grid handle " << handle << std::endl;
+        // Free the NanoGridHandle managed by converter
+        FreeNanoHandle(it->second.nanoHandlePtr);
         impl_->gridHandles.erase(it);
+        std::cout << "[GpuVoxelManager] Released GPU grid handle " << handle << std::endl;
     }
 }
 
@@ -111,7 +137,8 @@ void* GpuVoxelManager::GetDeviceGridPointer(uint64_t handle) {
         return nullptr;
     }
     
-    return it->second.handle.deviceData();
+    // Use converter to extract device pointer from opaque handle
+    return GetDevicePointerFromHandle(it->second.nanoHandlePtr);
 }
 
 // Get memory usage

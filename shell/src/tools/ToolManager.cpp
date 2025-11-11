@@ -2,8 +2,15 @@
 #include "tools/SelectTool.h"
 #include "tools/LineTool.h"
 #include "tools/PushPullTool.h"
-#include "tools/MoveTool.h" // <-- NEW
-#include "tools/PaintTool.h" // <-- NEW
+#include "tools/MoveTool.h"
+#include "tools/PaintTool.h"
+
+// GPU sculpt tool (conditional)
+#ifdef URBAXIO_GPU_ENABLED
+#if URBAXIO_GPU_ENABLED
+#include "tools/GpuSculptTool.h"
+#endif
+#endif
 
 namespace Urbaxio::Tools {
 
@@ -11,7 +18,14 @@ ToolManager::ToolManager(const ToolContext& context) : context(context) {
     tools[ToolType::Select] = std::make_unique<SelectTool>();
     tools[ToolType::Line] = std::make_unique<LineTool>();
     tools[ToolType::PushPull] = std::make_unique<PushPullTool>();
-    tools[ToolType::Move] = std::make_unique<MoveTool>(); // <-- NEW
+    tools[ToolType::Move] = std::make_unique<MoveTool>();
+
+    // GPU sculpt tool (optional, only if CUDA available)
+#ifdef URBAXIO_GPU_ENABLED
+#if URBAXIO_GPU_ENABLED
+    tools[ToolType::SculptGpu] = std::make_unique<Shell::GpuSculptTool>();
+#endif
+#endif
 
     // Start with the Select tool active
     SetTool(ToolType::Select);

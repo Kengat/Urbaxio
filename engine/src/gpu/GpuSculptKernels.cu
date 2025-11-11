@@ -13,8 +13,8 @@
 
 #include "engine/gpu/GpuSculptKernels.h"
 #include <nanovdb/NanoVDB.h>
-#include <nanovdb/util/cuda/CudaDeviceBuffer.h>
-#include <nanovdb/util/GridBuilder.h>
+#include <nanovdb/cuda/DeviceBuffer.h>      // Updated path
+#include <nanovdb/tools/GridBuilder.h>      // Updated path
 #include <iostream>
 #include <cmath>
 
@@ -80,27 +80,58 @@ __global__ void CsgDifferenceKernel(
     // TODO: Write result back using proper grid rebuilding
 }
 
-// CUDA kernel for applying a spherical brush directly
-__global__ void ApplySphericalBrushKernel(
-    nanovdb::FloatGrid* grid,
-    float3 brushCenter,
-    float brushRadius,
-    int mode, // 0 = ADD, 1 = SUBTRACT
-    float strength,
+// CUDA kernel: Extract dense buffer from sparse NanoVDB grid
+__global__ void ExtractDenseBufferKernel(
+    const nanovdb::FloatGrid* inputGrid,
+    float* outputBuffer,
     int3 minCoord,
-    int3 maxCoord)
+    int3 bufferDim,
+    float backgroundValue)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (x >= maxCoord.x || y >= maxCoord.y || z >= maxCoord.z) return;
+    if (x >= bufferDim.x || y >= bufferDim.y || z >= bufferDim.z) return;
 
-    int3 coord = make_int3(x + minCoord.x, y + minCoord.y, z + minCoord.z);
+    // World coordinate (offset by minCoord)
+    int3 worldCoord = make_int3(x + minCoord.x, y + minCoord.y, z + minCoord.z);
     
-    // Convert voxel coordinate to world position
-    // (Simplified - assumes identity transform for now)
-    float3 worldPos = make_float3((float)coord.x, (float)coord.y, (float)coord.z);
+    // Get value from sparse NanoVDB grid
+    auto acc = inputGrid->getAccessor();
+    float value = acc.getValue(nanovdb::Coord(worldCoord.x, worldCoord.y, worldCoord.z));
+    
+    // Write to dense buffer
+    int bufferIdx = z * bufferDim.x * bufferDim.y + y * bufferDim.x + x;
+    outputBuffer[bufferIdx] = value;
+}
+
+// CUDA kernel: Apply spherical brush to dense buffer (IN-PLACE)
+__global__ void ApplySphericalBrushToDenseKernel(
+    float* denseBuffer,
+    float3 brushCenter,
+    float brushRadius,
+    int mode, // 0 = ADD, 1 = SUBTRACT
+    float strength,
+    int3 minCoord,
+    int3 bufferDim,
+    float voxelSize)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
+
+    if (x >= bufferDim.x || y >= bufferDim.y || z >= bufferDim.z) return;
+
+    // World coordinate (in voxel space)
+    int3 worldCoord = make_int3(x + minCoord.x, y + minCoord.y, z + minCoord.z);
+    
+    // Convert to world position (in world units)
+    float3 worldPos = make_float3(
+        worldCoord.x * voxelSize,
+        worldCoord.y * voxelSize,
+        worldCoord.z * voxelSize
+    );
     
     // Calculate distance from brush center
     float dx = worldPos.x - brushCenter.x;
@@ -111,25 +142,32 @@ __global__ void ApplySphericalBrushKernel(
     // Calculate brush SDF value
     float brushSDF = dist - brushRadius;
     
-    // Get current voxel value
-    auto acc = grid->getAccessor();
-    float currentVal = acc.getValue(nanovdb::Coord(coord.x, coord.y, coord.z));
+    // Get current voxel value from dense buffer
+    int bufferIdx = z * bufferDim.x * bufferDim.y + y * bufferDim.x + x;
+    float currentVal = denseBuffer[bufferIdx];
     
     // Apply brush operation
     float newVal;
     if (mode == 0) { // ADD
         // Union: min(current, brush)
-        newVal = fminf(currentVal, brushSDF * strength);
+        newVal = fminf(currentVal, brushSDF);
     } else { // SUBTRACT
         // Difference: max(current, -brush)
-        newVal = fmaxf(currentVal, -brushSDF * strength);
+        newVal = fmaxf(currentVal, -brushSDF);
     }
     
     // Blend based on strength
     newVal = currentVal * (1.0f - strength) + newVal * strength;
     
-    // TODO: Write back using proper grid rebuilding
-    // NanoVDB doesn't support setValue on GPU
+    // Write back to dense buffer (IN-PLACE modification)
+    denseBuffer[bufferIdx] = newVal;
+}
+
+// Helper function: Get bounding box from NanoVDB grid metadata
+void GetGridBBox(const nanovdb::FloatGrid* grid, int3* outMin, int3* outMax) {
+    auto bbox = grid->indexBBox();
+    *outMin = make_int3(bbox.min()[0], bbox.min()[1], bbox.min()[2]);
+    *outMax = make_int3(bbox.max()[0], bbox.max()[1], bbox.max()[2]);
 }
 
 // Host functions
@@ -140,25 +178,58 @@ bool GpuSculptKernels::ApplySphericalBrush(
     float brushRadius,
     float voxelSize,
     SculptMode mode,
-    float strength)
+    float strength,
+    std::vector<float>* outModifiedBuffer,
+    glm::ivec3* outMinVoxel,
+    glm::ivec3* outMaxVoxel)
 {
     if (!deviceGridPtr) {
         std::cerr << "[GpuSculptKernels] Invalid device grid pointer!" << std::endl;
         return false;
     }
 
-    // Cast to NanoVDB grid
-    auto* grid = reinterpret_cast<nanovdb::FloatGrid*>(deviceGridPtr);
+    auto* grid = reinterpret_cast<const nanovdb::FloatGrid*>(deviceGridPtr);
     
-    // Calculate bounding box for the brush operation
-    float worldRadius = brushRadius + voxelSize * 4.0f; // Add padding
-    glm::vec3 minWorld = brushCenter - glm::vec3(worldRadius);
-    glm::vec3 maxWorld = brushCenter + glm::vec3(worldRadius);
+    // Get grid background value
+    float backgroundValue = 3.0f; // Default SDF background (outside)
     
-    // Convert to voxel coordinates
-    glm::ivec3 minVoxel = glm::ivec3(minWorld / voxelSize);
-    glm::ivec3 maxVoxel = glm::ivec3(maxWorld / voxelSize) + glm::ivec3(1);
+    // Calculate bounding box for the brush operation (in voxel space)
+    float worldRadiusVoxels = (brushRadius + voxelSize * 4.0f) / voxelSize;
+    glm::vec3 brushCenterVoxels = brushCenter / voxelSize;
+    
+    glm::ivec3 minVoxel = glm::ivec3(
+        brushCenterVoxels.x - worldRadiusVoxels,
+        brushCenterVoxels.y - worldRadiusVoxels,
+        brushCenterVoxels.z - worldRadiusVoxels
+    );
+    glm::ivec3 maxVoxel = glm::ivec3(
+        brushCenterVoxels.x + worldRadiusVoxels,
+        brushCenterVoxels.y + worldRadiusVoxels,
+        brushCenterVoxels.z + worldRadiusVoxels
+    ) + glm::ivec3(1);
+    
+    // Clamp to grid bounds (get actual grid bbox from metadata)
+    int3 gridMin, gridMax;
+    GetGridBBox(grid, &gridMin, &gridMax);
+    
+    minVoxel = glm::max(minVoxel, glm::ivec3(gridMin.x, gridMin.y, gridMin.z));
+    maxVoxel = glm::min(maxVoxel, glm::ivec3(gridMax.x, gridMax.y, gridMax.z));
+    
     glm::ivec3 size = maxVoxel - minVoxel;
+    
+    if (size.x <= 0 || size.y <= 0 || size.z <= 0) {
+        std::cerr << "[GpuSculptKernels] Invalid bounding box!" << std::endl;
+        return false;
+    }
+    
+    // Allocate device buffer for dense region
+    size_t bufferSize = static_cast<size_t>(size.x) * size.y * size.z * sizeof(float);
+    float* d_denseBuffer = nullptr;
+    cudaError_t err = cudaMalloc(&d_denseBuffer, bufferSize);
+    if (err != cudaSuccess) {
+        std::cerr << "[GpuSculptKernels] cudaMalloc failed: " << cudaGetErrorString(err) << std::endl;
+        return false;
+    }
     
     // Setup CUDA grid dimensions
     dim3 blockSize(8, 8, 8);
@@ -168,43 +239,79 @@ bool GpuSculptKernels::ApplySphericalBrush(
         (size.z + blockSize.z - 1) / blockSize.z
     );
     
-    // Convert brush center to voxel space
-    float3 brushCenterVoxel = make_float3(
-        brushCenter.x / voxelSize,
-        brushCenter.y / voxelSize,
-        brushCenter.z / voxelSize
-    );
-    float brushRadiusVoxel = brushRadius / voxelSize;
-    
     int3 minCoord = make_int3(minVoxel.x, minVoxel.y, minVoxel.z);
-    int3 maxCoord = make_int3(size.x, size.y, size.z);
+    int3 bufferDim = make_int3(size.x, size.y, size.z);
     
-    int modeInt = (mode == SculptMode::ADD) ? 0 : 1;
-    
-    // Launch kernel
-    ApplySphericalBrushKernel<<<gridSize, blockSize>>>(
+    // STEP 1: Extract dense buffer from sparse NanoVDB grid
+    ExtractDenseBufferKernel<<<gridSize, blockSize>>>(
         grid,
-        brushCenterVoxel,
-        brushRadiusVoxel,
-        modeInt,
-        strength,
+        d_denseBuffer,
         minCoord,
-        maxCoord
+        bufferDim,
+        backgroundValue
     );
     
-    // Check for errors
-    cudaError_t err = cudaGetLastError();
+    err = cudaGetLastError();
     if (err != cudaSuccess) {
-        std::cerr << "[GpuSculptKernels] CUDA kernel error: " 
-                  << cudaGetErrorString(err) << std::endl;
+        std::cerr << "[GpuSculptKernels] ExtractDenseBufferKernel launch failed: " << cudaGetErrorString(err) << std::endl;
+        cudaFree(d_denseBuffer);
         return false;
     }
     
-    // Synchronize
     cudaDeviceSynchronize();
     
-    std::cout << "[GpuSculptKernels] Applied brush (mode=" << (int)mode 
-              << ", strength=" << strength << ")" << std::endl;
+    // STEP 2: Apply sculpting operation to dense buffer (GPU)
+    float3 brushCenterFloat = make_float3(brushCenter.x, brushCenter.y, brushCenter.z);
+    int modeInt = (mode == SculptMode::ADD) ? 0 : 1;
+    
+    ApplySphericalBrushToDenseKernel<<<gridSize, blockSize>>>(
+        d_denseBuffer,
+        brushCenterFloat,
+        brushRadius,
+        modeInt,
+        strength,
+        minCoord,
+        bufferDim,
+        voxelSize
+    );
+    
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        std::cerr << "[GpuSculptKernels] ApplySphericalBrushToDenseKernel launch failed: " << cudaGetErrorString(err) << std::endl;
+        cudaFree(d_denseBuffer);
+        return false;
+    }
+    
+    cudaDeviceSynchronize();
+    
+    // STEP 3: Download dense buffer back to host (if requested)
+    if (outModifiedBuffer && outMinVoxel && outMaxVoxel) {
+        // Resize output buffer
+        size_t elementCount = static_cast<size_t>(size.x) * size.y * size.z;
+        outModifiedBuffer->resize(elementCount);
+        
+        // Download from GPU to host
+        err = cudaMemcpy(outModifiedBuffer->data(), d_denseBuffer, bufferSize, cudaMemcpyDeviceToHost);
+        if (err != cudaSuccess) {
+            std::cerr << "[GpuSculptKernels] cudaMemcpy D2H failed: " << cudaGetErrorString(err) << std::endl;
+            cudaFree(d_denseBuffer);
+            return false;
+        }
+        
+        // Return bounding box coordinates
+        *outMinVoxel = minVoxel;
+        *outMaxVoxel = maxVoxel;
+        
+        std::cout << "[GpuSculptKernels] Downloaded modified region: " 
+                  << size.x << "x" << size.y << "x" << size.z 
+                  << " (" << (bufferSize / 1024.0f / 1024.0f) << " MB)" << std::endl;
+    }
+    
+    std::cout << "[GpuSculptKernels] GPU sculpting complete! Modified region: " 
+              << size.x << "x" << size.y << "x" << size.z 
+              << " (" << (bufferSize / 1024.0f / 1024.0f) << " MB)" << std::endl;
+    
+    cudaFree(d_denseBuffer);
     
     return true;
 }

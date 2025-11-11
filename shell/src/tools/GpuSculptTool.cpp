@@ -217,7 +217,7 @@ void GpuSculptTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin,
 }
 
 void GpuSculptTool::RenderUI() {
-    ImGui::Text("GPU Sculpt Tool");
+    ImGui::Text("GPU Sculpt Tool (EXPERIMENTAL)");
     ImGui::Separator();
     
 #ifdef URBAXIO_GPU_ENABLED
@@ -229,6 +229,11 @@ void GpuSculptTool::RenderUI() {
         auto stats = impl_->gpuManager->GetMemoryStats();
         ImGui::Text("GPU Grids: %zu (%.1f MB allocated)", stats.gridCount, stats.totalAllocated / 1024.0f / 1024.0f);
         ImGui::Text("GPU Memory: %.1f MB free / %.1f MB total", stats.freeGpuMemory / 1024.0f / 1024.0f, stats.totalGpuMemory / 1024.0f / 1024.0f);
+        
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Status: Infrastructure Ready");
+        ImGui::TextWrapped("GPU upload/download works. Full acceleration coming soon.");
+        ImGui::TextDisabled("(Currently using hybrid CPU/GPU mode)");
     } else {
         ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "GPU Not Available");
     }

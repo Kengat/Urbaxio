@@ -29,6 +29,7 @@ enum class ToolType {
     Move,
     Paint,
     Sculpt,
+    SculptGpu,  // GPU-accelerated sculpting
     SculptDraw,
     SculptPinch,
     SculptSmooth,

@@ -12,6 +12,7 @@ set(GPU_SOURCES
     GpuVoxelManager.cu
     GpuSculptKernels.cu
     GpuMeshingKernels.cu
+    GpuVoxelConverter.cpp  # CPU-side converter (NOT compiled with nvcc)
 )
 
 # Create static library for GPU code
@@ -64,6 +65,10 @@ target_compile_options(urbaxio_gpu PRIVATE
         -DOPENVDB_STATICLIB
         --diag-suppress=20054
         --diag-suppress=20012
+    >
+    $<$<COMPILE_LANGUAGE:CXX>:
+        /bigobj
+        -DNANOVDB_USE_OPENVDB
     >
 )
 

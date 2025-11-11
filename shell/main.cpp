@@ -881,9 +881,17 @@ namespace { // Anonymous namespace for helpers
                                 glm::mat4_cast(glm::quat(eulerAnglesRad)) *
                                 glm::scale(glm::mat4(1.0f), scale);
 
-        // Adjust panel size for 5 buttons
+        // Adjust panel size for 6 buttons (with GPU Sculpt)
         float panelWidth = 0.064f;
-        float panelHeight = 0.394f; // Same height as standard tools
+#ifdef URBAXIO_GPU_ENABLED
+#if URBAXIO_GPU_ENABLED
+        float panelHeight = 0.458f; // Increased for GPU Sculpt button
+#else
+        float panelHeight = 0.394f; // 5 buttons
+#endif
+#else
+        float panelHeight = 0.394f; // 5 buttons
+#endif
         float cornerRadius = 0.5f;
 
         auto& sculptMenu = vruiManager.AddPanel("SculptureTools", "Sculpture", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIcon, closeIcon, minimizeIcon);
@@ -919,6 +927,24 @@ namespace { // Anonymous namespace for helpers
 
         // Add buttons to the panel, passing the new color themes
         sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Sculpt", glm::vec3(0), glm::vec2(0), sculptIcon, Urbaxio::Tools::ToolType::Sculpt, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Sculpt); }, sculptSelectedColors, sculptInactiveColors));
+        
+#ifdef URBAXIO_GPU_ENABLED
+#if URBAXIO_GPU_ENABLED
+        // GPU-accelerated sculpt tool (cyan colors to distinguish from CPU version)
+        const Urbaxio::UI::ToolButtonColors gpuInactiveColors = { 
+            {0.03f, 0.89f, 0.89f}, // base (cyan)
+            {0.47f, 0.68f, 0.99f}, // aberration1
+            {0.62f, 0.99f, 0.89f}  // aberration2
+        };
+        const Urbaxio::UI::ToolButtonColors gpuSelectedColors = { 
+            {0.22f, 0.96f, 0.96f}, // base (bright cyan)
+            {0.29f, 0.99f, 0.66f}, // aberration1
+            {0.46f, 0.99f, 0.99f}  // aberration2
+        };
+        sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("GPU Sculpt", glm::vec3(0), glm::vec2(0), sculptIcon, Urbaxio::Tools::ToolType::SculptGpu, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptGpu); }, gpuSelectedColors, gpuInactiveColors));
+#endif
+#endif
+        
         sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Draw", glm::vec3(0), glm::vec2(0), sculptDrawIcon, Urbaxio::Tools::ToolType::SculptDraw, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptDraw); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
         sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Pinch", glm::vec3(0), glm::vec2(0), sculptPinchIcon, Urbaxio::Tools::ToolType::SculptPinch, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptPinch); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
         sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Smooth", glm::vec3(0), glm::vec2(0), sculptSmoothIcon, Urbaxio::Tools::ToolType::SculptSmooth, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptSmooth); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
@@ -1696,6 +1722,14 @@ int main(int argc, char* argv[]) {
             ImGui::SameLine();
             bool isSculpt = activeToolType == Urbaxio::Tools::ToolType::Sculpt;
             if (ImGui::RadioButton("Sculpt", isSculpt)) toolManager.SetTool(Urbaxio::Tools::ToolType::Sculpt);
+            
+#ifdef URBAXIO_GPU_ENABLED
+#if URBAXIO_GPU_ENABLED
+            ImGui::SameLine();
+            bool isGpuSculpt = activeToolType == Urbaxio::Tools::ToolType::SculptGpu;
+            if (ImGui::RadioButton("GPU Sculpt", isGpuSculpt)) toolManager.SetTool(Urbaxio::Tools::ToolType::SculptGpu);
+#endif
+#endif
             // --- END OF MODIFICATION ---
 
 
