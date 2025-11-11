@@ -9,11 +9,12 @@ namespace Urbaxio::Engine {
 
 // Sparse 3D grid storing scalar SDF values using OpenVDB.
 // This structure dramatically reduces memory usage by only storing values near the surface.
+// NEW: Supports unbounded grids with dynamic bounding box expansion.
 struct VoxelGrid {
-    glm::uvec3 dimensions;     // Logical grid dimensions (bounding box)
+    glm::uvec3 dimensions;     // Initial/suggested dimensions (can grow dynamically)
     glm::vec3 origin;          // World-space origin of the grid
     float voxelSize;           // Size of each voxel in world units
-    openvdb::FloatGrid::Ptr grid_;  // Sparse OpenVDB grid
+    openvdb::FloatGrid::Ptr grid_;  // Sparse OpenVDB grid (unbounded)
     float backgroundValue_;    // Default value for empty voxels (positive = outside)
 
     // Constructor: creates an empty sparse grid
@@ -40,15 +41,15 @@ struct VoxelGrid {
     }
 
     // Get value at voxel coordinates (read-only, efficient)
-    float getValue(unsigned int x, unsigned int y, unsigned int z) const {
-        if (!isValid(x, y, z)) return backgroundValue_;
+    // NEW: No bounds checking - OpenVDB handles infinite grids naturally
+    float getValue(int x, int y, int z) const {
         openvdb::Coord xyz(x, y, z);
         return grid_->tree().getValue(xyz);
     }
 
     // Set value at voxel coordinates (write, will activate sparse voxel if needed)
-    void setValue(unsigned int x, unsigned int y, unsigned int z, float value) {
-        if (!isValid(x, y, z)) return;
+    // NEW: No bounds checking - grid expands automatically
+    void setValue(int x, int y, int z, float value) {
         openvdb::Coord xyz(x, y, z);
         grid_->tree().setValue(xyz, value);
     }
@@ -58,13 +59,11 @@ struct VoxelGrid {
     public:
         Accessor(VoxelGrid& grid) : acc_(grid.grid_->getAccessor()), grid_(grid) {}
         
-        float getValue(unsigned int x, unsigned int y, unsigned int z) const {
-            if (!grid_.isValid(x, y, z)) return grid_.backgroundValue_;
+        float getValue(int x, int y, int z) const {
             return acc_.getValue(openvdb::Coord(x, y, z));
         }
         
-        void setValue(unsigned int x, unsigned int y, unsigned int z, float value) {
-            if (!grid_.isValid(x, y, z)) return;
+        void setValue(int x, int y, int z, float value) {
             acc_.setValue(openvdb::Coord(x, y, z), value);
         }
         
@@ -77,8 +76,7 @@ struct VoxelGrid {
     public:
         ConstAccessor(const VoxelGrid& grid) : acc_(grid.grid_->getConstAccessor()), grid_(grid) {}
         
-        float getValue(unsigned int x, unsigned int y, unsigned int z) const {
-            if (!grid_.isValid(x, y, z)) return grid_.backgroundValue_;
+        float getValue(int x, int y, int z) const {
             return acc_.getValue(openvdb::Coord(x, y, z));
         }
         
@@ -87,22 +85,59 @@ struct VoxelGrid {
         const VoxelGrid& grid_;
     };
 
-    // Bounds checking
-    bool isValid(unsigned int x, unsigned int y, unsigned int z) const {
-        return x < dimensions.x && y < dimensions.y && z < dimensions.z;
+    // DEPRECATED: Bounds checking no longer needed - kept for backward compatibility
+    bool isValid(int x, int y, int z) const {
+        return true; // Always valid - OpenVDB handles unbounded grids
     }
 
-    // Convert sparse OpenVDB grid to dense array (needed for Marching Cubes)
+    // NEW: Get the actual bounding box of active voxels
+    openvdb::CoordBBox getActiveBounds() const {
+        return grid_->evalActiveVoxelBoundingBox();
+    }
+
+    // NEW: Update logical dimensions based on actual data
+    void updateDimensions() {
+        openvdb::CoordBBox bbox = getActiveBounds();
+        if (!bbox.empty()) {
+            // Expand dimensions to fit all active voxels (with some padding)
+            glm::ivec3 minCoord(bbox.min().x(), bbox.min().y(), bbox.min().z());
+            glm::ivec3 maxCoord(bbox.max().x(), bbox.max().y(), bbox.max().z());
+            
+            // Add padding for future sculpting
+            const int padding = 10;
+            minCoord -= glm::ivec3(padding);
+            maxCoord += glm::ivec3(padding);
+            
+            // Calculate new dimensions (ensure positive)
+            glm::ivec3 size = maxCoord - minCoord + glm::ivec3(1);
+            dimensions = glm::uvec3(std::max(0, size.x), std::max(0, size.y), std::max(0, size.z));
+        }
+    }
+
+    // Convert sparse OpenVDB grid to dense array (needed for Undo/Redo)
+    // NEW: Uses actual active bounds, not fixed dimensions
     std::vector<float> toDenseArray() const {
-        std::vector<float> denseData(dimensions.x * dimensions.y * dimensions.z, backgroundValue_);
+        openvdb::CoordBBox bbox = getActiveBounds();
+        if (bbox.empty()) {
+            // Empty grid - return minimal array
+            return std::vector<float>(1, backgroundValue_);
+        }
         
-        // Use OpenVDB iterator to efficiently copy only active values
+        glm::ivec3 minCoord(bbox.min().x(), bbox.min().y(), bbox.min().z());
+        glm::ivec3 maxCoord(bbox.max().x(), bbox.max().y(), bbox.max().z());
+        glm::ivec3 size = maxCoord - minCoord + glm::ivec3(1);
+        
+        std::vector<float> denseData(size.x * size.y * size.z, backgroundValue_);
+        
         auto accessor = grid_->getConstAccessor();
-        for (unsigned int z = 0; z < dimensions.z; ++z) {
-            for (unsigned int y = 0; y < dimensions.y; ++y) {
-                for (unsigned int x = 0; x < dimensions.x; ++x) {
-                    size_t index = z * dimensions.x * dimensions.y + y * dimensions.x + x;
-                    denseData[index] = accessor.getValue(openvdb::Coord(x, y, z));
+        for (int z = 0; z < size.z; ++z) {
+            for (int y = 0; y < size.y; ++y) {
+                for (int x = 0; x < size.x; ++x) {
+                    int worldX = minCoord.x + x;
+                    int worldY = minCoord.y + y;
+                    int worldZ = minCoord.z + z;
+                    size_t index = z * size.x * size.y + y * size.x + x;
+                    denseData[index] = accessor.getValue(openvdb::Coord(worldX, worldY, worldZ));
                 }
             }
         }
@@ -110,15 +145,51 @@ struct VoxelGrid {
     }
 
     // Create sparse grid from dense array (needed for Undo/Redo)
+    // NEW: Requires bounding box info to correctly restore data
+    void fromDenseArray(const std::vector<float>& denseData, const openvdb::CoordBBox& bbox) {
+        grid_->clear();
+        
+        if (bbox.empty() || denseData.empty()) {
+            return;
+        }
+        
+        glm::ivec3 minCoord(bbox.min().x(), bbox.min().y(), bbox.min().z());
+        glm::ivec3 maxCoord(bbox.max().x(), bbox.max().y(), bbox.max().z());
+        glm::ivec3 size = maxCoord - minCoord + glm::ivec3(1);
+        
+        if (denseData.size() != static_cast<size_t>(size.x * size.y * size.z)) {
+            return; // Size mismatch
+        }
+        
+        auto accessor = grid_->getAccessor();
+        for (int z = 0; z < size.z; ++z) {
+            for (int y = 0; y < size.y; ++y) {
+                for (int x = 0; x < size.x; ++x) {
+                    size_t index = z * size.x * size.y + y * size.x + x;
+                    float value = denseData[index];
+                    
+                    // Only store values that differ from background (sparsity optimization)
+                    if (std::abs(value - backgroundValue_) > 1e-6f) {
+                        int worldX = minCoord.x + x;
+                        int worldY = minCoord.y + y;
+                        int worldZ = minCoord.z + z;
+                        accessor.setValue(openvdb::Coord(worldX, worldY, worldZ), value);
+                    }
+                }
+            }
+        }
+        
+        updateDimensions();
+    }
+
+    // LEGACY: Overload for backward compatibility (uses logical dimensions)
     void fromDenseArray(const std::vector<float>& denseData) {
         if (denseData.size() != dimensions.x * dimensions.y * dimensions.z) {
             return; // Size mismatch
         }
         
-        // Clear existing data
         grid_->clear();
         
-        // Use accessor for efficient batch writes
         auto accessor = grid_->getAccessor();
         for (unsigned int z = 0; z < dimensions.z; ++z) {
             for (unsigned int y = 0; y < dimensions.y; ++y) {
@@ -126,7 +197,6 @@ struct VoxelGrid {
                     size_t index = z * dimensions.x * dimensions.y + y * dimensions.x + x;
                     float value = denseData[index];
                     
-                    // Only store values that differ from background (sparsity optimization)
                     if (std::abs(value - backgroundValue_) > 1e-6f) {
                         accessor.setValue(openvdb::Coord(x, y, z), value);
                     }
@@ -146,4 +216,3 @@ struct VoxelGrid {
 };
 
 } // namespace Urbaxio::Engine
-
