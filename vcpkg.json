@@ -11,7 +11,10 @@
     "openxr-loader",
     "libigl",
     "eigen3",
-    "openvdb",
+    {
+      "name": "openvdb",
+      "features": ["nanovdb"]
+    },
     "tbb"
   ]
 }

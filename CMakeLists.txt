@@ -43,7 +43,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Add compile option for UTF-8 source files, required by libraries like fmt
 if(MSVC)
-    add_compile_options(/utf-8)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
 endif()
 
 # Включаем папку cmake для поиска модулей
@@ -54,6 +54,41 @@ add_subdirectory(cad_kernel)
 
 # Добавляем подпапку с движком
 add_subdirectory(engine)
+
+# --- GPU Acceleration (Optional) ---
+# Check if CUDA is available and enable GPU support
+option(ENABLE_GPU "Enable GPU acceleration with CUDA" ON)
+
+if(ENABLE_GPU)
+    include(CheckLanguage)
+    check_language(CUDA)
+    
+    if(CMAKE_CUDA_COMPILER)
+        enable_language(CUDA)
+        message(STATUS "CUDA found: ${CMAKE_CUDA_COMPILER}")
+        message(STATUS "CUDA Version: ${CMAKE_CUDA_COMPILER_VERSION}")
+        
+        # CUDA-specific settings to avoid MSBuild issues
+        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --use-local-env")
+        set(CMAKE_CUDA_STANDARD 17)
+        set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+        
+        # Add GPU module
+        add_subdirectory(engine/src/gpu)
+        
+        # Mark GPU as enabled for the rest of the project
+        add_compile_definitions(URBAXIO_GPU_ENABLED=1)
+        message(STATUS "GPU acceleration ENABLED")
+    else()
+        message(WARNING "CUDA not found. GPU acceleration will be DISABLED.")
+        message(WARNING "To enable GPU support, install CUDA Toolkit from:")
+        message(WARNING "  https://developer.nvidia.com/cuda-downloads")
+        add_compile_definitions(URBAXIO_GPU_ENABLED=0)
+    endif()
+else()
+    message(STATUS "GPU acceleration DISABLED (ENABLE_GPU=OFF)")
+    add_compile_definitions(URBAXIO_GPU_ENABLED=0)
+endif()
 
 # Добавляем подпапку с исполняемым файлом приложения
 add_subdirectory(shell)

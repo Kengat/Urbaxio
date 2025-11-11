@@ -48,7 +48,7 @@ public:
 
     void RequestVoxelize(Engine::Scene* scene, uint64_t objectId, int resolution);
 
-    void RequestRemesh(Engine::Scene* scene, uint64_t objectId);
+    void RequestRemesh(Engine::Scene* scene, uint64_t objectId, bool useGpu = false);
 
     bool IsLoading() const;
     bool IsBlockingOperation() const; // Returns true only for operations that should block UI
@@ -76,6 +76,7 @@ private:
     struct RemeshJob {
         uint64_t objectId;
         std::unique_ptr<Engine::VoxelGrid> gridCopy; // Copy of the grid for thread safety
+        bool useGpu = false; // If true, use GPU meshing
     };
 
     std::thread workerThread_;

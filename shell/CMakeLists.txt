@@ -9,8 +9,8 @@ else()
     set(RESOURCE_FILES "")
 endif()
 
-# Define the executable target FIRST
-add_executable(Urbaxio
+# Prepare source file list
+set(SHELL_SOURCES
     main.cpp
     src/camera.cpp
     src/input_handler.cpp
@@ -46,6 +46,15 @@ add_executable(Urbaxio
     ${RESOURCE_FILES}
 )
 
+# Add GPU sculpt tool if GPU is enabled
+if(TARGET urbaxio_gpu)
+    list(APPEND SHELL_SOURCES src/tools/GpuSculptTool.cpp)
+    message(STATUS "Shell: GPU Sculpt Tool will be compiled")
+endif()
+
+# Define the executable target
+add_executable(Urbaxio ${SHELL_SOURCES})
+
 # NOW specify include directories for the defined target "Urbaxio"
 target_include_directories(Urbaxio PRIVATE
     include # Add the shell/include directory
@@ -78,6 +87,12 @@ target_link_libraries(Urbaxio PRIVATE
     Eigen3::Eigen
     igl::igl_core
 )
+
+# Link GPU library directly if available (CUDA static libs need explicit linking)
+if(TARGET urbaxio_gpu)
+    target_link_libraries(Urbaxio PRIVATE urbaxio_gpu)
+    message(STATUS "Shell: Explicitly linking against urbaxio_gpu library")
+endif()
 
 # --- Copy OpenCascade DLLs after build ---
 # UPDATED to use the hardcoded path.

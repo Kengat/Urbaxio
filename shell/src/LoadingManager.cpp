@@ -16,6 +16,14 @@
 #include <igl/per_vertex_normals.h>
 #include <Eigen/Core>
 
+// GPU support (optional)
+#ifdef URBAXIO_GPU_ENABLED
+#if URBAXIO_GPU_ENABLED
+#include "engine/gpu/GpuVoxelManager.h"
+#include "engine/gpu/GpuMeshingKernels.h"
+#endif
+#endif
+
 #include <iostream>
 
 namespace Urbaxio {
@@ -77,7 +85,7 @@ void LoadingManager::RequestVoxelize(Engine::Scene* scene, uint64_t objectId, in
     jobCondition_.notify_one();
 }
 
-void LoadingManager::RequestRemesh(Engine::Scene* scene, uint64_t objectId) {
+void LoadingManager::RequestRemesh(Engine::Scene* scene, uint64_t objectId, bool useGpu) {
     // DON'T reject if busy - queue the remesh request!
     // This prevents objects from disappearing
     
@@ -102,6 +110,7 @@ void LoadingManager::RequestRemesh(Engine::Scene* scene, uint64_t objectId) {
     RemeshJob job;
     job.objectId = objectId;
     job.gridCopy = std::move(gridCopy);
+    job.useGpu = useGpu;
 
     {
         std::unique_lock<std::mutex> lock(jobMutex_);
@@ -110,6 +119,7 @@ void LoadingManager::RequestRemesh(Engine::Scene* scene, uint64_t objectId) {
     jobCondition_.notify_one();
     
     std::cout << "LoadingManager: Remesh request queued for object " << objectId 
+              << (useGpu ? " (GPU)" : " (CPU)")
               << (isLoading_ ? " (worker busy, will process after current job)" : "") << std::endl;
 }
 
@@ -176,12 +186,88 @@ void LoadingManager::worker_thread_main() {
                 { std::lock_guard<std::mutex> lock(resultMutex_); resultQueue_.push(std::move(result)); }
             } else if constexpr (std::is_same_v<T, RemeshJob>) {
                 isBlockingOperation_ = false; // Remeshing is a background task
-                { std::lock_guard<std::mutex> lock(statusMutex_); statusMessage_ = "Remeshing object " + std::to_string(job.objectId) + "..."; }
+                { std::lock_guard<std::mutex> lock(statusMutex_); 
+                  statusMessage_ = "Remeshing object " + std::to_string(job.objectId) + 
+                                  (job.useGpu ? " (GPU)..." : " (CPU)..."); }
                 
                 CadKernel::MeshBuffers outMesh;
                 openvdb::FloatGrid::Ptr grid = job.gridCopy->grid_;
                 
                 if (grid) {
+                    // Check if GPU meshing was requested and is available
+#ifdef URBAXIO_GPU_ENABLED
+#if URBAXIO_GPU_ENABLED
+                    if (job.useGpu && Engine::GpuMeshingKernels::IsAvailable()) {
+                        std::cout << "[LoadingManager] Using GPU meshing (Path B)" << std::endl;
+                        
+                        // Upload grid to GPU
+                        Engine::GpuVoxelManager gpuManager;
+                        uint64_t gpuHandle = gpuManager.UploadGrid(job.gridCopy.get());
+                        
+                        if (gpuHandle != 0) {
+                            void* devicePtr = gpuManager.GetDeviceGridPointer(gpuHandle);
+                            
+                            // GPU Marching Cubes
+                            bool success = Engine::GpuMeshingKernels::MarchingCubes(
+                                devicePtr,
+                                0.0f, // ISO value
+                                job.gridCopy->voxelSize,
+                                outMesh
+                            );
+                            
+                            if (success && !outMesh.vertices.empty()) {
+                                // Calculate normals on CPU (could also be done on GPU)
+                                Eigen::MatrixXd V_igl(outMesh.vertices.size() / 3, 3);
+                                for(size_t i = 0; i < outMesh.vertices.size() / 3; ++i) {
+                                    V_igl(i, 0) = outMesh.vertices[i * 3 + 0];
+                                    V_igl(i, 1) = outMesh.vertices[i * 3 + 1];
+                                    V_igl(i, 2) = outMesh.vertices[i * 3 + 2];
+                                }
+                                
+                                Eigen::MatrixXi F_igl(outMesh.indices.size() / 3, 3);
+                                for (size_t i = 0; i < F_igl.rows(); ++i) {
+                                    F_igl(i, 0) = outMesh.indices[i * 3 + 0];
+                                    F_igl(i, 1) = outMesh.indices[i * 3 + 1];
+                                    F_igl(i, 2) = outMesh.indices[i * 3 + 2];
+                                }
+                                
+                                Eigen::MatrixXd N_igl;
+                                igl::per_vertex_normals(V_igl, F_igl, N_igl);
+                                
+                                outMesh.normals.resize(N_igl.rows() * 3);
+                                for (int i = 0; i < N_igl.rows(); ++i) {
+                                    outMesh.normals[i * 3 + 0] = (float)N_igl(i, 0);
+                                    outMesh.normals[i * 3 + 1] = (float)N_igl(i, 1);
+                                    outMesh.normals[i * 3 + 2] = (float)N_igl(i, 2);
+                                }
+                                
+                                outMesh.uvs.assign(V_igl.rows() * 2, 0.0f);
+                                
+                                std::cout << "[LoadingManager] GPU mesh complete: " 
+                                          << V_igl.rows() << " vertices, " 
+                                          << F_igl.rows() << " triangles" << std::endl;
+                            } else {
+                                std::cerr << "[LoadingManager] GPU meshing failed, falling back to CPU" << std::endl;
+                                job.useGpu = false; // Fall back to CPU
+                            }
+                            
+                            gpuManager.FreeGrid(gpuHandle);
+                        } else {
+                            std::cerr << "[LoadingManager] Failed to upload to GPU, using CPU" << std::endl;
+                            job.useGpu = false; // Fall back to CPU
+                        }
+                    }
+#else
+                    // GPU support not compiled in
+                    if (job.useGpu) {
+                        std::cout << "[LoadingManager] GPU requested but not available (not compiled with CUDA)" << std::endl;
+                        job.useGpu = false;
+                    }
+#endif
+#endif
+                    
+                    // CPU path (or fallback from GPU)
+                    if (!job.useGpu || outMesh.vertices.empty()) {
                     // --- START OF RE-ARCHITECTURE: Using openvdb::tools::volumeToMesh ---
                     
                     std::vector<openvdb::Vec3s> points;
@@ -251,6 +337,7 @@ void LoadingManager::worker_thread_main() {
                         std::cerr << "[LoadingManager] OpenVDB volumeToMesh failed: " << e.what() << std::endl;
                     }
                     // --- END OF RE-ARCHITECTURE ---
+                    } // End of CPU path check
                 }
                 
                 RemeshResult result{job.objectId, std::move(outMesh)};

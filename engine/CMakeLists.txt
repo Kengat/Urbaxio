@@ -55,3 +55,9 @@ target_link_libraries(engine PUBLIC
     OpenVDB::openvdb
     TBB::tbb
 )
+
+# --- GPU Acceleration (if enabled) ---
+if(TARGET urbaxio_gpu)
+    target_link_libraries(engine PUBLIC urbaxio_gpu)
+    message(STATUS "Engine: GPU acceleration linked")
+endif()

@@ -7,6 +7,9 @@
 
 namespace Urbaxio::Engine {
 
+// Forward declarations for GPU support
+class GpuVoxelManager;
+
 // Sparse 3D grid storing scalar SDF values using OpenVDB.
 // This structure dramatically reduces memory usage by only storing values near the surface.
 // NEW: Supports unbounded grids with dynamic bounding box expansion.
@@ -213,6 +216,10 @@ struct VoxelGrid {
     size_t getMemoryUsage() const {
         return grid_->memUsage();
     }
+
+    // GPU support: handle to GPU grid (0 = not uploaded)
+    mutable uint64_t gpuHandle_ = 0;
+    mutable bool gpuDirty_ = true; // True if CPU grid is newer than GPU
 };
 
 } // namespace Urbaxio::Engine
