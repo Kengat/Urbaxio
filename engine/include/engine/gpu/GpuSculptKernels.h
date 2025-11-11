@@ -28,6 +28,8 @@ public:
      * @param voxelSize Size of a voxel in world units
      * @param mode Sculpting mode (add/subtract/smooth)
      * @param strength Brush strength (0.0 to 1.0)
+     * @param gridBBoxMin Grid bounding box minimum (from CPU-side VoxelGrid)
+     * @param gridBBoxMax Grid bounding box maximum (from CPU-side VoxelGrid)
      * @param outModifiedBuffer [Optional] Output host buffer with modified dense region
      * @param outMinVoxel [Optional] Output min coordinate of modified region
      * @param outMaxVoxel [Optional] Output max coordinate of modified region
@@ -39,7 +41,9 @@ public:
         float brushRadius,
         float voxelSize,
         SculptMode mode,
-        float strength = 1.0f,
+        float strength,
+        const glm::ivec3& gridBBoxMin,
+        const glm::ivec3& gridBBoxMax,
         std::vector<float>* outModifiedBuffer = nullptr,
         glm::ivec3* outMinVoxel = nullptr,
         glm::ivec3* outMaxVoxel = nullptr

@@ -5,6 +5,7 @@
 #include "engine/gpu/GpuVoxelManager.h"
 #include "engine/gpu/GpuSculptKernels.h"
 #include "engine/gpu/GpuMeshingKernels.h"
+#include "engine/gpu/GpuVoxelConverter.h"
 #endif
 #endif
 
@@ -124,8 +125,16 @@ void GpuSculptTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctr
 void GpuSculptTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
     if (!impl_->isSculpting) return;
     
-    // Create undo command
     auto* obj = impl_->context.scene->get_object_by_id(impl_->activeObjectId);
+    
+    // Request async remesh NOW (once at the end, like CPU tool)
+    if (obj && impl_->context.loadingManager) {
+        impl_->context.loadingManager->RequestRemesh(impl_->context.scene, impl_->activeObjectId, false);
+        obj->markMeshAsClean(); // Prevents synchronous remesh
+        std::cout << "[GpuSculptTool] Async remesh requested (batched)" << std::endl;
+    }
+    
+    // Create undo command
     if (obj && impl_->capturedGrid) {
         auto* volGeo = dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry());
         if (volGeo) {
@@ -192,25 +201,74 @@ void GpuSculptTool::OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin,
         Engine::GpuSculptKernels::SculptMode::ADD :
         Engine::GpuSculptKernels::SculptMode::SUBTRACT;
     
+    // CRITICAL: Convert brush world position to index space (like CPU SculptTool does)
+    openvdb::Vec3d brushIndexPos = grid->grid_->transform().worldToIndex(
+        openvdb::Vec3d(snap.worldPoint.x, snap.worldPoint.y, snap.worldPoint.z)
+    );
+    glm::vec3 brushPosIndexSpace(brushIndexPos.x(), brushIndexPos.y(), brushIndexPos.z());
+    
+    // Convert brush radius from world units to voxel/index units
+    float brushRadiusInVoxels = impl_->brushRadius / grid->voxelSize;
+    
+    // Get current grid bounding box (for reference, NOT for clamping)
+    auto bbox = grid->getActiveBounds();
+    glm::ivec3 gridBBoxMin(bbox.min().x(), bbox.min().y(), bbox.min().z());
+    glm::ivec3 gridBBoxMax(bbox.max().x(), bbox.max().y(), bbox.max().z());
+    
+    // Prepare output buffers for GPU sculpting results
+    std::vector<float> modifiedBuffer;
+    glm::ivec3 minVoxel, maxVoxel;
+    
     bool success = Engine::GpuSculptKernels::ApplySphericalBrush(
         devicePtr,
-        snap.worldPoint,
-        impl_->brushRadius,
-        grid->voxelSize,  // Corrected: no underscore
+        brushPosIndexSpace,     // ✅ Now in INDEX SPACE (matches CPU tool)
+        brushRadiusInVoxels,    // ✅ Now in VOXEL UNITS (matches CPU tool)
+        1.0f,                   // voxelSize = 1.0 in index space
         mode,
-        impl_->brushStrength
+        impl_->brushStrength,
+        gridBBoxMin,            // Grid bbox from CPU (for expansion, not clamping)
+        gridBBoxMax,            // Grid bbox from CPU (for expansion, not clamping)
+        &modifiedBuffer,        // Output: modified dense buffer
+        &minVoxel,              // Output: min coordinate
+        &maxVoxel               // Output: max coordinate
     );
-    if (!success) {
-        std::cout << "[GpuSculptTool] GPU brush application failed" << std::endl;
-        return;
-    }
     
-    // Download updated grid
-    impl_->gpuManager->DownloadGrid(grid->gpuHandle_, grid);
-    
-    // Request remesh (GPU accelerated)
-    if (impl_->context.loadingManager) {
-        impl_->context.loadingManager->RequestRemesh(impl_->context.scene, impl_->activeObjectId, true);
+    if (success && !modifiedBuffer.empty()) {
+        std::cout << "[GpuSculptTool] ✅ GPU sculpting succeeded, applying to OpenVDB grid..." << std::endl;
+        
+        // Apply GPU-modified buffer back to OpenVDB grid (CPU-side)
+        bool applied = Engine::ApplyModifiedRegionToVoxelGrid(
+            grid,
+            modifiedBuffer,
+            minVoxel,
+            maxVoxel
+        );
+        
+        if (applied) {
+            // Update the object's AABB immediately after modification (like CPU SculptTool)
+            openvdb::CoordBBox bbox = grid->grid_->evalActiveVoxelBoundingBox();
+            if (!bbox.empty()) {
+                openvdb::Vec3d worldMin = grid->grid_->indexToWorld(bbox.min());
+                openvdb::Vec3d worldMax = grid->grid_->indexToWorld(bbox.max());
+                obj->aabbMin = glm::vec3(worldMin.x(), worldMin.y(), worldMin.z());
+                obj->aabbMax = glm::vec3(worldMax.x(), worldMax.y(), worldMax.z());
+                obj->aabbValid = true;
+            } else {
+                obj->aabbValid = false; // Grid is empty
+            }
+            
+            // Mark grid as dirty (needs re-upload for next frame)
+            grid->gpuDirty_ = true;
+            
+            // NOTE: Don't remesh here! Wait for OnMouseUp (batching like CPU tool)
+            // Remeshing every frame is expensive and causes lag
+            
+            // std::cout << "[GpuSculptTool] ✅ GPU sculpting complete (mesh update deferred)" << std::endl;
+        } else {
+            std::cerr << "[GpuSculptTool] ❌ Failed to apply modified region!" << std::endl;
+        }
+    } else {
+        std::cerr << "[GpuSculptTool] ❌ GPU sculpting failed or returned empty buffer" << std::endl;
     }
 #endif
 #endif

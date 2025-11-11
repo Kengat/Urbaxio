@@ -17,6 +17,7 @@
 #include <nanovdb/tools/GridBuilder.h>      // Updated path
 #include <iostream>
 #include <cmath>
+#include <algorithm>  // For std::min/std::max
 
 namespace Urbaxio::Engine {
 
@@ -123,20 +124,20 @@ __global__ void ApplySphericalBrushToDenseKernel(
 
     if (x >= bufferDim.x || y >= bufferDim.y || z >= bufferDim.z) return;
 
-    // World coordinate (in voxel space)
-    int3 worldCoord = make_int3(x + minCoord.x, y + minCoord.y, z + minCoord.z);
+    // Index-space coordinate (voxel coordinate)
+    int3 indexCoord = make_int3(x + minCoord.x, y + minCoord.y, z + minCoord.z);
     
-    // Convert to world position (in world units)
-    float3 worldPos = make_float3(
-        worldCoord.x * voxelSize,
-        worldCoord.y * voxelSize,
-        worldCoord.z * voxelSize
+    // Convert to float for distance calculation (already in index space)
+    float3 indexPos = make_float3(
+        (float)indexCoord.x,
+        (float)indexCoord.y,
+        (float)indexCoord.z
     );
     
-    // Calculate distance from brush center
-    float dx = worldPos.x - brushCenter.x;
-    float dy = worldPos.y - brushCenter.y;
-    float dz = worldPos.z - brushCenter.z;
+    // Calculate distance from brush center (in index/voxel space)
+    float dx = indexPos.x - brushCenter.x;
+    float dy = indexPos.y - brushCenter.y;
+    float dz = indexPos.z - brushCenter.z;
     float dist = sqrtf(dx*dx + dy*dy + dz*dz);
     
     // Calculate brush SDF value
@@ -163,13 +164,6 @@ __global__ void ApplySphericalBrushToDenseKernel(
     denseBuffer[bufferIdx] = newVal;
 }
 
-// Helper function: Get bounding box from NanoVDB grid metadata
-void GetGridBBox(const nanovdb::FloatGrid* grid, int3* outMin, int3* outMax) {
-    auto bbox = grid->indexBBox();
-    *outMin = make_int3(bbox.min()[0], bbox.min()[1], bbox.min()[2]);
-    *outMax = make_int3(bbox.max()[0], bbox.max()[1], bbox.max()[2]);
-}
-
 // Host functions
 
 bool GpuSculptKernels::ApplySphericalBrush(
@@ -179,6 +173,8 @@ bool GpuSculptKernels::ApplySphericalBrush(
     float voxelSize,
     SculptMode mode,
     float strength,
+    const glm::ivec3& gridBBoxMin,
+    const glm::ivec3& gridBBoxMax,
     std::vector<float>* outModifiedBuffer,
     glm::ivec3* outMinVoxel,
     glm::ivec3* outMaxVoxel)
@@ -193,27 +189,27 @@ bool GpuSculptKernels::ApplySphericalBrush(
     // Get grid background value
     float backgroundValue = 3.0f; // Default SDF background (outside)
     
-    // Calculate bounding box for the brush operation (in voxel space)
-    float worldRadiusVoxels = (brushRadius + voxelSize * 4.0f) / voxelSize;
-    glm::vec3 brushCenterVoxels = brushCenter / voxelSize;
+    // Calculate bounding box for the brush operation (in INDEX/VOXEL space)
+    // brushCenter is already in index space, brushRadius is in voxel units
+    float brushRadiusWithMargin = brushRadius + 4.0f; // Add narrow-band margin
     
     glm::ivec3 minVoxel = glm::ivec3(
-        brushCenterVoxels.x - worldRadiusVoxels,
-        brushCenterVoxels.y - worldRadiusVoxels,
-        brushCenterVoxels.z - worldRadiusVoxels
+        std::floor(brushCenter.x - brushRadiusWithMargin),
+        std::floor(brushCenter.y - brushRadiusWithMargin),
+        std::floor(brushCenter.z - brushRadiusWithMargin)
     );
     glm::ivec3 maxVoxel = glm::ivec3(
-        brushCenterVoxels.x + worldRadiusVoxels,
-        brushCenterVoxels.y + worldRadiusVoxels,
-        brushCenterVoxels.z + worldRadiusVoxels
+        std::ceil(brushCenter.x + brushRadiusWithMargin),
+        std::ceil(brushCenter.y + brushRadiusWithMargin),
+        std::ceil(brushCenter.z + brushRadiusWithMargin)
     ) + glm::ivec3(1);
     
-    // Clamp to grid bounds (get actual grid bbox from metadata)
-    int3 gridMin, gridMax;
-    GetGridBBox(grid, &gridMin, &gridMax);
-    
-    minVoxel = glm::max(minVoxel, glm::ivec3(gridMin.x, gridMin.y, gridMin.z));
-    maxVoxel = glm::min(maxVoxel, glm::ivec3(gridMax.x, gridMax.y, gridMax.z));
+    // IMPORTANT: DON'T clamp to gridBBox - allow drawing outside current bounds!
+    // This matches CPU SculptTool behavior where CSG union expands the grid
+    // We'll extend the minVoxel/maxVoxel to include current grid bounds to ensure
+    // we read existing voxels correctly
+    minVoxel = glm::min(minVoxel, gridBBoxMin);
+    maxVoxel = glm::max(maxVoxel, gridBBoxMax);
     
     glm::ivec3 size = maxVoxel - minVoxel;
     
