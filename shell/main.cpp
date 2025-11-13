@@ -315,7 +315,7 @@ namespace { // Anonymous namespace for helpers
                                glm::mat4_cast(glm::quat(eulerAnglesRad)) *
                                glm::scale(glm::mat4(1.0f), scale);
         
-        auto& panelMgr = vruiManager.AddPanel("PanelManager", "Panels", glm::vec2(0.217f, 0.381f), panelOffset, 0.1f, dragIcon, pinIcon, closeIcon, minimizeIcon);
+        auto& panelMgr = vruiManager.AddPanel("PanelManager", "Panels", glm::vec2(0.217f, 0.381f), panelOffset, 0.04f, dragIcon, pinIcon, closeIcon, minimizeIcon);
         // --- NEW: Add 10 test buttons to test scrolling ---
         for (int i = 1; i <= 10; i++) {
             std::string buttonText = "Test Button " + std::to_string(i);
@@ -773,7 +773,7 @@ namespace { // Anonymous namespace for helpers
                                glm::scale(glm::mat4(1.0f), scale);
             
             // --- Constructor parameters from your tuning ---
-            auto& numpad = vruiManager.AddPanel("NewNumpad", "Numpad", glm::vec2(0.226f, 0.427f), offset, 0.1f, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
+            auto& numpad = vruiManager.AddPanel("NewNumpad", "Numpad", glm::vec2(0.226f, 0.427f), offset, 0.04f, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
 
             glm::vec2 displaySize(0.14f, 0.05f); 
             numpad.AddWidget(std::make_unique<Urbaxio::UI::VRDisplayWidget>(glm::vec3(0), displaySize, numpadInputTarget));
@@ -863,10 +863,10 @@ namespace { // Anonymous namespace for helpers
                                 glm::mat4_cast(glm::quat(eulerAnglesRad)) *
                                 glm::scale(glm::mat4(1.0f), scale);
         
-        // --- FINAL: Default constructor parameters from your tuning ---
-        float panelWidth = 0.064f;
-        float panelHeight = 0.394f;
-        float cornerRadius = 0.1f;
+        // --- CHANGED: Use the new default size ---
+        float panelWidth = 0.065f;
+        float panelHeight = 0.345f;
+        float cornerRadius = 0.04f;
 
         auto& toolMenu = vruiManager.AddPanel("StandardTools", "Standard", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
         
@@ -902,18 +902,10 @@ namespace { // Anonymous namespace for helpers
                                 glm::mat4_cast(glm::quat(eulerAnglesRad)) *
                                 glm::scale(glm::mat4(1.0f), scale);
 
-        // Adjust panel size for 6 buttons (with GPU Sculpt)
-        float panelWidth = 0.064f;
-#ifdef URBAXIO_GPU_ENABLED
-#if URBAXIO_GPU_ENABLED
-        float panelHeight = 0.458f; // Increased for GPU Sculpt button
-#else
-        float panelHeight = 0.394f; // 5 buttons
-#endif
-#else
-        float panelHeight = 0.394f; // 5 buttons
-#endif
-        float cornerRadius = 0.1f;
+        // --- CHANGED: Use the new default size ---
+        float panelWidth = 0.065f;
+        float panelHeight = 0.345f;
+        float cornerRadius = 0.04f;
 
         auto& sculptMenu = vruiManager.AddPanel("SculptureTools", "Sculpture", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIcon, pinIcon, closeIcon, minimizeIcon);
         
@@ -994,7 +986,7 @@ namespace { // Anonymous namespace for helpers
                                 glm::mat4_cast(glm::quat(eulerAnglesRad)) *
                                 glm::scale(glm::mat4(1.0f), scale);
 
-        auto& fileMenu = vruiManager.AddPanel("FileMenu", "File", glm::vec2(0.156f, 0.293f), panelOffset, 0.1f, dragIcon, pinIcon, closeIcon, minimizeIcon);
+        auto& fileMenu = vruiManager.AddPanel("FileMenu", "File", glm::vec2(0.156f, 0.293f), panelOffset, 0.04f, dragIcon, pinIcon, closeIcon, minimizeIcon);
 
         auto importCallback = [&, window]() {
             if (isFileDialogActive.load()) return;

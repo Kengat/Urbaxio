@@ -398,7 +398,11 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     glm::mat4 backgroundModel = transform 
                               * glm::translate(glm::mat4(1.0f), positionOffset)
                               * glm::scale(glm::mat4(1.0f), glm::vec3(currentSize.x, currentSize.y, 1.0f));
-    renderer.RenderVRPanel(view, projection, backgroundModel, glm::vec3(0.43f, 0.65f, 0.82f), currentRadius, 0.25f * alpha);
+    // Normalize radius relative to minimum panel dimension to maintain consistent curvature
+    // This ensures capsule shape when panel is narrow in any direction
+    float normalizedRadius = currentRadius / std::min(currentSize.x, currentSize.y);
+    normalizedRadius = std::min(normalizedRadius, 0.5f); // Clamp to 0.5 (full capsule)
+    renderer.RenderVRPanel(view, projection, backgroundModel, glm::vec3(0.43f, 0.65f, 0.82f), normalizedRadius, 0.25f * alpha);
     
     // --- 4. Собираем ВСЕ виджеты (основные и служебные) для сортировки ---
     std::vector<IVRWidget*> allWidgetsToRender;
