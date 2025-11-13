@@ -307,7 +307,7 @@ namespace { // Anonymous namespace for helpers
     };
     // END OF MODIFICATION
 
-    void SetupPanelManagerPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int closeIcon, unsigned int minimizeIcon, unsigned int backIcon) {
+    void SetupPanelManagerPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon, unsigned int backIcon) {
         glm::vec3 translation = glm::vec3(0.004f, 0.045f, 0.020f);
         glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-117.219f, 2.847f, -4.021f));
         glm::vec3 scale = glm::vec3(0.308f);
@@ -315,7 +315,7 @@ namespace { // Anonymous namespace for helpers
                                glm::mat4_cast(glm::quat(eulerAnglesRad)) *
                                glm::scale(glm::mat4(1.0f), scale);
         
-        auto& panelMgr = vruiManager.AddPanel("PanelManager", "Panels", glm::vec2(0.217f, 0.381f), panelOffset, 0.1f, dragIcon, closeIcon, minimizeIcon);
+        auto& panelMgr = vruiManager.AddPanel("PanelManager", "Panels", glm::vec2(0.217f, 0.381f), panelOffset, 0.1f, dragIcon, pinIcon, closeIcon, minimizeIcon);
         // --- NEW: Add 10 test buttons to test scrolling ---
         for (int i = 1; i <= 10; i++) {
             std::string buttonText = "Test Button " + std::to_string(i);
@@ -761,7 +761,7 @@ namespace { // Anonymous namespace for helpers
     }
 
     // --- NEW: Factory function to create our VR panels ---
-    void SetupVRPanels(Urbaxio::UI::VRUIManager& vruiManager, std::string& numpadInputTarget, Urbaxio::Tools::ToolManager& toolManager, bool& isNumpadActiveFlag, const Urbaxio::Tools::ToolContext& toolContext, unsigned int dragIconTexture, unsigned int closeIconTexture, unsigned int minimizeIconTexture) {
+    void SetupVRPanels(Urbaxio::UI::VRUIManager& vruiManager, std::string& numpadInputTarget, Urbaxio::Tools::ToolManager& toolManager, bool& isNumpadActiveFlag, const Urbaxio::Tools::ToolContext& toolContext, unsigned int dragIconTexture, unsigned int pinIconTexture, unsigned int closeIconTexture, unsigned int minimizeIconTexture) {
         {
             // --- Transform values from your tuning ---
             glm::vec3 translation = glm::vec3(-0.012f, -0.063f, -0.127f);
@@ -773,7 +773,7 @@ namespace { // Anonymous namespace for helpers
                                glm::scale(glm::mat4(1.0f), scale);
             
             // --- Constructor parameters from your tuning ---
-            auto& numpad = vruiManager.AddPanel("NewNumpad", "Numpad", glm::vec2(0.226f, 0.427f), offset, 0.1f, dragIconTexture, closeIconTexture, minimizeIconTexture);
+            auto& numpad = vruiManager.AddPanel("NewNumpad", "Numpad", glm::vec2(0.226f, 0.427f), offset, 0.1f, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
 
             glm::vec2 displaySize(0.14f, 0.05f); 
             numpad.AddWidget(std::make_unique<Urbaxio::UI::VRDisplayWidget>(glm::vec3(0), displaySize, numpadInputTarget));
@@ -853,7 +853,7 @@ namespace { // Anonymous namespace for helpers
     }
 
     // --- NEW: Factory function to create the tool menu panel ---
-    void SetupStandardToolsPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, unsigned int dragIconTexture, unsigned int selectIcon, unsigned int lineIcon, unsigned int pushpullIcon, unsigned int moveIcon, unsigned int paintIcon, unsigned int closeIconTexture, unsigned int minimizeIconTexture) {
+    void SetupStandardToolsPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, unsigned int dragIconTexture, unsigned int pinIconTexture, unsigned int selectIcon, unsigned int lineIcon, unsigned int pushpullIcon, unsigned int moveIcon, unsigned int paintIcon, unsigned int closeIconTexture, unsigned int minimizeIconTexture) {
         // --- FINAL: Default transform values from your tuning ---
         glm::vec3 translation = glm::vec3(0.059f, -0.033f, -0.050f);
         glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-113.214f, 3.417f, -3.030f));
@@ -868,7 +868,7 @@ namespace { // Anonymous namespace for helpers
         float panelHeight = 0.394f;
         float cornerRadius = 0.5f;
 
-        auto& toolMenu = vruiManager.AddPanel("StandardTools", "Standard", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIconTexture, closeIconTexture, minimizeIconTexture);
+        auto& toolMenu = vruiManager.AddPanel("StandardTools", "Standard", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
         
         // Adjust layout for 5 buttons
         toolMenu.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f, true)); // Reduced spacing a bit
@@ -882,7 +882,7 @@ namespace { // Anonymous namespace for helpers
         toolMenu.RecalculateLayout();
     }
 
-    void SetupSculptToolsPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, const Urbaxio::Tools::ToolContext& toolContext, unsigned int dragIcon, unsigned int sculptIcon, unsigned int sculptDrawIcon, unsigned int sculptPinchIcon, unsigned int sculptSmoothIcon, unsigned int voxelizationIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
+    void SetupSculptToolsPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, const Urbaxio::Tools::ToolContext& toolContext, unsigned int dragIcon, unsigned int pinIcon, unsigned int sculptIcon, unsigned int sculptDrawIcon, unsigned int sculptPinchIcon, unsigned int sculptSmoothIcon, unsigned int voxelizationIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
         // Position it to the right of the standard tools panel
         glm::vec3 translation = glm::vec3(0.096f, -0.035f, -0.052f);
         glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-113.341f, 2.228f, -6.367f));
@@ -905,7 +905,7 @@ namespace { // Anonymous namespace for helpers
 #endif
         float cornerRadius = 0.5f;
 
-        auto& sculptMenu = vruiManager.AddPanel("SculptureTools", "Sculpture", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIcon, closeIcon, minimizeIcon);
+        auto& sculptMenu = vruiManager.AddPanel("SculptureTools", "Sculpture", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIcon, pinIcon, closeIcon, minimizeIcon);
         
         sculptMenu.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f, true)); // Same layout
 
@@ -964,7 +964,7 @@ namespace { // Anonymous namespace for helpers
         sculptMenu.RecalculateLayout();
     }
 
-    void SetupFileMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int closeIcon, unsigned int minimizeIcon, SDL_Window* window, std::atomic<bool>& isFileDialogActive, std::atomic<bool>& fileDialogResultReady, std::string& filePathFromDialog, std::mutex& filePathMutex, bool& isImportDialog) {
+    void SetupFileMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon, SDL_Window* window, std::atomic<bool>& isFileDialogActive, std::atomic<bool>& fileDialogResultReady, std::string& filePathFromDialog, std::mutex& filePathMutex, bool& isImportDialog) {
         glm::vec3 translation = glm::vec3(-0.076f, -0.030f, -0.063f);
         glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-114.529f, 1.170f, -11.124f));
         glm::vec3 scale = glm::vec3(0.365f);
@@ -973,7 +973,7 @@ namespace { // Anonymous namespace for helpers
                                 glm::mat4_cast(glm::quat(eulerAnglesRad)) *
                                 glm::scale(glm::mat4(1.0f), scale);
 
-        auto& fileMenu = vruiManager.AddPanel("FileMenu", "File", glm::vec2(0.156f, 0.293f), panelOffset, 0.1f, dragIcon, closeIcon, minimizeIcon);
+        auto& fileMenu = vruiManager.AddPanel("FileMenu", "File", glm::vec2(0.156f, 0.293f), panelOffset, 0.1f, dragIcon, pinIcon, closeIcon, minimizeIcon);
 
         auto importCallback = [&, window]() {
             if (isFileDialogActive.load()) return;
@@ -1287,6 +1287,7 @@ int main(int argc, char* argv[]) {
         // --- END OF MODIFICATION ---
     };
     unsigned int dragIconTexture = load_icon("drag_icon.png");
+    unsigned int pinIconTexture = load_icon("pin.png");
     unsigned int selectIconTexture = load_icon("select_icon.png");
     unsigned int lineIconTexture = load_icon("line_icon.png");
     unsigned int pushpullIconTexture = load_icon("pushpull_icon.png");
@@ -1303,11 +1304,11 @@ int main(int argc, char* argv[]) {
     unsigned int backIconTexture = load_icon("back.png");
 
     // --- NEW: Setup our VR panels using the new system ---
-    SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture, closeIconTexture, minimizeIconTexture);
-    SetupStandardToolsPanel(vruiManager, toolManager, dragIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture, paintBucketIconTexture, closeIconTexture, minimizeIconTexture);
-    SetupSculptToolsPanel(vruiManager, toolManager, toolContext, dragIconTexture, sculptIconTexture, sculptDrawIconTexture, sculptPinchIconTexture, sculptSmoothIconTexture, voxelizationIconTexture, closeIconTexture, minimizeIconTexture);
-    SetupPanelManagerPanel(vruiManager, dragIconTexture, closeIconTexture, minimizeIconTexture, backIconTexture);
-    SetupFileMenuPanel(vruiManager, dragIconTexture, closeIconTexture, minimizeIconTexture, window, isFileDialogActive, fileDialogResultReady, filePathFromDialog, filePathMutex, isImportDialog);
+    SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
+    SetupStandardToolsPanel(vruiManager, toolManager, dragIconTexture, pinIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture, paintBucketIconTexture, closeIconTexture, minimizeIconTexture);
+    SetupSculptToolsPanel(vruiManager, toolManager, toolContext, dragIconTexture, pinIconTexture, sculptIconTexture, sculptDrawIconTexture, sculptPinchIconTexture, sculptSmoothIconTexture, voxelizationIconTexture, closeIconTexture, minimizeIconTexture);
+    SetupPanelManagerPanel(vruiManager, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture, backIconTexture);
+    SetupFileMenuPanel(vruiManager, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture, window, isFileDialogActive, fileDialogResultReady, filePathFromDialog, filePathMutex, isImportDialog);
     
     if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
         panelMgr->SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
@@ -1929,6 +1930,21 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
+                // NEW: Calculate head transform in world space for pinned panels (using raw pose data)
+                glm::mat4 headPoseInAppSpace;
+                if (vr_views.size() > 1) {
+                    glm::mat4 headPose1 = glm::inverse(XrPoseToMat4(vr_views[0].pose));
+                    glm::mat4 headPose2 = glm::inverse(XrPoseToMat4(vr_views[1].pose));
+                    glm::vec3 posInAppSpace = (glm::vec3(headPose1[3]) + glm::vec3(headPose2[3])) * 0.5f;
+                    glm::quat rotInAppSpace = glm::slerp(glm::quat_cast(headPose1), glm::quat_cast(headPose2), 0.5f);
+                    headPoseInAppSpace = glm::translate(glm::mat4(1.0f), posInAppSpace) * glm::mat4_cast(rotInAppSpace);
+                } else if (!vr_views.empty()) {
+                    headPoseInAppSpace = glm::inverse(XrPoseToMat4(vr_views[0].pose));
+                } else {
+                    headPoseInAppSpace = glm::mat4(1.0f); // Fallback
+                }
+                glm::mat4 headTransformInWorldSpace = vrManager->GetWorldTransform() * headPoseInAppSpace;
+
                 bool rightAButtonIsClicked = (vrManager->rightAButtonIsPressed && !rightAButtonWasPressed);
                 rightAButtonWasPressed = vrManager->rightAButtonIsPressed;
 
@@ -2150,7 +2166,7 @@ int main(int argc, char* argv[]) {
                     bool isLeftTriggerPressed = vrManager->leftTriggerValue > 0.5f;
                     
                     // -- START OF MODIFICATION: Pass separate states --
-                    vruiManager.Update(worldRay, leftControllerUnscaledTransform, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, rightHand.triggerWasPressed, rightAButtonIsClicked, vrManager->rightAButtonIsPressed, vrManager->rightBButtonIsPressed, vrManager->leftJoystick.y, isLeftTriggerPressed);
+                    vruiManager.UpdateWithHeadTransform(worldRay, leftControllerUnscaledTransform, headTransformInWorldSpace, rightControllerUnscaledTransform, rightHand.triggerClicked, rightHand.triggerReleased, rightHand.triggerWasPressed, rightAButtonIsClicked, vrManager->rightAButtonIsPressed, vrManager->rightBButtonIsPressed, vrManager->leftJoystick.y, isLeftTriggerPressed);
                     // -- END OF MODIFICATION --
 
                     // --- NEW: Menu Sphere WIDGET logic ---

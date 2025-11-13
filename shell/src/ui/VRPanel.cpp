@@ -15,7 +15,7 @@
 
 namespace Urbaxio::UI {
 
-VRPanel::VRPanel(const std::string& name, const std::string& displayName, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius, unsigned int grabIcon, unsigned int closeIcon, unsigned int minimizeIcon)
+VRPanel::VRPanel(const std::string& name, const std::string& displayName, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius, unsigned int grabIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon)
     : name_(name), displayName_(displayName), initialOffsetTransform_(offsetTransform), size_(size), offsetTransform_(offsetTransform), cornerRadius_(cornerRadius), hoveredWidget_(nullptr), isGrabbing(false) {
     
     const float handleDiameter = 0.02f;
@@ -29,6 +29,14 @@ VRPanel::VRPanel(const std::string& name, const std::string& displayName, const 
     closeHandle_ = std::make_unique<VRConfirmButtonWidget>(closePos, handleDiameter, closeIcon, nullptr, glm::vec3(1.00f, 0.20f, 0.32f));
     minimizeHandle_ = std::make_unique<VRConfirmButtonWidget>(minimizePos, handleDiameter, minimizeIcon, nullptr);
     grabHandle_ = std::make_unique<VRConfirmButtonWidget>(grabPos, handleDiameter, grabIcon, nullptr);
+    // Pin handle - between grab and minimize
+    glm::vec3 pinPos = minimizePos - glm::vec3(handleSpacing, 0, 0);
+    grabPos = pinPos - glm::vec3(handleSpacing, 0, 0); // Move grab further left
+    
+    pinHandle_ = std::make_unique<VRConfirmButtonWidget>(pinPos, handleDiameter, pinIcon, nullptr, glm::vec3(1.0f, 0.79f, 0.4f)); // Gold color when pinned
+    pinHandle_->setDepthEffect(DepthEffect::CONVEX);
+    pinHandle_->SetDepthStrength(0.5f, 0.5f);
+    grabHandle_->SetLocalPosition(grabPos);
     resizeHandle_ = std::make_unique<VRConfirmButtonWidget>(resizePos, handleDiameter, glm::vec3(1.0f), nullptr);
     // START OF MODIFICATION
     resizeHandle_->SetFadesWhenNotHovered(true);
@@ -187,16 +195,19 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
 
     // Always update all handles
     HitResult grabHit = grabHandle_->CheckIntersection(localRay);
+    HitResult pinHit = pinHandle_->CheckIntersection(localRay);
     HitResult resizeHit = resizeHandle_->CheckIntersection(localRay);
     HitResult minimizeHit = minimizeHandle_->CheckIntersection(localRay);
     HitResult closeHit = closeHandle_->CheckIntersection(localRay);
     
     grabHandle_->SetHover(grabHit.didHit);
+    pinHandle_->SetHover(pinHit.didHit);
     resizeHandle_->SetHover(resizeHit.didHit);
     minimizeHandle_->SetHover(minimizeHit.didHit);
     closeHandle_->SetHover(closeHit.didHit);
     
     grabHandle_->Update(localRay, triggerPressed && grabHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
+    pinHandle_->Update(localRay, (triggerPressed || aButtonPressed) && pinHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
     resizeHandle_->Update(localRay, triggerPressed && resizeHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
     minimizeHandle_->Update(localRay, (triggerPressed || aButtonPressed) && minimizeHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
     closeHandle_->Update(localRay, (triggerPressed || aButtonPressed) && closeHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
@@ -231,6 +242,9 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
             isGrabbing = true;
             grabbedInitialTransform = transform;
             grabbedControllerInitialTransform = interactionTransform;
+            clickConsumed = true;
+        } else if (pinHit.didHit) {
+            pinButtonClicked_ = true;
             clickConsumed = true;
         } else if (resizeHit.didHit) {
             clickConsumed = true;
@@ -327,23 +341,26 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     float minimizedTitleAlpha = alpha * minimizeT_;
 
     // --- 2. Calculate Handle Positions with Smooth Interpolation ---
-    glm::vec3 grabPos, minimizePos, closePos;
+    glm::vec3 grabPos, pinPos, minimizePos, closePos;
 
     // Define the two possible layouts for the MAXIMIZED state
     glm::vec3 h_closePos    = { size_.x * 0.5f - handleDiameter * 0.5f, size_.y * 0.5f - handleDiameter * 0.5f, 0.01f };
     glm::vec3 h_minimizePos = h_closePos - glm::vec3(handleSpacing, 0, 0);
-    glm::vec3 h_grabPos     = h_minimizePos - glm::vec3(handleSpacing, 0, 0);
+    glm::vec3 h_pinPos      = h_minimizePos - glm::vec3(handleSpacing, 0, 0);
+    glm::vec3 h_grabPos     = h_pinPos - glm::vec3(handleSpacing, 0, 0);
 
     const float verticalOffset = 0.01f;
     glm::vec3 v_closePos    = { -size_.x * 0.5f - verticalOffset, size_.y * 0.5f - handleDiameter * 0.5f, 0.01f };
     glm::vec3 v_minimizePos = v_closePos - glm::vec3(0, handleSpacing, 0);
-    glm::vec3 v_grabPos     = v_minimizePos - glm::vec3(0, handleSpacing, 0);
+    glm::vec3 v_pinPos      = v_minimizePos - glm::vec3(0, handleSpacing, 0);
+    glm::vec3 v_grabPos     = v_pinPos - glm::vec3(0, handleSpacing, 0);
 
     // Define the single layout for the MINIMIZED state
     glm::vec3 m_closePos    = { minimizedSize.x * 0.5f - handleDiameter * 0.5f, minimizedSize.y * 0.5f, 0.01f };
     m_closePos += positionOffset; // Adjust to the corner of the moved stub
     glm::vec3 m_minimizePos = m_closePos - glm::vec3(handleSpacing, 0, 0);
-    glm::vec3 m_grabPos     = m_minimizePos - glm::vec3(handleSpacing, 0, 0);
+    glm::vec3 m_pinPos      = m_minimizePos - glm::vec3(handleSpacing, 0, 0);
+    glm::vec3 m_grabPos     = m_pinPos - glm::vec3(handleSpacing, 0, 0);
     
     // Decide which layout to use for the maximized state
     bool useVerticalLayout = (h_grabPos.x - handleDiameter * 0.5f) < (-size_.x * 0.5f);
@@ -351,6 +368,7 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     // Interpolate positions from the chosen maximized layout to the minimized layout
     closePos    = glm::mix(useVerticalLayout ? v_closePos    : h_closePos,    m_closePos,    minimizeT_);
     minimizePos = glm::mix(useVerticalLayout ? v_minimizePos : h_minimizePos, m_minimizePos, minimizeT_);
+    pinPos      = glm::mix(useVerticalLayout ? v_pinPos      : h_pinPos,      m_pinPos,      minimizeT_);
     grabPos     = glm::mix(useVerticalLayout ? v_grabPos     : h_grabPos,     m_grabPos,     minimizeT_);
     
     // The resize handle just moves with the corner and fades out
@@ -359,8 +377,12 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     // Apply final positions
     closeHandle_->SetLocalPosition(closePos);
     minimizeHandle_->SetLocalPosition(minimizePos);
+    pinHandle_->SetLocalPosition(pinPos);
     grabHandle_->SetLocalPosition(grabPos);
     resizeHandle_->SetLocalPosition(resizePos);
+    
+    // Update pin button color based on state
+    pinHandle_->SetColor(isPinned_ ? glm::vec3(1.0f, 0.79f, 0.4f) : glm::vec3(0.3f, 0.75f, 1.0f));
 
     // --- 3. Render Background ---
     glm::mat4 backgroundModel = transform 
@@ -372,6 +394,7 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     std::vector<IVRWidget*> allWidgetsToRender;
     // Добавляем служебные виджеты
     allWidgetsToRender.push_back(grabHandle_.get());
+    allWidgetsToRender.push_back(pinHandle_.get());
     allWidgetsToRender.push_back(minimizeHandle_.get());
     allWidgetsToRender.push_back(closeHandle_.get());
     // Виджет изменения размера рендерится только в развёрнутом состоянии
@@ -432,6 +455,7 @@ HitResult VRPanel::CheckIntersection(const Ray& worldRay, const glm::mat4& paren
     // Always check handles first
     HitResult handleHits[] = {
         grabHandle_->CheckIntersection(localRay),
+        pinHandle_->CheckIntersection(localRay),
         resizeHandle_->CheckIntersection(localRay),
         minimizeHandle_->CheckIntersection(localRay),
         closeHandle_->CheckIntersection(localRay)
@@ -515,6 +539,37 @@ bool VRPanel::IsChangingProportions() const {
     return isChangingProportions_;
 }
 
+void VRPanel::SetPinned(bool pinned, const glm::mat4& currentParentTransform, const glm::mat4& newParentTransform) {
+    if (isPinned_ == pinned) {
+        return;
+    }
+
+    // Save current world position
+    glm::mat4 currentWorldTransform = currentParentTransform * offsetTransform_;
+    
+    // Recalculate offset relative to new parent
+    offsetTransform_ = glm::inverse(newParentTransform) * currentWorldTransform;
+
+    if (pinned) {
+        pinnedVisibilityBackup_ = visibilityMode_;
+        hasPinnedVisibilityBackup_ = true;
+        isPinned_ = true;
+        SetVisibilityMode(VisibilityMode::ALWAYS_VISIBLE);
+        SetVisible(true);
+    } else {
+        isPinned_ = false;
+        if (hasPinnedVisibilityBackup_) {
+            SetVisibilityMode(pinnedVisibilityBackup_);
+        } else {
+            SetVisibilityMode(VisibilityMode::ON_LEFT_TRIGGER);
+        }
+    }
+}
+
+bool VRPanel::IsPinned() const {
+    return isPinned_;
+}
+
 void VRPanel::SetMinimized(bool minimized) {
     minimizeTargetState_ = minimized;
 }
@@ -525,6 +580,12 @@ bool VRPanel::IsMinimized() const {
 
 void VRPanel::ResetPosition() {
     offsetTransform_ = initialOffsetTransform_;
+}
+
+bool VRPanel::WasPinButtonClicked() {
+    bool result = pinButtonClicked_;
+    pinButtonClicked_ = false;
+    return result;
 }
 
 }

@@ -25,7 +25,7 @@ enum class VisibilityMode {
 
 class VRPanel {
 public:
-    VRPanel(const std::string& name, const std::string& displayName, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius, unsigned int grabIcon, unsigned int closeIcon, unsigned int minimizeIcon);
+    VRPanel(const std::string& name, const std::string& displayName, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius, unsigned int grabIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon);
 
     void AddWidget(std::unique_ptr<IVRWidget> widget);
     void SetMinimized(bool minimized);
@@ -52,6 +52,9 @@ public:
     
     bool IsResizing() const;
     bool IsChangingProportions() const;
+    void SetPinned(bool pinned, const glm::mat4& currentParentTransform, const glm::mat4& newParentTransform);
+    bool IsPinned() const;
+    bool WasPinButtonClicked();
     
     glm::mat4 transform;
     float alpha = 0.0f;
@@ -79,6 +82,11 @@ private:
     std::unique_ptr<VRConfirmButtonWidget> resizeHandle_;
     std::unique_ptr<VRConfirmButtonWidget> minimizeHandle_;
     std::unique_ptr<VRConfirmButtonWidget> closeHandle_;
+    std::unique_ptr<VRConfirmButtonWidget> pinHandle_;
+    bool isPinned_ = false;
+    VisibilityMode pinnedVisibilityBackup_ = VisibilityMode::ON_LEFT_TRIGGER;
+    bool hasPinnedVisibilityBackup_ = false;
+    bool pinButtonClicked_ = false;
 
     bool isResizing_ = false;
     bool isChangingProportions_ = false;
