@@ -80,29 +80,73 @@ void AdaptiveGridLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets,
 
     
 
-    // Calculate how many buttons can fit with FIXED size
-
-    int maxColumns = std::max(1, static_cast<int>((panelSize.x + spacing_.x) / (buttonSize_ + spacing_.x)));
+    bool isHorizontal = (panelSize.x > panelSize.y);
 
     
 
-    // If panel is narrow, force single column
+    int columns;
 
-    if (panelSize.x < buttonSize_ * 1.5f) {
+    int rows;
 
-        maxColumns = 1;
+    
+
+    if (isHorizontal) {
+
+        // Horizontal panel - check if we should use single-row mode
+
+        int maxRowsThatFit = std::max(1, static_cast<int>((panelSize.y + spacing_.y) / (buttonSize_ + spacing_.y)));
+
+        
+
+        // FIX: Only use single-row when REALLY narrow (only 1 row fits)
+
+        if (maxRowsThatFit == 1) {
+
+            // SINGLE-ROW MODE: all widgets in one horizontal line
+
+            columns = widgets.size();
+
+            rows = 1;
+
+        } else {
+
+            // GRID MODE
+
+            int maxColumns = std::max(1, static_cast<int>((panelSize.x + spacing_.x) / (buttonSize_ + spacing_.x)));
+
+            if (panelSize.x < buttonSize_ * 1.5f) {
+
+                maxColumns = 1;
+
+            }
+
+            columns = maxColumns;
+
+            rows = (widgets.size() + columns - 1) / columns;
+
+        }
+
+    } else {
+
+        // Vertical panel - use normal grid logic
+
+        int maxColumns = std::max(1, static_cast<int>((panelSize.x + spacing_.x) / (buttonSize_ + spacing_.x)));
+
+        if (panelSize.x < buttonSize_ * 1.5f) {
+
+            maxColumns = 1;
+
+        }
+
+        columns = maxColumns;
+
+        rows = (widgets.size() + columns - 1) / columns;
 
     }
 
     
 
-    int columns = maxColumns;
-
-    int rows = (widgets.size() + columns - 1) / columns;
-
-    
-
-    // DO NOT change button size - keep it fixed!
+    // Fixed button size
 
     float cellWidth = buttonSize_;
 
@@ -110,13 +154,19 @@ void AdaptiveGridLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets,
 
     
 
-    // Center the grid in the panel
+    // Calculate total content size
 
-    float totalWidth = columns * cellWidth + (columns - 1) * spacing_.x;
+    float totalContentWidth = columns * cellWidth + (columns - 1) * spacing_.x;
 
-    float startX = -totalWidth / 2.0f + cellWidth / 2.0f;
+    float totalContentHeight = rows * cellHeight + (rows - 1) * spacing_.y;
 
-    float startY = panelSize.y / 2.0f - cellHeight / 2.0f;
+    
+
+    // FIX: Center content relative to ITS OWN center (0, 0), not panel center
+
+    float startX = -totalContentWidth / 2.0f + cellWidth / 2.0f;
+
+    float startY = totalContentHeight / 2.0f - cellHeight / 2.0f;
 
     
 
@@ -135,8 +185,6 @@ void AdaptiveGridLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets,
         
 
         widgets[i]->SetLocalPosition({x, y, 0.01f});
-
-        // DO NOT call SetSize - keep original button size!
 
     }
 

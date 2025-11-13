@@ -8,7 +8,6 @@
 #include <glm/gtx/intersect.hpp>
 #include <glm/gtx/norm.hpp>
 #include <algorithm>
-#include <vector>
 #include <numeric>
 #include <limits>
 #include <iostream>
@@ -33,38 +32,55 @@ void VRScrollWidget::ClearState() {
     isDraggingScroll_ = false;
     scrollOffset_ = 0.0f;
     totalContentHeight_ = 0.0f;
+    totalContentWidth_ = 0.0f;
+}
+
+ScrollDirection VRScrollWidget::DetermineScrollDirection() const {
+    // If width > height, panel is horizontal (landscape), use horizontal scroll
+    // If height >= width, panel is vertical (portrait), use vertical scroll
+    return (size_.x > size_.y) ? ScrollDirection::HORIZONTAL : ScrollDirection::VERTICAL;
 }
 
 void VRScrollWidget::RecalculateContentLayout() {
+    ScrollDirection direction = DetermineScrollDirection();
+    
     if (layout_) {
         // Use layout to position children
         layout_->Apply(children_, size_);
         
-        // Calculate total content height from positioned widgets
+        // Calculate total content size from positioned widgets
         if (children_.empty()) {
             totalContentHeight_ = 0.0f;
+            totalContentWidth_ = 0.0f;
         } else {
+            float minX = std::numeric_limits<float>::max();
+            float maxX = std::numeric_limits<float>::lowest();
             float minY = std::numeric_limits<float>::max();
             float maxY = std::numeric_limits<float>::lowest();
+            
             for (const auto& child : children_) {
                 const auto& pos = child->GetLocalPosition();
                 const auto& childSize = child->GetSize();
+                minX = std::min(minX, pos.x - childSize.x / 2.0f);
+                maxX = std::max(maxX, pos.x + childSize.x / 2.0f);
                 minY = std::min(minY, pos.y - childSize.y / 2.0f);
                 maxY = std::max(maxY, pos.y + childSize.y / 2.0f);
             }
+            totalContentWidth_ = maxX - minX;
             totalContentHeight_ = maxY - minY;
         }
     } else {
-        // Old vertical layout logic
+        // Old vertical layout logic (kept for backward compatibility)
         totalContentHeight_ = 0.0f;
+        totalContentWidth_ = 0.0f;
         const float spacing = 0.005f;
 
         if (!children_.empty()) {
+            if (direction == ScrollDirection::VERTICAL) {
             for (const auto& child : children_) {
                 totalContentHeight_ += child->GetSize().y;
             }
             totalContentHeight_ += (children_.size() - 1) * spacing;
-        }
         
         float currentY = totalContentHeight_ / 2.0f;
         for (auto& child : children_) {
@@ -73,20 +89,52 @@ void VRScrollWidget::RecalculateContentLayout() {
             child->SetLocalPosition({0.0f, currentY, 0.001f});
             currentY -= (childSize.y / 2.0f + spacing);
         }
+            } else {
+                // Horizontal layout
+                for (const auto& child : children_) {
+                    totalContentWidth_ += child->GetSize().x;
+                }
+                totalContentWidth_ += (children_.size() - 1) * spacing;
+                
+                float currentX = -totalContentWidth_ / 2.0f;
+                for (auto& child : children_) {
+                    const auto& childSize = child->GetSize();
+                    currentX += childSize.x / 2.0f;
+                    child->SetLocalPosition({currentX, 0.0f, 0.001f});
+                    currentX += (childSize.x / 2.0f + spacing);
+                }
+            }
+        }
     }
 
-    float maxScroll = std::max(0.0f, totalContentHeight_ - size_.y);
+    ScrollDirection dir = DetermineScrollDirection();
+    float maxScroll = (dir == ScrollDirection::VERTICAL) 
+        ? std::max(0.0f, totalContentHeight_ - size_.y)
+        : std::max(0.0f, totalContentWidth_ - size_.x);
     scrollOffset_ = std::clamp(scrollOffset_, 0.0f, maxScroll);
 }
 
 void VRScrollWidget::Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) {
+    ScrollDirection direction = DetermineScrollDirection();
+    
     Ray contentRay = localRay;
     contentRay.origin -= localPosition_;
-    contentRay.origin.y -= scrollOffset_;
+    
+    // FIX: Apply same offset logic as in Render
+    if (direction == ScrollDirection::VERTICAL) {
+        float baseOffset = (size_.y / 2.0f) - (totalContentHeight_ / 2.0f);
+        contentRay.origin.y -= (baseOffset + scrollOffset_);
+    } else {
+        float baseOffset = -(size_.x / 2.0f) + (totalContentWidth_ / 2.0f);
+        contentRay.origin.x -= (baseOffset - scrollOffset_);
+    }
 
     HitResult hit = CheckIntersection(localRay);
     bool isInside = hit.didHit;
-    float maxScroll = std::max(0.0f, totalContentHeight_ - size_.y);
+    
+    float maxScroll = (direction == ScrollDirection::VERTICAL)
+        ? std::max(0.0f, totalContentHeight_ - size_.y)
+        : std::max(0.0f, totalContentWidth_ - size_.x);
 
     // Stick scrolling (only when NOT holding trigger)
     const float STICK_SCROLL_SPEED = 0.05f;
@@ -126,34 +174,35 @@ void VRScrollWidget::Update(const Ray& localRay, bool triggerPressed, bool trigg
         float t_plane;
         if (glm::intersectRayPlane(localRay.origin, localRay.direction, localPosition_, glm::vec3(0, 0, 1), t_plane)) {
             glm::vec3 currentDragPoint = localRay.origin + localRay.direction * t_plane;
+            
+            if (direction == ScrollDirection::VERTICAL) {
             float deltaY = currentDragPoint.y - dragStartPoint_.y;
             scrollOffset_ = std::clamp(scrollOffsetAtDragStart_ + deltaY, 0.0f, maxScroll);
+            } else {
+                float deltaX = currentDragPoint.x - dragStartPoint_.x;
+                scrollOffset_ = std::clamp(scrollOffsetAtDragStart_ - deltaX, 0.0f, maxScroll); // Inverted
+            }
         }
     }
 
     // On trigger release: if we didn't scroll, it's a click!
     if (triggerReleased) {
         if (isAwaitingDrag_ && clickedWidget_) {
-            // No scroll happened - this was a click!
             clickedWidget_->HandleClick();
         }
         
-        // Reset all drag state
         isAwaitingDrag_ = false;
         isDraggingScroll_ = false;
         clickedWidget_ = nullptr;
     }
 
-    // NEW HOVER LOGIC: Keep hover active during awaiting phase, only clear during actual scroll
+    // Hover logic
     IVRWidget* newHovered = nullptr;
     if (isDraggingScroll_) {
-        // During active scrolling - no hover
         newHovered = nullptr;
     } else if (isAwaitingDrag_ && clickedWidget_) {
-        // During awaiting phase - keep hover on clicked widget
         newHovered = clickedWidget_;
     } else if (isInside) {
-        // Normal hover
         newHovered = reinterpret_cast<IVRWidget*>(hit.hitWidget);
     }
     
@@ -163,7 +212,7 @@ void VRScrollWidget::Update(const Ray& localRay, bool triggerPressed, bool trigg
         if (hoveredChild_) hoveredChild_->SetHover(true);
     }
 
-    // Update children with proper gating
+    // Update children
     for (auto& child : children_) {
         bool childIsHovered = (hoveredChild_ == child.get());
         child->Update(contentRay, triggerPressed && childIsHovered, triggerReleased, triggerHeld, aButtonPressed && childIsHovered, stickY);
@@ -171,8 +220,9 @@ void VRScrollWidget::Update(const Ray& localRay, bool triggerPressed, bool trigg
 }
 
 void VRScrollWidget::Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& scissor) const {
-    // FIX: Expand mask area slightly beyond panel bounds for smoother edges
-    const float MASK_PADDING = 0.02f; // 20mm padding
+    ScrollDirection direction = DetermineScrollDirection();
+    
+    const float MASK_PADDING = 0.02f;
     glm::vec2 expandedSize = size_ + glm::vec2(MASK_PADDING * 2.0f);
 
     glm::mat4 maskTransform = panelTransform * glm::translate(glm::mat4(1.0f), localPosition_);
@@ -183,9 +233,21 @@ void VRScrollWidget::Render(Renderer& renderer, TextRenderer& textRenderer, cons
         0.0f
     };
 
-    glm::mat4 contentTransform = panelTransform * glm::translate(glm::mat4(1.0f), localPosition_ + glm::vec3(0.0f, scrollOffset_, 0.0f));
+    // FIX: Calculate base offset to align content start with panel start
+    glm::vec3 scrollVec;
+    if (direction == ScrollDirection::VERTICAL) {
+        // Align top of content with top of panel
+        float baseOffset = (size_.y / 2.0f) - (totalContentHeight_ / 2.0f);
+        scrollVec = glm::vec3(0.0f, baseOffset + scrollOffset_, 0.0f);
+    } else {
+        // Align left of content with left of panel
+        float baseOffset = -(size_.x / 2.0f) + (totalContentWidth_ / 2.0f);
+        scrollVec = glm::vec3(baseOffset - scrollOffset_, 0.0f, 0.0f);
+    }
+    
+    glm::mat4 contentTransform = panelTransform * glm::translate(glm::mat4(1.0f), localPosition_ + scrollVec);
 
-    // FIX: Sort children by distance from camera for correct depth rendering
+    // Sort children by distance from camera
     glm::vec3 cameraPos = glm::vec3(glm::inverse(view)[3]);
     
     struct ChildWithDepth {
@@ -200,11 +262,9 @@ void VRScrollWidget::Render(Renderer& renderer, TextRenderer& textRenderer, cons
         sortedChildren.push_back({child.get(), distance});
     }
     
-    // Sort back-to-front (furthest first) for correct alpha blending
     std::sort(sortedChildren.begin(), sortedChildren.end(), 
               [](const ChildWithDepth& a, const ChildWithDepth& b) { return a.depth > b.depth; });
 
-    // Render sorted children with shader-based mask (no GL_SCISSOR_TEST)
     for (const auto& item : sortedChildren) {
         item.child->Render(renderer, textRenderer, contentTransform, view, projection, alpha, maskData);
     }
@@ -220,9 +280,18 @@ HitResult VRScrollWidget::CheckIntersection(const Ray& localRay) {
             result.distance = t_plane;
             result.hitWidget = this;
 
+            ScrollDirection direction = DetermineScrollDirection();
             Ray contentRay = localRay;
             contentRay.origin -= localPosition_;
-            contentRay.origin.y -= scrollOffset_;
+            
+            // FIX: Apply same offset logic
+            if (direction == ScrollDirection::VERTICAL) {
+                float baseOffset = (size_.y / 2.0f) - (totalContentHeight_ / 2.0f);
+                contentRay.origin.y -= (baseOffset + scrollOffset_);
+            } else {
+                float baseOffset = -(size_.x / 2.0f) + (totalContentWidth_ / 2.0f);
+                contentRay.origin.x -= (baseOffset - scrollOffset_);
+            }
 
             float closestChildHit = std::numeric_limits<float>::max();
             for (auto& child : children_) {
@@ -258,7 +327,7 @@ void VRScrollWidget::SetLocalPosition(const glm::vec3& pos) { localPosition_ = p
 const glm::vec3& VRScrollWidget::GetLocalPosition() const { return localPosition_; }
 void VRScrollWidget::SetSize(const glm::vec2& size) { 
     size_ = size; 
-    RecalculateContentLayout(); // Recalculate when size changes
+    RecalculateContentLayout();
 }
 glm::vec2 VRScrollWidget::GetSize() const { return size_; }
 

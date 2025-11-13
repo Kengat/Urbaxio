@@ -7,6 +7,11 @@
 
 namespace Urbaxio::UI {
 
+enum class ScrollDirection {
+    VERTICAL,
+    HORIZONTAL
+};
+
 class VRScrollWidget : public IVRWidget {
 public:
     VRScrollWidget(const glm::vec3& localPos, const glm::vec2& size);
@@ -30,6 +35,8 @@ public:
     void SetLayout(std::unique_ptr<ILayout> layout);
 
 private:
+    ScrollDirection DetermineScrollDirection() const;
+    
     glm::vec3 localPosition_;
     glm::vec2 size_;
     std::vector<std::unique_ptr<IVRWidget>> children_;
@@ -37,7 +44,8 @@ private:
 
     // Scrolling state
     float scrollOffset_ = 0.0f;
-    float totalContentHeight_ = 0.0f;
+    float totalContentHeight_ = 0.0f; // For vertical
+    float totalContentWidth_ = 0.0f;  // For horizontal
     bool isAwaitingDrag_ = false;
     bool isDraggingScroll_ = false;
     glm::vec3 dragStartPoint_;
