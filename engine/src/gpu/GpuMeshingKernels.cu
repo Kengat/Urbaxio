@@ -342,25 +342,25 @@ __global__ void CountTrianglesPerCellKernel(
     const nanovdb::FloatGrid* grid,
     float isoValue,
     uint64_t leafCount,
-    int* triangleCountsPerCell,  // Output: size = leafCount * 343
+    int* triangleCountsPerCell,  // Output: size = leafCount * 512
     const nanovdb::Coord* leafOrigins  // NEW!
 )
 {
     // Each thread processes ONE cell (same as Generate kernel)
     uint64_t globalCellIdx = blockIdx.x * blockDim.x + threadIdx.x;
-    uint64_t totalCells = leafCount * 343;
+    uint64_t totalCells = leafCount * 512;
     
     if (globalCellIdx >= totalCells) return;
     
-    uint64_t leafIdx = globalCellIdx / 343;
-    int cellIdxInLeaf = globalCellIdx % 343;
+    uint64_t leafIdx = globalCellIdx / 512;
+    int cellIdxInLeaf = globalCellIdx % 512;
     
     nanovdb::Coord leafOrigin = leafOrigins[leafIdx];
     auto acc = grid->tree().getAccessor();
     
-    int cx = cellIdxInLeaf % 7;
-    int cy = (cellIdxInLeaf / 7) % 7;
-    int cz = cellIdxInLeaf / 49;
+    int cx = cellIdxInLeaf % 8;
+    int cy = (cellIdxInLeaf / 8) % 8;
+    int cz = cellIdxInLeaf / 64;
     
     // Sample 8 corners with standard Marching Cubes vertex order
     const int vertexOrder[8][3] = {
@@ -412,11 +412,11 @@ __global__ void SumCellsToLeavesKernel(
 
     extern __shared__ int s_data[];
 
-    const int* my_cells = countsPerCell + leafIdx * 343;
+    const int* my_cells = countsPerCell + leafIdx * 512;
     
     int thread_sum = 0;
-    // Each thread in the block sums a portion of the 343 cells for this leaf.
-    for (int i = threadIdx.x; i < 343; i += blockDim.x) {
+    // Each thread in the block sums a portion of the 512 cells for this leaf.
+    for (int i = threadIdx.x; i < 512; i += blockDim.x) {
         thread_sum += my_cells[i];
     }
     s_data[threadIdx.x] = thread_sum;
@@ -473,12 +473,12 @@ __global__ void GenerateTrianglesKernel(
 )
 {
     uint64_t globalCellIdx = blockIdx.x * blockDim.x + threadIdx.x;
-    uint64_t totalCells = leafCount * 343;
+    uint64_t totalCells = leafCount * 512;
     
     if (globalCellIdx >= totalCells) return;
     
-    uint64_t leafIdx = globalCellIdx / 343;
-    int cellIdxInLeaf = globalCellIdx % 343;
+    uint64_t leafIdx = globalCellIdx / 512;
+    int cellIdxInLeaf = globalCellIdx % 512;
     
     nanovdb::Coord leafOrigin = leafOrigins[leafIdx];
     auto acc = grid->tree().getAccessor();
@@ -490,9 +490,9 @@ __global__ void GenerateTrianglesKernel(
                leafOrigin[0], leafOrigin[1], leafOrigin[2]);
     }
     
-    int cx = cellIdxInLeaf % 7;
-    int cy = (cellIdxInLeaf / 7) % 7;
-    int cz = cellIdxInLeaf / 49;
+    int cx = cellIdxInLeaf % 8;
+    int cy = (cellIdxInLeaf / 8) % 8;
+    int cz = cellIdxInLeaf / 64;
     
     // Sample 8 corners with standard Marching Cubes vertex order
     const int vertexOrder[8][3] = {
@@ -681,7 +681,7 @@ bool GpuMeshingKernels::MarchingCubes(
     // ========================================================================
     // STEP 1: Count triangles per CELL
     // ========================================================================
-    const uint64_t numCells = leafCount * 343;  // FIX: Renamed to avoid conflict
+    const uint64_t numCells = leafCount * 512;  // FIX: Renamed to avoid conflict
     thrust::device_vector<int> d_triangleCountsPerCell(numCells);
     
     dim3 countBlockSize(256);
@@ -917,7 +917,7 @@ bool GpuMeshingKernels::MarchingCubesAsync(
     );
 
     // Step 1: Count per cell
-    const uint64_t numCells = leafCount * 343;  // FIX: Renamed
+    const uint64_t numCells = leafCount * 512;  // FIX: Renamed
     int* d_countsPerCell = nullptr;
     cudaMalloc(&d_countsPerCell, numCells * sizeof(int));
     
