@@ -13,6 +13,7 @@ set(GPU_SOURCES
     GpuSculptKernels.cu
     GpuMeshingKernels.cu
     GpuRaycastKernels.cu  # NEW
+    GpuAabbKernels.cu
     MeshManagerGpu.cu
     GpuVoxelConverter.cpp  # CPU-side converter (NOT compiled with nvcc)
 )

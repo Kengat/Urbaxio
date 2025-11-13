@@ -14,6 +14,7 @@
 #include "engine/gpu/GpuVoxelConverter.h"
 #include "engine/gpu/GpuMeshingKernels.h"
 #include "engine/gpu/GpuRaycastKernels.h"
+#include "engine/gpu/GpuAabbKernels.h"
 #include <cuda_runtime.h>
 #endif
 #endif
@@ -155,11 +156,12 @@ void GpuSculptTool::Activate(const Tools::ToolContext& context) {
 void GpuSculptTool::Deactivate() {
     Tools::ITool::Deactivate();
     
-    // Clean up GPU resources when deactivating
+    // Clean up GPU resources when deactivating TOOL (not just stroke!)
     if (impl_->gridIsOnGpu && impl_->currentGpuHandle != 0) {
 #ifdef URBAXIO_GPU_ENABLED
 #if URBAXIO_GPU_ENABLED
         impl_->gpuManager->ReleaseGrid(impl_->currentGpuHandle);
+        std::cout << "[GpuSculptTool] Cleaned up GPU grid (tool deactivated)" << std::endl;
 #endif
 #endif
         impl_->gridIsOnGpu = false;
@@ -260,6 +262,17 @@ void GpuSculptTool::OnLeftMouseDown(
 
     // Upload grid to GPU first (if needed) for raycast
     auto* grid = volGeo->getGrid();
+
+    // Check if we're switching to a different object
+    bool switchingObjects = (impl_->activeObjectId != 0 && impl_->activeObjectId != hitObject->get_id());
+    if (switchingObjects && impl_->currentGpuHandle != 0) {
+        std::cout << "[GpuSculptTool] Switching objects: " << impl_->activeObjectId
+                  << " -> " << hitObject->get_id() << std::endl;
+        impl_->gpuManager->ReleaseGrid(impl_->currentGpuHandle);
+        impl_->currentGpuHandle = 0;
+        impl_->gridIsOnGpu = false;
+    }
+
     if (!impl_->gridIsOnGpu || impl_->currentGpuHandle == 0 || grid->gpuDirty_) {
         if (impl_->currentGpuHandle != 0) {
             impl_->gpuManager->ReleaseGrid(impl_->currentGpuHandle);
@@ -312,8 +325,7 @@ void GpuSculptTool::OnLeftMouseDown(
         return;
     }
     
-    // Mark for re-upload next time (topology may have changed on CPU side for undo)
-    volGeo->getGrid()->gpuDirty_ = true;
+    // DON'T mark grid as dirty - we're keeping it on GPU!
     
     // Apply first brush stroke
     std::cout << "[DEBUG] Applying initial brush at (" << hitPosition.x << ", " 
@@ -394,8 +406,28 @@ void GpuSculptTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl)
             defaultGroup.indexCount = gpuMesh->index_count;
             obj->meshGroups.push_back(defaultGroup);
 
-            // AABB will be recalculated on next CPU-side operation
-            obj->aabbValid = false;
+            // ✅ FIX: Compute AABB on GPU (only 24 bytes D2H!)
+            glm::vec3 aabbMin, aabbMax;
+            bool aabbSuccess = Engine::GpuAabbKernels::ComputeAabb(
+                d_vertices,
+                static_cast<size_t>(triangleCount) * 3,
+                aabbMin,
+                aabbMax,
+                impl_->cudaStream
+            );
+
+            if (aabbSuccess) {
+                obj->aabbMin = aabbMin;
+                obj->aabbMax = aabbMax;
+                obj->aabbValid = true;
+                std::cout << "[GpuSculptTool] ✅ GPU AABB: min("
+                          << aabbMin.x << "," << aabbMin.y << "," << aabbMin.z
+                          << ") max(" << aabbMax.x << "," << aabbMax.y << "," 
+                          << aabbMax.z << ")" << std::endl;
+            } else {
+                std::cerr << "[GpuSculptTool] ⚠️ GPU AABB computation failed" << std::endl;
+                obj->aabbValid = false;
+            }
 
             impl_->context.scene->MarkStaticGeometryDirty();
             std::cout << "[GpuSculptTool] ✅ D2D mesh update: " 
@@ -433,10 +465,10 @@ void GpuSculptTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl)
     
     impl_->isSculpting = false;
     
-    // Clean up session state
-    impl_->activeObjectId = 0;
+    // DON'T reset activeObjectId - keep session alive for next stroke!
+    // impl_->activeObjectId = 0;  // ❌ This would lose the GPU grid
     
-    std::cout << "[GpuSculptTool] ✅ Sculpt stroke completed" << std::endl;
+    std::cout << "[GpuSculptTool] ✅ Sculpt stroke completed (session active)" << std::endl;
 }
 
 
