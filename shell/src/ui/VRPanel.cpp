@@ -109,6 +109,14 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
         transform = parentTransform * offsetTransform_;
     }
 
+    // --- Service buttons fade logic ---
+    HitResult panelHit = CheckIntersection(worldRay, parentTransform);
+    bool isPanelHovered = panelHit.didHit;
+    
+    const float SERVICE_FADE_SPEED = 0.15f;
+    float targetServiceAlpha = isPanelHovered ? 1.0f : 0.0f;
+    serviceButtonsAlpha_ += (targetServiceAlpha - serviceButtonsAlpha_) * SERVICE_FADE_SPEED;
+
     // --- Resize/Proportion Drag Logic ---
     if (isResizing_ || isChangingProportions_) {
         if (!triggerHeld) {
@@ -425,10 +433,19 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     // --- 6. Рендерим все виджеты в отсортированном порядке ---
     textRenderer.SetPanelModelMatrix(transform);
     for (const auto& [viewZ, widget] : order) {
-        // Определяем альфу для виджета. resizeHandle_ и основные виджеты исчезают при сворачивании.
-        float currentWidgetAlpha = (widget == resizeHandle_.get() || std::find_if(widgets_.begin(), widgets_.end(), [widget](const auto& p){ return p.get() == widget; }) != widgets_.end())
-                                 ? widgetsAlpha
-                                 : alpha;
+        // Determine alpha for widget
+        float currentWidgetAlpha = alpha;
+        
+        // Service buttons (grab, pin, minimize, close) use service alpha
+        if (widget == grabHandle_.get() || widget == pinHandle_.get() ||
+            widget == minimizeHandle_.get() || widget == closeHandle_.get()) {
+            currentWidgetAlpha = alpha * serviceButtonsAlpha_;
+        }
+        // Resize handle and main widgets fade when minimized
+        else if (widget == resizeHandle_.get() ||
+                 std::find_if(widgets_.begin(), widgets_.end(), [widget](const auto& p){ return p.get() == widget; }) != widgets_.end()) {
+            currentWidgetAlpha = widgetsAlpha;
+        }
         
         widget->Render(renderer, textRenderer, transform, view, projection, currentWidgetAlpha, std::nullopt);
     }

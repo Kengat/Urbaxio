@@ -84,6 +84,7 @@ private:
     std::unique_ptr<VRConfirmButtonWidget> closeHandle_;
     std::unique_ptr<VRConfirmButtonWidget> pinHandle_;
     bool isPinned_ = false;
+    float serviceButtonsAlpha_ = 0.0f;
     VisibilityMode pinnedVisibilityBackup_ = VisibilityMode::ON_LEFT_TRIGGER;
     bool hasPinnedVisibilityBackup_ = false;
     bool pinButtonClicked_ = false;
