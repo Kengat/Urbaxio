@@ -321,13 +321,29 @@ static const int h_triTable[256][16] = {
 };
 
 // ============================================================================
+// NEW: Extract leaf origins kernel
+// ============================================================================
+__global__ void ExtractOriginsKernel(
+    const nanovdb::FloatGrid* grid,
+    nanovdb::Coord* outOrigins,
+    uint64_t leafCount)
+{
+    uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= leafCount) return;
+
+    auto* leaf = grid->tree().getFirstNode<0>() + idx;
+    outOrigins[idx] = leaf->origin();
+}
+
+// ============================================================================
 // SPARSE MARCHING CUBES: Step 1 - Count triangles per CELL, then sum per leaf
 // ============================================================================
 __global__ void CountTrianglesPerCellKernel(
     const nanovdb::FloatGrid* grid,
     float isoValue,
     uint64_t leafCount,
-    int* triangleCountsPerCell  // Output: size = leafCount * 343
+    int* triangleCountsPerCell,  // Output: size = leafCount * 343
+    const nanovdb::Coord* leafOrigins  // NEW!
 )
 {
     // Each thread processes ONE cell (same as Generate kernel)
@@ -339,7 +355,8 @@ __global__ void CountTrianglesPerCellKernel(
     uint64_t leafIdx = globalCellIdx / 343;
     int cellIdxInLeaf = globalCellIdx % 343;
     
-    auto* leaf = grid->tree().getFirstNode<0>() + leafIdx;
+    nanovdb::Coord leafOrigin = leafOrigins[leafIdx];
+    auto acc = grid->tree().getAccessor();
     
     int cx = cellIdxInLeaf % 7;
     int cy = (cellIdxInLeaf / 7) % 7;
@@ -351,13 +368,12 @@ __global__ void CountTrianglesPerCellKernel(
         int dx = (i & 1);
         int dy = (i & 2) >> 1;
         int dz = (i & 4) >> 2;
-        int voxelIdx = (cz + dz) * 64 + (cy + dy) * 8 + (cx + dx);
         
-        if (leaf->isActive(voxelIdx)) {
-            v[i] = leaf->getValue(voxelIdx);
-        } else {
-            v[i] = grid->tree().background();
-        }
+        int gx = leafOrigin[0] + cx + dx;
+        int gy = leafOrigin[1] + cy + dy;
+        int gz = leafOrigin[2] + cz + dz;
+
+        v[i] = acc.getValue(nanovdb::Coord(gx, gy, gz));
     }
     
     // Calculate cube index
@@ -452,7 +468,8 @@ __global__ void GenerateTrianglesKernel(
     const int* triangleCountsPerLeaf,
     int* atomicCountersPerLeaf,
     float* outVertices,
-    float* outNormals
+    float* outNormals,
+    const nanovdb::Coord* leafOrigins  // NEW!
 )
 {
     uint64_t globalCellIdx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -463,14 +480,14 @@ __global__ void GenerateTrianglesKernel(
     uint64_t leafIdx = globalCellIdx / 343;
     int cellIdxInLeaf = globalCellIdx % 343;
     
-    auto* leaf = grid->tree().getFirstNode<0>() + leafIdx;
-    nanovdb::Coord leafOrigin = leaf->origin();
+    nanovdb::Coord leafOrigin = leafOrigins[leafIdx];
+    auto acc = grid->tree().getAccessor();
     
     // DEBUG: Print first 5 leaves
     if (globalCellIdx < 5 && threadIdx.x == 0) {
         printf("[KERNEL] Cell %llu: leafIdx=%llu, leafOrigin=(%d,%d,%d)\n",
                globalCellIdx, leafIdx, 
-               leafOrigin.x(), leafOrigin.y(), leafOrigin.z());
+               leafOrigin[0], leafOrigin[1], leafOrigin[2]);
     }
     
     int cx = cellIdxInLeaf % 7;
@@ -485,11 +502,10 @@ __global__ void GenerateTrianglesKernel(
         int dx = (i & 1);
         int dy = (i & 2) >> 1;
         int dz = (i & 4) >> 2;
-        int voxelIdx = (cz + dz) * 64 + (cy + dy) * 8 + (cx + dx);
         
-        int gx = leafOrigin.x() + cx + dx;
-        int gy = leafOrigin.y() + cy + dy;
-        int gz = leafOrigin.z() + cz + dz;
+        int gx = leafOrigin[0] + cx + dx;
+        int gy = leafOrigin[1] + cy + dy;
+        int gz = leafOrigin[2] + cz + dz;
         
         // DEBUG: Print coordinates for cell 0
         if (globalCellIdx == 0 && i == 0) {
@@ -506,7 +522,7 @@ __global__ void GenerateTrianglesKernel(
         
         p[i] = make_float3(worldPos[0], worldPos[1], worldPos[2]);
         
-        v[i] = leaf->isActive(voxelIdx) ? leaf->getValue(voxelIdx) : grid->tree().background();
+        v[i] = acc.getValue(nanovdb::Coord(gx, gy, gz));
     }
     
     // Calculate cube index
@@ -637,6 +653,32 @@ bool GpuMeshingKernels::MarchingCubes(
     auto* grid = reinterpret_cast<nanovdb::FloatGrid*>(deviceGridPtr);
     std::cout << "[GpuMeshingKernels] Processing " << leafCount << " leaves..." << std::endl;
     // ========================================================================
+    // STEP 0: Extract leaf origins (one-time cost)
+    // ========================================================================
+    std::cout << "[DEBUG] Step 0: Extracting leaf origins..." << std::endl;
+
+    thrust::device_vector<nanovdb::Coord> d_leafOrigins(leafCount);
+
+    dim3 extractBlockSize(256);
+    dim3 extractGridSize((leafCount + 255) / 256);
+
+    ExtractOriginsKernel<<<extractGridSize, extractBlockSize>>>(
+        grid,
+        thrust::raw_pointer_cast(d_leafOrigins.data()),
+        leafCount
+    );
+
+    cudaError_t extractErr = cudaGetLastError();
+    if (extractErr != cudaSuccess) {
+        std::cerr << "[GpuMeshingKernels] Extract origins error: " 
+                  << cudaGetErrorString(extractErr) << std::endl;
+        return false;
+    }
+    cudaDeviceSynchronize();
+
+    std::cout << "[DEBUG] Leaf origins extracted successfully" << std::endl;
+
+    // ========================================================================
     // STEP 1: Count triangles per CELL
     // ========================================================================
     const uint64_t numCells = leafCount * 343;  // FIX: Renamed to avoid conflict
@@ -652,7 +694,8 @@ bool GpuMeshingKernels::MarchingCubes(
         grid,
         isoValue,
         leafCount,
-        thrust::raw_pointer_cast(d_triangleCountsPerCell.data())
+        thrust::raw_pointer_cast(d_triangleCountsPerCell.data()),
+        thrust::raw_pointer_cast(d_leafOrigins.data())  // NEW!
     );
     
     cudaError_t err = cudaGetLastError();
@@ -756,7 +799,8 @@ bool GpuMeshingKernels::MarchingCubes(
         thrust::raw_pointer_cast(d_triangleCounts.data()),
         thrust::raw_pointer_cast(d_atomicCounters.data()),  // NEW
         thrust::raw_pointer_cast(d_vertices.data()),
-        thrust::raw_pointer_cast(d_normals.data())
+        thrust::raw_pointer_cast(d_normals.data()),
+        thrust::raw_pointer_cast(d_leafOrigins.data())  // NEW!
     );
     
     std::cout << "[DEBUG] Kernel launched, checking for errors..." << std::endl;
@@ -860,6 +904,18 @@ bool GpuMeshingKernels::MarchingCubesAsync(
     
     cudaStream_t stream = static_cast<cudaStream_t>(cudaStream);
     
+    nanovdb::Coord* d_leafOrigins = nullptr;
+    cudaMalloc(&d_leafOrigins, leafCount * sizeof(nanovdb::Coord));
+
+    dim3 extractBlockSize(256);
+    dim3 extractGridSize((leafCount + 255) / 256);
+
+    ExtractOriginsKernel<<<extractGridSize, extractBlockSize, 0, stream>>>(
+        grid,
+        d_leafOrigins,
+        leafCount
+    );
+
     // Step 1: Count per cell
     const uint64_t numCells = leafCount * 343;  // FIX: Renamed
     int* d_countsPerCell = nullptr;
@@ -869,7 +925,7 @@ bool GpuMeshingKernels::MarchingCubesAsync(
     dim3 countGridSize((numCells + 255) / 256);
     
     CountTrianglesPerCellKernel<<<countGridSize, countBlockSize, 0, stream>>>(
-        grid, isoValue, leafCount, d_countsPerCell
+        grid, isoValue, leafCount, d_countsPerCell, d_leafOrigins
     );
     
     // Step 1.5: Sum per-cell to per-leaf (GPU kernel)
@@ -911,6 +967,7 @@ bool GpuMeshingKernels::MarchingCubesAsync(
     *triangleCount_out = totalTriangles;
     
     if (totalTriangles == 0) {
+        cudaFree(d_leafOrigins);
         cudaFree(d_counts);
         cudaFree(d_offsets);
         return true;
@@ -930,11 +987,12 @@ bool GpuMeshingKernels::MarchingCubesAsync(
     
     GenerateTrianglesKernel<<<genGridSize, genBlockSize, 0, stream>>>(
         grid, isoValue, leafCount,
-        d_offsets, d_counts, d_atomicCounters, *d_vertices_out, *d_normals_out
+        d_offsets, d_counts, d_atomicCounters, *d_vertices_out, *d_normals_out, d_leafOrigins
     );
     
     // Cleanup atomic counters
     cudaFree(d_atomicCounters);
+    cudaFree(d_leafOrigins);
     
     // Cleanup temp buffers
     cudaFree(d_counts);
