@@ -15,6 +15,7 @@ namespace Urbaxio {
     class LoadingManager;
     namespace Engine {
         class Scene;
+        class MeshManager;
     }
 }
 struct SDL_Window;
@@ -70,6 +71,7 @@ struct ToolContext {
     
     // NEW: Loading manager for async operations
     LoadingManager* loadingManager = nullptr;
+    Engine::MeshManager* meshManager = nullptr;
 };
 
 // Interface for all interactive tools

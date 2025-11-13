@@ -1221,6 +1221,7 @@ int main(int argc, char* argv[]) {
     toolContext.isVrMode = vr_mode;
     // --- END OF MODIFICATION ---
     toolContext.loadingManager = &loadingManager; // For async remeshing
+    toolContext.meshManager = scene_ptr->getMeshManager();
     if (vrManager) {
         toolContext.worldTransform = &vrManager->GetWorldTransform();
         toolContext.rightThumbstickY = &vrManager->rightThumbstickY;

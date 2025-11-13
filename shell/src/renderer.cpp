@@ -637,15 +637,20 @@ namespace Urbaxio {
             std::map<const Engine::Material*, std::vector<std::pair<RenderCommand, GLuint>>> opaqueQueue;
             Engine::MaterialManager* matManager = scene->getMaterialManager();
             for (const auto* obj : scene->get_all_objects()) {
-                // MODIFIED: Only process non-exportable (dynamic) objects here
-                if (!obj || obj->vao == 0 || obj->index_count == 0 || obj->isExportable()) continue;
+                // MODIFIED: Process non-exportable (dynamic) objects OR GPU-managed objects
+                if (!obj || obj->vao == 0 || obj->index_count == 0) continue;
+
+                bool isGpuManaged = obj->isGpuManaged();
+                if (obj->isExportable() && !isGpuManaged) continue; // Skip static non-GPU objects
                 
                 // --- FIX: Get the correct model matrix for the object ---
                 auto transformIt = transformOverrides.find(obj->get_id());
                 glm::mat4 modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : obj->getTransform();
 
                 if (obj->get_id() == previewObjectId) continue;
-                if (transformIt == transformOverrides.end()) continue;
+
+                // Skip objects without transform override, UNLESS they are GPU-managed
+                if (transformIt == transformOverrides.end() && !isGpuManaged) continue; // ✅ FIXED!
                 
                 for (const auto& group : obj->meshGroups) {
                     if (group.indexCount == 0) continue;
@@ -1128,14 +1133,18 @@ namespace Urbaxio {
             std::map<const Engine::Material*, std::vector<std::pair<RenderCommand, GLuint>>> opaqueQueue;
             Engine::MaterialManager* matManager = scene->getMaterialManager();
             for (const auto* obj : scene->get_all_objects()) {
-                // MODIFIED: Only process non-exportable (dynamic) objects here
-                if (!obj || obj->vao == 0 || obj->index_count == 0 || obj->isExportable()) continue;
+                // MODIFIED: Process non-exportable (dynamic) objects OR GPU-managed objects
+                if (!obj || obj->vao == 0 || obj->index_count == 0) continue;
+
+                bool isGpuManaged = obj->isGpuManaged();
+                if (obj->isExportable() && !isGpuManaged) continue;
                 
                 // --- FIX: Get the correct model matrix for the object ---
                 auto transformIt = transformOverrides.find(obj->get_id());
                 glm::mat4 modelMatrix = (transformIt != transformOverrides.end()) ? transformIt->second : obj->getTransform();
                 
-                if (transformIt == transformOverrides.end()) continue;
+                // Skip objects without transform override, UNLESS they are GPU-managed
+                if (transformIt == transformOverrides.end() && !isGpuManaged) continue;
                 
                 for (const auto& group : obj->meshGroups) {
                     if (group.indexCount == 0) continue;
@@ -1516,6 +1525,11 @@ namespace Urbaxio {
         for (const auto* obj : scene->get_all_objects()) {
             // Only compile static, renderable objects
             if (!obj || !obj->hasMesh() || !obj->isExportable() || obj->getMeshBuffers().isEmpty()) {
+                continue;
+            }
+
+            // NEW: Skip GPU-managed objects (drawn separately in dynamic pass)
+            if (obj->isGpuManaged()) {
                 continue;
             }
             

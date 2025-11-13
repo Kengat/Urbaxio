@@ -6,6 +6,7 @@ add_library(engine STATIC
     src/geometry/BRepGeometry.cpp
     src/geometry/MeshGeometry.cpp
     src/geometry/VolumetricGeometry.cpp
+    src/MeshManager.cpp
     src/MaterialManager.cpp
     # --- Undo/Redo System ---
     src/commands/CommandManager.cpp
@@ -14,6 +15,7 @@ add_library(engine STATIC
     src/commands/CreateLineCommand.cpp
     src/commands/MoveSubObjectCommand.cpp
     src/commands/SculptCommand.cpp
+    src/commands/GpuSculptCommand.cpp
     src/commands/VoxelizeCommand.cpp
     # Geometry implementations
 )

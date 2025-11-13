@@ -19,12 +19,21 @@ namespace Engine {
 
 namespace Urbaxio::Engine {
 
+struct NanoGridHandle {
+    void* hostData;
+    size_t sizeBytes;
+    void* deviceData;
+    bool isSequential;
+    uint64_t leafCount;
+};
+
 // Impl structure definition
 // Now stores opaque pointers from GpuVoxelConverter instead of direct NanoVDB handles
 struct GpuVoxelManager::Impl {
     struct GpuGridHandle {
         void* nanoHandlePtr; // Opaque pointer to NanoGridHandle (managed by converter)
         size_t sizeBytes;
+        bool isSequential;
         uint64_t leafCount;  // Number of leaf nodes (stored on CPU)
     };
     
@@ -78,15 +87,71 @@ uint64_t GpuVoxelManager::UploadGrid(const VoxelGrid* grid) {
     // Get size and leaf count from handle
     size_t sizeBytes = GetSizeFromHandle(nanoHandlePtr);
     uint64_t leafCount = GetLeafCountFromHandle(nanoHandlePtr);
+    bool isSequential = reinterpret_cast<NanoGridHandle*>(nanoHandlePtr)->isSequential;
 
     // Store handle with unique ID
     uint64_t handleId = nextHandleId_++;
-    impl_->gridHandles[handleId] = {nanoHandlePtr, sizeBytes, leafCount};
+    impl_->gridHandles[handleId] = {nanoHandlePtr, sizeBytes, isSequential, leafCount};
 
     std::cout << "[GpuVoxelManager] Uploaded grid with ID " << handleId 
               << " (" << (sizeBytes / 1024.0 / 1024.0) << " MB)" << std::endl;
 
     return handleId;
+}
+
+uint64_t GpuVoxelManager::DuplicateGrid(uint64_t sourceHandle) {
+    if (!impl_->gpuAvailable) {
+        std::cerr << "[GpuVoxelManager] GPU not available!" << std::endl;
+        return 0;
+    }
+    
+    auto it = impl_->gridHandles.find(sourceHandle);
+    if (it == impl_->gridHandles.end()) {
+        std::cerr << "[GpuVoxelManager] Invalid source handle: " << sourceHandle << std::endl;
+        return 0;
+    }
+    
+    const auto& sourceGrid = it->second;
+    
+    std::cout << "[GpuVoxelManager] Duplicating grid " << sourceHandle 
+              << " (" << (sourceGrid.sizeBytes / 1024.0 / 1024.0) << " MB)..." << std::endl;
+    
+    // Allocate new device buffer
+    void* d_newData = nullptr;
+    cudaError_t err = cudaMalloc(&d_newData, sourceGrid.sizeBytes);
+    if (err != cudaSuccess) {
+        std::cerr << "[GpuVoxelManager] cudaMalloc failed: " 
+                  << cudaGetErrorString(err) << std::endl;
+        return 0;
+    }
+    
+    // Device-to-Device copy (FAST! < 1ms for typical grids)
+    void* d_sourceData = GetDevicePointerFromHandle(sourceGrid.nanoHandlePtr);
+    err = cudaMemcpy(d_newData, d_sourceData, sourceGrid.sizeBytes, 
+                     cudaMemcpyDeviceToDevice);
+    if (err != cudaSuccess) {
+        std::cerr << "[GpuVoxelManager] cudaMemcpy D2D failed: " 
+                  << cudaGetErrorString(err) << std::endl;
+        cudaFree(d_newData);
+        return 0;
+    }
+    
+    // Create new handle wrapper
+    auto* newHandlePtr = new NanoGridHandle{
+        nullptr,                  // No host copy
+        sourceGrid.sizeBytes,
+        d_newData,
+        sourceGrid.isSequential,
+        sourceGrid.leafCount
+    };
+    
+    // Register in manager
+    uint64_t newHandleId = nextHandleId_++;
+    impl_->gridHandles[newHandleId] = {newHandlePtr, sourceGrid.sizeBytes, sourceGrid.isSequential, sourceGrid.leafCount};
+    
+    std::cout << "[GpuVoxelManager] ✅ Grid duplicated: new ID = " << newHandleId << std::endl;
+    
+    return newHandleId;
 }
 
 // Download grid - uses CPU-side converter

@@ -49,6 +49,10 @@ namespace Urbaxio::Engine {
         void setExportable(bool exportable);
         bool isExportable() const;
 
+        // --- NEW: GPU mesh management ---
+        void setGpuManaged(bool managed);
+        bool isGpuManaged() const;
+
         // --- NEW: Geometry Handling with Polymorphism ---
         std::unique_ptr<IGeometry> setGeometry(std::unique_ptr<IGeometry> geometry);
         IGeometry* getGeometry() const;
@@ -99,6 +103,7 @@ namespace Urbaxio::Engine {
         std::string name_;
         glm::mat4 transform_ = glm::mat4(1.0f);
         bool isExportable_ = true;
+        bool isGpuManaged_ = false; // True if mesh is managed by MeshManager (GPU-only)
         
         // --- NEW: Polymorphic geometry representation ---
         std::unique_ptr<IGeometry> geometry_ = nullptr;

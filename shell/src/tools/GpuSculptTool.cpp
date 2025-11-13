@@ -25,7 +25,9 @@
 #include "engine/scene_object.h"
 #include "engine/geometry/VolumetricGeometry.h"
 #include "engine/commands/SculptCommand.h"
+#include "engine/commands/GpuSculptCommand.h"
 #include "engine/commands/CommandManager.h"
+#include "engine/MeshManager.h"
 #include "LoadingManager.h"
 #include "snapping.h"
 #include "camera.h"
@@ -39,6 +41,7 @@
 #include <chrono>
 #include <functional>
 #include <algorithm>
+#include <string>
 
 
 
@@ -78,9 +81,7 @@ struct GpuSculptTool::Impl {
     std::vector<glm::vec3> pendingBrushStrokes;
     static constexpr int MAX_BATCH_SIZE = 64;
     
-    // MODIFIED: Undo state now matches the CPU sculpt tool for correct unbounded support
-    std::vector<float> gridDataBeforeStroke;
-    openvdb::CoordBBox savedBeforeBBox;
+    uint64_t undoHandle = 0;
     
     // Performance tracking
     int strokeCount = 0;
@@ -295,9 +296,10 @@ void GpuSculptTool::OnLeftMouseDown(
     impl_->lastBrushApplyPos = hitPosition;
     impl_->isSculpting = true;
 
-    // MODIFIED: Capture state for undo, including the bounding box of active voxels
-    impl_->savedBeforeBBox = volGeo->getGrid()->getActiveBounds();
-    impl_->gridDataBeforeStroke = volGeo->getGrid()->toDenseArray();
+    // GPU-native Undo: Duplicate grid in VRAM (D2D copy, < 1ms!)
+    impl_->undoHandle = impl_->gpuManager->DuplicateGrid(impl_->currentGpuHandle);
+    std::cout << "[GpuSculptTool] Captured undo state (handle: "
+              << impl_->undoHandle << ")" << std::endl;
     
 #ifdef URBAXIO_GPU_ENABLED
 #if URBAXIO_GPU_ENABLED
@@ -346,85 +348,88 @@ void GpuSculptTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl)
     // Apply any remaining batched strokes
     applyBrushBatchGPU();
     
-    // Synchronize stream before download
-    if (impl_->streamCreated && impl_->cudaStream) {
-        cudaStreamSynchronize(static_cast<cudaStream_t>(impl_->cudaStream));
-    }
-    
-    // Download modified grid from GPU back to CPU
-    if (impl_->gridIsOnGpu && impl_->currentGpuHandle != 0) {
-        bool downloaded = impl_->gpuManager->DownloadGrid(
-            impl_->currentGpuHandle, 
-            volGeo->getGrid()
-        );
-        
-        if (downloaded) {
-            std::cout << "[GpuSculptTool] ✅ Downloaded modified grid from GPU" << std::endl;
-
-            // NEW: Update logical dimensions to encompass all sculpted changes
-            volGeo->getGrid()->updateDimensions();
-            
-            // Update object AABB from modified grid
-            openvdb::CoordBBox bbox = volGeo->getGrid()->grid_->evalActiveVoxelBoundingBox();
-            if (!bbox.empty()) {
-                openvdb::Vec3d worldMin = volGeo->getGrid()->grid_->indexToWorld(bbox.min());
-                openvdb::Vec3d worldMax = volGeo->getGrid()->grid_->indexToWorld(bbox.max());
-                obj->aabbMin = glm::vec3(worldMin.x(), worldMin.y(), worldMin.z());
-                obj->aabbMax = glm::vec3(worldMax.x(), worldMax.y(), worldMax.z());
-                obj->aabbValid = true;
-            } else {
-                obj->aabbValid = false;
-            }
-            
-            // Mark for re-upload next time (topology may have changed on CPU side for undo)
-            volGeo->getGrid()->gpuDirty_ = true;
-        } else {
-            std::cerr << "[GpuSculptTool] ❌ Failed to download grid from GPU" << std::endl;
-        }
-    }
-#endif
-#endif
-    
-    // Perform final mesh update on GPU (synchronous for end-of-stroke)
+    // Perform final mesh update on GPU using D2D pipeline (no CPU copy!)
     uint64_t leafCount = impl_->gpuManager->GetLeafCount(impl_->currentGpuHandle);
     
-    CadKernel::MeshBuffers finalMesh;
-    bool meshSuccess = Engine::GpuMeshingKernels::MarchingCubes(
+    float* d_vertices = nullptr;
+    float* d_normals = nullptr;
+    int triangleCount = 0;
+    
+    bool meshSuccess = Engine::GpuMeshingKernels::MarchingCubesAsync(
         impl_->gpuManager->GetDeviceGridPointer(impl_->currentGpuHandle),
-        leafCount,  // FIX: Pass leafCount
-        0.0f,       // isoValue
+        leafCount,
+        0.0f,  // isoValue
         volGeo->getGrid()->voxelSize,
-        finalMesh
+        &d_vertices,  // Returns device pointer!
+        &d_normals,   // Returns device pointer!
+        &triangleCount,
+        impl_->cudaStream
     );
     
-    if (meshSuccess && !finalMesh.isEmpty()) {
-        // Update mesh immediately (no LoadingManager delay!)
-        size_t triangleCount = finalMesh.indices.size() / 3;  // Save before move
-        obj->setMeshBuffers(std::move(finalMesh));  // FIX: Use existing method
-        impl_->context.scene->MarkStaticGeometryDirty();
-        std::cout << "[GpuSculptTool] ✅ Final mesh updated: " 
-                  << triangleCount << " tris" << std::endl;
-    }
-    
-    // MODIFIED: Create undo command with correct state data including bounding boxes
-    if (!impl_->gridDataBeforeStroke.empty()) {
-        // Capture the 'after' state
-        openvdb::CoordBBox afterBBox = volGeo->getGrid()->getActiveBounds();
-        std::vector<float> dataAfter = volGeo->getGrid()->toDenseArray();
+    if (meshSuccess && triangleCount > 0) {
+        // Wait for GPU meshing to complete
+        cudaStreamSynchronize(static_cast<cudaStream_t>(impl_->cudaStream));
         
-        auto cmd = std::make_unique<Engine::SculptCommand>(
-            impl_->context.scene,
-            impl_->activeObjectId,
-            std::move(impl_->gridDataBeforeStroke), // 'before' state was captured on mouse down
-            std::move(dataAfter),
-            impl_->savedBeforeBBox,                 // Pass the 'before' bounding box
-            afterBBox                               // Pass the 'after' bounding box
+        // D2D update: VRAM -> VBO (no CPU copy!)
+        std::string meshId = std::to_string(impl_->activeObjectId);
+        auto* gpuMesh = impl_->context.meshManager->UpdateMeshFromGpuBuffers(
+            meshId,
+            d_vertices,
+            d_normals,
+            triangleCount * 3,  // vertexCount
+            impl_->cudaStream
         );
         
-        // FIX: Don't Execute() immediately - grid is already in "after" state
-        // Just push to undo stack
-        impl_->context.scene->getCommandManager()->PushCommand(std::move(cmd));
+        if (gpuMesh) {
+            // Synchronize object rendering data with GPU mesh
+            obj->setGpuManaged(true);
+            obj->vao = gpuMesh->vao;
+            obj->index_count = gpuMesh->index_count;
+
+            // Update mesh groups for material batching
+            obj->meshGroups.clear();
+            Engine::MeshGroup defaultGroup;
+            defaultGroup.materialName = "Default";
+            defaultGroup.startIndex = 0;
+            defaultGroup.indexCount = gpuMesh->index_count;
+            obj->meshGroups.push_back(defaultGroup);
+
+            // AABB will be recalculated on next CPU-side operation
+            obj->aabbValid = false;
+
+            impl_->context.scene->MarkStaticGeometryDirty();
+            std::cout << "[GpuSculptTool] ✅ D2D mesh update: " 
+                  << triangleCount << " tris (GPU-managed)" << std::endl;
+        }
+    
+        // Free temporary GPU buffers
+        cudaFree(d_vertices);
+        cudaFree(d_normals);
     }
+    
+    // GPU-native Undo: Create command with handles (no CPU copies!)
+    if (impl_->undoHandle != 0) {
+        // Duplicate current state for redo (D2D copy, < 1ms!)
+        uint64_t redoHandle = impl_->gpuManager->DuplicateGrid(impl_->currentGpuHandle);
+        
+        auto cmd = std::make_unique<Engine::GpuSculptCommand>(
+            impl_->context.scene,
+            impl_->gpuManager,
+            impl_->activeObjectId,
+            &impl_->currentGpuHandle,  // Pointer - command can modify it!
+            impl_->undoHandle,
+            redoHandle
+        );
+        
+        impl_->context.scene->getCommandManager()->PushCommand(std::move(cmd));
+        
+        std::cout << "[GpuSculptTool] ✅ GPU Undo created (no D2H copy!)" << std::endl;
+        
+        impl_->undoHandle = 0;  // Reset
+    }
+    
+#endif
+#endif
     
     impl_->isSculpting = false;
     

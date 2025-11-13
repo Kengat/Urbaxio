@@ -18,6 +18,15 @@ namespace Urbaxio::Engine {
         // If a mesh with this ID already exists, it will be overwritten.
         GpuMesh* AddMesh(const std::string& meshId, const CadKernel::MeshBuffers& meshData);
 
+        // Updates mesh directly from GPU device pointers (Device-to-Device, no CPU copy!)
+        GpuMesh* UpdateMeshFromGpuBuffers(
+            const std::string& meshId,
+            float* d_vertices,
+            float* d_normals,
+            size_t vertexCount,
+            void* cudaStream = nullptr
+        );
+
         // Retrieves a pointer to a GpuMesh by its ID. Returns nullptr if not found.
         GpuMesh* GetMesh(const std::string& meshId);
         const GpuMesh* GetMesh(const std::string& meshId) const;

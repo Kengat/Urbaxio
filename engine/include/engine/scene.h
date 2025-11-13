@@ -26,6 +26,7 @@ class TopoDS_Face;
 namespace Urbaxio::Engine { 
     class SceneObject; 
     class BRepGeometry; // <-- NEW
+    class MeshManager;
 }
 
 namespace Urbaxio {
@@ -92,6 +93,8 @@ namespace Urbaxio::Engine {
         CommandManager* getCommandManager();
         std::unique_ptr<SceneState> CaptureState();
         void RestoreState(const SceneState& state);
+        MeshManager* getMeshManager();
+        const MeshManager* getMeshManager() const;
 
         // --- Line Management ---
         void AddUserLine(const glm::vec3& start, const glm::vec3& end);
@@ -143,6 +146,7 @@ namespace Urbaxio::Engine {
         std::unique_ptr<CommandManager> commandManager_;
         // --- NEW: Material Manager ---
         std::unique_ptr<MaterialManager> materialManager_;
+        std::unique_ptr<MeshManager> meshManager_;
 
         // --- NEW: Dirty flag for static geometry ---
         bool isStaticGeometryDirty_ = true;

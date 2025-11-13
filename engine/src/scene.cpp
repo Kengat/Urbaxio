@@ -6,6 +6,7 @@
 #include "engine/geometry/BRepGeometry.h"
 #include "engine/geometry/MeshGeometry.h"
 #include "engine/MaterialManager.h"
+#include "engine/MeshManager.h"
 #include <cad_kernel/cad_kernel.h>
 #include <cad_kernel/MeshBuffers.h> // Required for TriangulateShape return type
 
@@ -331,6 +332,7 @@ namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
     Scene::Scene() {
         commandManager_ = std::make_unique<CommandManager>();
         materialManager_ = std::make_unique<MaterialManager>();
+        meshManager_ = std::make_unique<MeshManager>();
         isStaticGeometryDirty_ = true; // --- NEW: Start with a dirty flag
     }
     Scene::~Scene() = default;
@@ -341,6 +343,14 @@ namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
 
     MaterialManager* Scene::getMaterialManager() {
         return materialManager_.get();
+    }
+
+    MeshManager* Scene::getMeshManager() {
+        return meshManager_.get();
+    }
+
+    const MeshManager* Scene::getMeshManager() const {
+        return meshManager_.get();
     }
 
     // --- NEW: Scene Memento Implementation ---

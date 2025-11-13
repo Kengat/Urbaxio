@@ -34,6 +34,7 @@ namespace Urbaxio::Engine {
         name_(std::move(other.name_)),
         transform_(other.transform_),
         isExportable_(other.isExportable_),
+        isGpuManaged_(other.isGpuManaged_),
         geometry_(std::move(other.geometry_)),
         mesh_buffers_cache_(std::move(other.mesh_buffers_cache_)),
         is_mesh_cache_dirty_(other.is_mesh_cache_dirty_),
@@ -47,6 +48,7 @@ namespace Urbaxio::Engine {
     {
         other.id_ = 0;
         other.is_mesh_cache_dirty_ = true;
+        other.isGpuManaged_ = false;
     }
 
     // Move assignment operator
@@ -56,6 +58,7 @@ namespace Urbaxio::Engine {
             name_ = std::move(other.name_);
             transform_ = other.transform_;
             isExportable_ = other.isExportable_;
+            isGpuManaged_ = other.isGpuManaged_;
             geometry_ = std::move(other.geometry_);
             mesh_buffers_cache_ = std::move(other.mesh_buffers_cache_);
             is_mesh_cache_dirty_ = other.is_mesh_cache_dirty_;
@@ -69,6 +72,7 @@ namespace Urbaxio::Engine {
             
             other.id_ = 0;
             other.is_mesh_cache_dirty_ = true;
+            other.isGpuManaged_ = false;
         }
         return *this;
     }
@@ -360,6 +364,15 @@ namespace Urbaxio::Engine {
         // It calls the main caching getter first.
         getMeshBuffers(); 
         return !mesh_buffers_cache_.isEmpty();
+    }
+
+    // --- GPU Mesh Management ---
+    void SceneObject::setGpuManaged(bool managed) {
+        isGpuManaged_ = managed;
+    }
+
+    bool SceneObject::isGpuManaged() const {
+        return isGpuManaged_;
     }
 
 } // namespace Urbaxio::Engine

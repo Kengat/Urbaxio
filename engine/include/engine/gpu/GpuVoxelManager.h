@@ -33,6 +33,10 @@ public:
      */
     uint64_t UploadGrid(const VoxelGrid* grid);
 
+    // Duplicate grid in VRAM (Device-to-Device copy for Undo/Redo)
+    // Returns new handle ID, or 0 on failure
+    uint64_t DuplicateGrid(uint64_t sourceHandle);
+
     /**
      * @brief Download a NanoVDB grid from GPU back to OpenVDB
      * @param handleId The GPU grid handle ID
