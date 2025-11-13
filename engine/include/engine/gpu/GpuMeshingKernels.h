@@ -25,6 +25,7 @@ public:
      */
     static bool MarchingCubes(
         void* deviceGridPtr,
+        uint64_t leafCount,  // NEW: Required parameter
         float isoValue,
         float voxelSize,
         CadKernel::MeshBuffers& outMesh
@@ -39,6 +40,18 @@ public:
      * @brief Estimate output triangle count (for memory allocation)
      */
     static size_t EstimateTriangleCount(void* deviceGridPtr, float isoValue);
+
+    // NEW: Async version that returns device pointers for direct VBO upload
+    static bool MarchingCubesAsync(
+        void* deviceGridPtr,
+        uint64_t leafCount,
+        float isoValue,
+        float voxelSize,
+        float** d_vertices_out,   // Device pointer output
+        float** d_normals_out,    // Device pointer output
+        int* triangleCount_out,
+        void* cudaStream = nullptr  // ✅ FIX: Use void* like elsewhere
+    );
 
 private:
     // Marching Cubes lookup tables (stored in GPU constant memory)

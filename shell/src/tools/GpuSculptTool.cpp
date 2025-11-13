@@ -12,6 +12,8 @@
 #include "engine/gpu/GpuVoxelManager.h"
 #include "engine/gpu/GpuSculptKernels.h"
 #include "engine/gpu/GpuVoxelConverter.h"
+#include "engine/gpu/GpuMeshingKernels.h"
+#include "engine/gpu/GpuRaycastKernels.h"
 #include <cuda_runtime.h>
 #endif
 #endif
@@ -41,33 +43,6 @@
 
 
 // После includes, перед namespace
-
-struct AABB {
-    glm::vec3 min, max;
-    
-    glm::vec3 center() const { return (min + max) * 0.5f; }
-    
-    bool intersect(const glm::vec3& rayOrigin, const glm::vec3& rayDir, float& tMin) const {
-        glm::vec3 invDir = 1.0f / rayDir;
-        glm::vec3 t0 = (min - rayOrigin) * invDir;
-        glm::vec3 t1 = (max - rayOrigin) * invDir;
-        glm::vec3 tmin = glm::min(t0, t1);
-        glm::vec3 tmax = glm::max(t0, t1);
-        float t_enter = std::max({tmin.x, tmin.y, tmin.z, 0.0f});
-        float t_exit = std::min({tmax.x, tmax.y, tmax.z});
-        if (t_enter > t_exit) return false;
-        tMin = t_enter;
-        return true;
-    }
-};
-
-struct BVHNode {
-    AABB bounds;
-    int leftChild = -1;
-    int rightChild = -1;
-    int triangleStart = -1; // Для листьев
-    int triangleCount = 0;
-};
 
 
 
@@ -111,149 +86,12 @@ struct GpuSculptTool::Impl {
     int strokeCount = 0;
     float totalGpuTime = 0.0f;
     
-    // НОВОЕ: Кеш меша для быстрого ray casting
-    struct MeshCache {
-        std::vector<glm::vec3> vertices;
-        std::vector<unsigned int> indices;
-        std::vector<int> triangleIndices; // Для BVH
-        std::vector<BVHNode> bvh;
-        bool valid = false;
-    } meshCache;
-    
-    int raycastCount = 0;
-    float totalRaycastTime = 0.0f;
-    
     // Adaptive distance threshold
     float getMinBrushDistance() const {
         // Smaller brushes need finer control
         if (brushRadius < 0.5f) return brushRadius * 0.05f;
         if (brushRadius < 1.0f) return brushRadius * 0.10f;
         return brushRadius * 0.15f;
-    }
-    
-    // НОВОЕ: Функция построения BVH
-    void buildBVH() {
-        if (meshCache.vertices.empty() || meshCache.indices.empty()) return;
-        
-        auto t_start = std::chrono::high_resolution_clock::now();
-        
-        meshCache.bvh.clear();
-        size_t numTriangles = meshCache.indices.size() / 3;
-        
-        // Построить AABB для каждого треугольника
-        std::vector<AABB> triBoxes(numTriangles);
-        meshCache.triangleIndices.resize(numTriangles);
-        
-        for (size_t i = 0; i < numTriangles; ++i) {
-            glm::vec3 v0 = meshCache.vertices[meshCache.indices[i * 3 + 0]];
-            glm::vec3 v1 = meshCache.vertices[meshCache.indices[i * 3 + 1]];
-            glm::vec3 v2 = meshCache.vertices[meshCache.indices[i * 3 + 2]];
-            
-            triBoxes[i].min = glm::min(glm::min(v0, v1), v2);
-            triBoxes[i].max = glm::max(glm::max(v0, v1), v2);
-            meshCache.triangleIndices[i] = i;
-        }
-        
-        // Рекурсивное построение BVH
-        std::function<int(int, int)> buildNode = [&](int start, int end) -> int {
-            int nodeIdx = meshCache.bvh.size();
-            meshCache.bvh.emplace_back();
-            BVHNode& node = meshCache.bvh[nodeIdx];
-            
-            // Вычислить bounds для всех треугольников в диапазоне
-            node.bounds = triBoxes[meshCache.triangleIndices[start]];
-            for (int i = start + 1; i < end; ++i) {
-                int triIdx = meshCache.triangleIndices[i];
-                node.bounds.min = glm::min(node.bounds.min, triBoxes[triIdx].min);
-                node.bounds.max = glm::max(node.bounds.max, triBoxes[triIdx].max);
-            }
-            
-            int count = end - start;
-            if (count <= 4) { // Leaf node
-                node.triangleStart = start;
-                node.triangleCount = count;
-                return nodeIdx;
-            }
-            
-            // Split по самой длинной оси
-            glm::vec3 extent = node.bounds.max - node.bounds.min;
-            int axis = 0;
-            if (extent.y > extent.x) axis = 1;
-            if (extent.z > extent[axis]) axis = 2;
-            
-            // Сортировка по центроиду
-            std::sort(meshCache.triangleIndices.begin() + start, 
-                     meshCache.triangleIndices.begin() + end,
-                [&](int a, int b) {
-                    return triBoxes[a].center()[axis] < triBoxes[b].center()[axis];
-                });
-            
-            int mid = start + count / 2;
-            node.leftChild = buildNode(start, mid);
-            node.rightChild = buildNode(mid, end);
-            
-            return nodeIdx;
-        };
-        
-        if (numTriangles > 0) {
-            buildNode(0, numTriangles);
-        }
-        
-        auto t_end = std::chrono::high_resolution_clock::now();
-        float elapsed = std::chrono::duration<float, std::milli>(t_end - t_start).count();
-        
-        std::cout << "[GpuSculptTool] BVH built: " << meshCache.bvh.size() 
-                  << " nodes, " << numTriangles << " tris in " 
-                  << elapsed << "ms" << std::endl;
-    }
-    
-    // НОВОЕ: Быстрый ray cast через BVH
-    bool raycastBVH(const glm::vec3& rayOrigin, const glm::vec3& rayDir, 
-                    glm::vec3& hitPoint, float& hitDist) {
-        if (meshCache.bvh.empty()) return false;
-        
-        hitDist = std::numeric_limits<float>::max();
-        bool hit = false;
-        
-        // Stack-based traversal (быстрее рекурсии)
-        int stack[64];
-        int stackPtr = 0;
-        stack[stackPtr++] = 0;
-        
-        while (stackPtr > 0) {
-            int nodeIdx = stack[--stackPtr];
-            const BVHNode& node = meshCache.bvh[nodeIdx];
-            
-            float tMin;
-            if (!node.bounds.intersect(rayOrigin, rayDir, tMin)) continue;
-            if (tMin >= hitDist) continue;
-            
-            if (node.triangleCount > 0) { // Leaf - проверяем треугольники
-                for (int i = 0; i < node.triangleCount; ++i) {
-                    int triIdx = meshCache.triangleIndices[node.triangleStart + i];
-                    glm::vec3 v0 = meshCache.vertices[meshCache.indices[triIdx * 3 + 0]];
-                    glm::vec3 v1 = meshCache.vertices[meshCache.indices[triIdx * 3 + 1]];
-                    glm::vec3 v2 = meshCache.vertices[meshCache.indices[triIdx * 3 + 2]];
-                    
-                    float t;
-                    if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t)) {
-                        if (t > 0 && t < hitDist) {
-                            hitDist = t;
-                            hit = true;
-                        }
-                    }
-                }
-            } else { // Internal node
-                if (node.leftChild >= 0) stack[stackPtr++] = node.leftChild;
-                if (node.rightChild >= 0) stack[stackPtr++] = node.rightChild;
-            }
-        }
-        
-        if (hit) {
-            hitPoint = rayOrigin + rayDir * hitDist;
-        }
-        
-        return hit;
     }
 };
 
@@ -406,37 +244,12 @@ void GpuSculptTool::OnLeftMouseDown(
     
     if (!hitObject) return;
     
-    // НОВОЕ: Кешируем меш
-    const auto& mesh = hitObject->getMeshBuffers();
-    impl_->meshCache.vertices.clear();
-    impl_->meshCache.vertices.reserve(mesh.vertices.size() / 3);
-    
-    for (size_t i = 0; i < mesh.vertices.size(); i += 3) {
-        impl_->meshCache.vertices.emplace_back(
-            mesh.vertices[i], mesh.vertices[i+1], mesh.vertices[i+2]
-        );
-    }
-    
-    impl_->meshCache.indices = mesh.indices;
-    impl_->meshCache.valid = true;
-    
-    // НОВОЕ: Строим BVH (один раз!)
-    impl_->buildBVH();
-    
-    // Точный ray cast с BVH
+    // Step 2: Precise GPU raycast against live NanoVDB grid
     glm::vec3 hitPosition;
-    float hitDist;
-    bool hit = impl_->raycastBVH(currentRayOrigin, currentRayDir, hitPosition, hitDist);
+    bool hit = false;
     
-    if (!hit) {
-        hitPosition = currentRayOrigin + currentRayDir * closestAABBDist;
-    }
-    
-    // Get object and validate
     auto* obj = hitObject;
     if (!obj) return;
-
-
 
     auto* volGeo = dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry());
     if (!volGeo) {
@@ -444,15 +257,43 @@ void GpuSculptTool::OnLeftMouseDown(
         return;
     }
 
-
+    // Upload grid to GPU first (if needed) for raycast
+    auto* grid = volGeo->getGrid();
+    if (!impl_->gridIsOnGpu || impl_->currentGpuHandle == 0 || grid->gpuDirty_) {
+        if (impl_->currentGpuHandle != 0) {
+            impl_->gpuManager->ReleaseGrid(impl_->currentGpuHandle);
+        }
+        impl_->currentGpuHandle = impl_->gpuManager->UploadGrid(grid);
+        impl_->gridIsOnGpu = (impl_->currentGpuHandle != 0);
+        grid->gpuDirty_ = false;
+    }
+    
+    if (impl_->gridIsOnGpu && impl_->currentGpuHandle != 0) {
+        // Raycast against existing GPU grid (if available)
+        auto raycastResult = Engine::GpuRaycastKernels::RaycastNanoVDB(
+            impl_->gpuManager->GetDeviceGridPointer(impl_->currentGpuHandle),
+            currentRayOrigin,
+            currentRayDir,
+            1000.0f,  // maxDistance
+            0.0f      // isoValue
+        );
+        
+        if (raycastResult.hit) {
+            hitPosition = raycastResult.hitPoint;
+            hit = true;
+        }
+    }
+    
+    if (!hit) {
+        // Fallback: use AABB intersection point
+        hitPosition = currentRayOrigin + currentRayDir * closestAABBDist;
+    }
 
     // Start sculpting session
     impl_->activeObjectId = hitObject->get_id();
     impl_->lastHitPoint = hitPosition;
     impl_->lastBrushApplyPos = hitPosition;
     impl_->isSculpting = true;
-    impl_->raycastCount = 0;
-    impl_->totalRaycastTime = 0.0f;
 
     // MODIFIED: Capture state for undo, including the bounding box of active voxels
     impl_->savedBeforeBBox = volGeo->getGrid()->getActiveBounds();
@@ -460,31 +301,23 @@ void GpuSculptTool::OnLeftMouseDown(
     
 #ifdef URBAXIO_GPU_ENABLED
 #if URBAXIO_GPU_ENABLED
-    // Upload grid to GPU (if not already there)
-    auto* grid = volGeo->getGrid();
-    if (!impl_->gridIsOnGpu || impl_->currentGpuHandle == 0 || grid->gpuDirty_) {
-        // Release old handle if exists
-        if (impl_->currentGpuHandle != 0) {
-            impl_->gpuManager->ReleaseGrid(impl_->currentGpuHandle);
-        }
-        
-        // Upload new grid
-        impl_->currentGpuHandle = impl_->gpuManager->UploadGrid(grid);
-        impl_->gridIsOnGpu = (impl_->currentGpuHandle != 0);
-        grid->gpuDirty_ = false;
-        
-        if (impl_->gridIsOnGpu) {
-            std::cout << "[GpuSculptTool] ✅ Grid uploaded to GPU (handle: " 
-                      << impl_->currentGpuHandle << ")" << std::endl;
-        } else {
-            std::cout << "[GpuSculptTool] ❌ Failed to upload grid to GPU" << std::endl;
-            impl_->isSculpting = false;
-            return;
-        }
+    if (impl_->gridIsOnGpu && impl_->currentGpuHandle != 0) {
+        std::cout << "[GpuSculptTool] ✅ Grid already on GPU (handle: " 
+                  << impl_->currentGpuHandle << ")" << std::endl;
+    } else {
+        std::cout << "[GpuSculptTool] ❌ Grid not on GPU!" << std::endl;
+        impl_->isSculpting = false;
+        return;
     }
     
+    // Mark for re-upload next time (topology may have changed on CPU side for undo)
+    volGeo->getGrid()->gpuDirty_ = true;
+    
     // Apply first brush stroke
-    applyBrushGPU(hitPosition);
+    std::cout << "[DEBUG] Applying initial brush at (" << hitPosition.x << ", " 
+              << hitPosition.y << ", " << hitPosition.z << ")" << std::endl;
+    bool success = applyBrushGPU(hitPosition);
+    std::cout << "[DEBUG] Initial brush result: " << (success ? "SUCCESS" : "FAILED") << std::endl;
 #endif
 #endif
     
@@ -552,15 +385,25 @@ void GpuSculptTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl)
 #endif
 #endif
     
-    // Request async remesh (like CPU SculptTool)
-    if (impl_->context.loadingManager) {
-        impl_->context.loadingManager->RequestRemesh(
-            impl_->context.scene, 
-            impl_->activeObjectId, 
-            false // Use CPU meshing (OpenVDB volumeToMesh - already optimized)
-        );
-        obj->markMeshAsClean(); // Prevents synchronous remesh
-        std::cout << "[GpuSculptTool] ✅ Async remesh requested" << std::endl;
+    // Perform final mesh update on GPU (synchronous for end-of-stroke)
+    uint64_t leafCount = impl_->gpuManager->GetLeafCount(impl_->currentGpuHandle);
+    
+    CadKernel::MeshBuffers finalMesh;
+    bool meshSuccess = Engine::GpuMeshingKernels::MarchingCubes(
+        impl_->gpuManager->GetDeviceGridPointer(impl_->currentGpuHandle),
+        leafCount,  // FIX: Pass leafCount
+        0.0f,       // isoValue
+        volGeo->getGrid()->voxelSize,
+        finalMesh
+    );
+    
+    if (meshSuccess && !finalMesh.isEmpty()) {
+        // Update mesh immediately (no LoadingManager delay!)
+        size_t triangleCount = finalMesh.indices.size() / 3;  // Save before move
+        obj->setMeshBuffers(std::move(finalMesh));  // FIX: Use existing method
+        impl_->context.scene->MarkStaticGeometryDirty();
+        std::cout << "[GpuSculptTool] ✅ Final mesh updated: " 
+                  << triangleCount << " tris" << std::endl;
     }
     
     // MODIFIED: Create undo command with correct state data including bounding boxes
@@ -578,20 +421,12 @@ void GpuSculptTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl)
             afterBBox                               // Pass the 'after' bounding box
         );
         
-        impl_->context.scene->getCommandManager()->ExecuteCommand(std::move(cmd));
+        // FIX: Don't Execute() immediately - grid is already in "after" state
+        // Just push to undo stack
+        impl_->context.scene->getCommandManager()->PushCommand(std::move(cmd));
     }
     
-    // НОВОЕ: Очистить кеш
-    impl_->meshCache.valid = false;
-    impl_->meshCache.bvh.clear();
     impl_->isSculpting = false;
-    
-    // Статистика
-    if (impl_->raycastCount > 0) {
-        float avgRaycast = impl_->totalRaycastTime / impl_->raycastCount;
-        std::cout << "[GpuSculptTool] Avg raycast: " << avgRaycast 
-                  << "ms (" << impl_->raycastCount << " total)" << std::endl;
-    }
     
     // Clean up session state
     impl_->activeObjectId = 0;
@@ -612,7 +447,7 @@ void GpuSculptTool::OnUpdate(
     const glm::vec3& rayOrigin, 
     const glm::vec3& rayDirection) 
 {
-    if (!impl_->isSculpting || !impl_->meshCache.valid) return;
+    if (!impl_->isSculpting) return;  // ✅ FIX: Removed meshCache check
     
 #ifdef URBAXIO_GPU_ENABLED
 #if URBAXIO_GPU_ENABLED
@@ -637,20 +472,18 @@ void GpuSculptTool::OnUpdate(
         );
     }
     
-    // НОВОЕ: Быстрый ray cast с BVH
-    glm::vec3 hitPosition;
-    float hitDist;
+    // GPU raycast against live NanoVDB grid (always up-to-date!)
+    auto raycastResult = Engine::GpuRaycastKernels::RaycastNanoVDB(
+        impl_->gpuManager->GetDeviceGridPointer(impl_->currentGpuHandle),
+        currentRayOrigin,
+        currentRayDir,
+        1000.0f,
+        0.0f
+    );
     
-    auto t_start = std::chrono::high_resolution_clock::now();
-    bool hit = impl_->raycastBVH(currentRayOrigin, currentRayDir, hitPosition, hitDist);
-    auto t_end = std::chrono::high_resolution_clock::now();
+    if (!raycastResult.hit) return;  // No surface hit
     
-    float elapsed = std::chrono::duration<float, std::milli>(t_end - t_start).count();
-    impl_->totalRaycastTime += elapsed;
-    impl_->raycastCount++;
-    
-    if (!hit) return; // Не попали в меш
-    
+    glm::vec3 hitPosition = raycastResult.hitPoint;
     impl_->lastHitPoint = hitPosition;
     
     // Проверка дистанции для применения brush
@@ -661,6 +494,49 @@ void GpuSculptTool::OnUpdate(
         if (impl_->pendingBrushStrokes.size() >= impl_->MAX_BATCH_SIZE) {
             applyBrushBatchGPU();
         }
+        
+        // TEMPORARY: Disabled async meshing due to deadlock
+        // TODO: Fix GenerateTrianglesKernel with proper per-cell scan
+        /*
+        static int meshUpdateCounter = 0;
+        if (++meshUpdateCounter >= 5) { // Update mesh every 5 brush strokes
+            meshUpdateCounter = 0;
+            
+            auto* obj = impl_->context.scene->get_object_by_id(impl_->activeObjectId);
+            if (obj) {
+                auto* volGeo = dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry());
+                if (volGeo) {
+                    // Get leaf count from manager
+                    uint64_t leafCount = impl_->gpuManager->GetLeafCount(impl_->currentGpuHandle);
+                    
+                    float* d_vertices = nullptr;
+                    float* d_normals = nullptr;
+                    int triangleCount = 0;
+                    
+                    bool success = Engine::GpuMeshingKernels::MarchingCubesAsync(
+                        impl_->gpuManager->GetDeviceGridPointer(impl_->currentGpuHandle),
+                        leafCount,
+                        0.0f,  // isoValue
+                        volGeo->getGrid()->voxelSize,
+                        &d_vertices,
+                        &d_normals,
+                        &triangleCount,
+                        impl_->cudaStream  // ✅ FIX: Already void*, no cast needed
+                    );
+                    
+                    if (success && triangleCount > 0) {
+                        // TODO: Pass to MeshManager for D2D upload (next step!)
+                        std::cout << "[GpuSculptTool] 🔄 Async mesh update: " 
+                                  << triangleCount << " tris" << std::endl;
+                        
+                        // For now, free the buffers (temporary until MeshManager integration)
+                        cudaFree(d_vertices);
+                        cudaFree(d_normals);
+                    }
+                }
+            }
+        }
+        */
         
         impl_->lastBrushApplyPos = hitPosition;
     }
@@ -685,7 +561,14 @@ bool GpuSculptTool::applyBrushBatchGPU() {
 bool GpuSculptTool::applyBrushGPU(const glm::vec3& brushWorldPos) {
 #ifdef URBAXIO_GPU_ENABLED
 #if URBAXIO_GPU_ENABLED
-    if (!impl_->gridIsOnGpu || impl_->currentGpuHandle == 0) return false;
+    std::cout << "[DEBUG] applyBrushGPU called at (" << brushWorldPos.x << ", " 
+              << brushWorldPos.y << ", " << brushWorldPos.z << ")" << std::endl;
+    
+    if (!impl_->gridIsOnGpu || impl_->currentGpuHandle == 0) {
+        std::cout << "[DEBUG] FAILED: gridIsOnGpu=" << impl_->gridIsOnGpu 
+                  << ", handle=" << impl_->currentGpuHandle << std::endl;
+        return false;
+    }
     
     auto* obj = impl_->context.scene->get_object_by_id(impl_->activeObjectId);
     if (!obj) return false;
@@ -751,7 +634,7 @@ bool GpuSculptTool::applyBrushGPU(const glm::vec3& brushWorldPos) {
     if (success) {
         impl_->strokeCount++;
         impl_->totalGpuTime += elapsed;
-        // std::cout << "[GpuSculptTool] ✅ GPU sculpt: " << elapsed << "ms" << std::endl;
+        std::cout << "[GpuSculptTool] ✅ GPU sculpt: " << elapsed << "ms" << std::endl;
     } else {
         std::cerr << "[GpuSculptTool] ❌ GPU sculpting failed" << std::endl;
     }

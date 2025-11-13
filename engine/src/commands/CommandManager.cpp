@@ -71,6 +71,27 @@ bool CommandManager::HasRedo() const {
     return !redoStack_.empty();
 }
 
+void CommandManager::PushCommand(std::unique_ptr<ICommand> command) {
+    if (!command) {
+        return;
+    }
+    
+    // Clear redo stack
+    if (!redoStack_.empty()) {
+        std::cout << "CommandManager: Clearing redo stack (" << redoStack_.size() << " commands)." << std::endl;
+        redoStack_.clear();
+    }
+    
+    // Push to undo stack without executing
+    const char* commandName = command->GetName();
+    std::cout << "CommandManager: Pushing command '" << (commandName ? commandName : "Unknown") 
+              << "' to undo stack (not executing - already applied)" << std::endl;
+    
+    undoStack_.push_back(std::move(command));
+    
+    std::cout << "CommandManager: Undo stack size: " << undoStack_.size() << std::endl;
+}
+
 void CommandManager::ClearHistory() {
     undoStack_.clear();
     redoStack_.clear();

@@ -26,7 +26,10 @@ const char* SculptCommand::GetName() const {
 }
 
 void SculptCommand::Execute() {
-    std::cout << "[Command] Executing Sculpt Stroke on object " << objectId_ << std::endl;
+    std::cout << "[Command] Executing Sculpt Stroke (Redo) on object " << objectId_ << std::endl;
+    // FIX: Execute() is only called on Redo(), not on initial creation
+    // When command is created, grid is already in "after" state, so we use PushCommand()
+    // On Redo(), we need to apply "after" state
     applyGridData(dataAfter_, afterBBox_);
 }
 

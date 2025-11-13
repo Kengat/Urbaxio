@@ -13,6 +13,9 @@ public:
     // Executes a command and adds it to the undo stack
     void ExecuteCommand(std::unique_ptr<ICommand> command);
 
+    // Push command without executing (for commands already applied)
+    void PushCommand(std::unique_ptr<ICommand> command);
+
     // Undoes the last command
     void Undo();
 

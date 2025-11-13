@@ -86,6 +86,7 @@ void LoadingManager::RequestVoxelize(Engine::Scene* scene, uint64_t objectId, in
 }
 
 void LoadingManager::RequestRemesh(Engine::Scene* scene, uint64_t objectId, bool useGpu) {
+    // NOTE: This is used by CPU SculptTool. GpuSculptTool uses direct GPU meshing.
     // DON'T reject if busy - queue the remesh request!
     // This prevents objects from disappearing
     
