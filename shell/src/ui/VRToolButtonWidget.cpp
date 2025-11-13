@@ -79,7 +79,8 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
     float aberration = 0.05f + sphereHoverAlpha_ * 0.10f;
     
     const auto& currentColors = isSelected ? selectedColors_ : inactiveColors_;
-    renderer.RenderVRMenuWidget(view, projection, sphereModel, currentColors.base, aberration, alpha, currentColors.aberration1, currentColors.aberration2);
+    renderer.RenderVRMenuWidget(view, projection, sphereModel, currentColors.base, aberration, alpha, 
+                            currentColors.aberration1, currentColors.aberration2, 0, mask);
 
     if (textureId_ != 0) {
         // -- START OF MODIFICATION --
@@ -119,7 +120,8 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
 
         // -- END OF MODIFICATION --
 
-        renderer.RenderVRMenuWidget(view, projection, iconModel, glm::vec3(1.0f), 0.0f, alpha, glm::vec3(0.0f), glm::vec3(0.0f), textureId_);
+        renderer.RenderVRMenuWidget(view, projection, iconModel, glm::vec3(1.0f), 0.0f, alpha, 
+                            glm::vec3(0.0f), glm::vec3(0.0f), textureId_, mask);
     }
 
     if (textHoverAlpha_ > 0.01f) {

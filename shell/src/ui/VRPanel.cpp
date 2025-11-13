@@ -1,5 +1,6 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "ui/VRPanel.h"
+#include "ui/VRScrollWidget.h"
 #include "renderer.h"
 #include "TextRenderer.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -184,6 +185,7 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
                 // -- END OF MODIFICATION --
 
                 RecalculateLayout();
+                OnSizeChanged(); // NEW: Notify widgets about size change
             }
         }
     }
@@ -603,6 +605,20 @@ bool VRPanel::WasPinButtonClicked() {
     bool result = pinButtonClicked_;
     pinButtonClicked_ = false;
     return result;
+}
+
+void VRPanel::OnSizeChanged() {
+    // Update size of all child widgets (especially VRScrollWidget)
+    for (auto& widget : widgets_) {
+        // Check if this is a VRScrollWidget (it implements SetSize in a meaningful way)
+        if (auto* scrollWidget = dynamic_cast<VRScrollWidget*>(widget.get())) {
+            // Give scroll widget most of the panel space, with some padding
+            const float padding = 0.02f;
+            glm::vec2 scrollSize(size_.x - padding, size_.y - padding);
+            scrollWidget->SetSize(scrollSize);
+            scrollWidget->RecalculateContentLayout();
+        }
+    }
 }
 
 }

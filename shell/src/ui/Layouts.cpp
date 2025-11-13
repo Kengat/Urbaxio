@@ -72,5 +72,75 @@ void GridLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets, const g
 
 }
 
+// --- AdaptiveGridLayout Implementation ---
+
+void AdaptiveGridLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets, const glm::vec2& panelSize) {
+
+    if (widgets.empty()) return;
+
+    
+
+    // Calculate how many buttons can fit with FIXED size
+
+    int maxColumns = std::max(1, static_cast<int>((panelSize.x + spacing_.x) / (buttonSize_ + spacing_.x)));
+
+    
+
+    // If panel is narrow, force single column
+
+    if (panelSize.x < buttonSize_ * 1.5f) {
+
+        maxColumns = 1;
+
+    }
+
+    
+
+    int columns = maxColumns;
+
+    int rows = (widgets.size() + columns - 1) / columns;
+
+    
+
+    // DO NOT change button size - keep it fixed!
+
+    float cellWidth = buttonSize_;
+
+    float cellHeight = buttonSize_;
+
+    
+
+    // Center the grid in the panel
+
+    float totalWidth = columns * cellWidth + (columns - 1) * spacing_.x;
+
+    float startX = -totalWidth / 2.0f + cellWidth / 2.0f;
+
+    float startY = panelSize.y / 2.0f - cellHeight / 2.0f;
+
+    
+
+    for (size_t i = 0; i < widgets.size(); ++i) {
+
+        int row = i / columns;
+
+        int col = i % columns;
+
+        
+
+        float x = startX + col * (cellWidth + spacing_.x);
+
+        float y = startY - row * (cellHeight + spacing_.y);
+
+        
+
+        widgets[i]->SetLocalPosition({x, y, 0.01f});
+
+        // DO NOT call SetSize - keep original button size!
+
+    }
+
+}
+
 }
 

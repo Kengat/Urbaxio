@@ -2,6 +2,7 @@
 #include "camera.h"
 #include "VRManager.h"
 #include "Frustum.h"
+#include "ui/IVRWidget.h"
 #include <engine/scene.h>
 #include <engine/scene_object.h>
 #include <engine/line.h>
@@ -382,15 +383,23 @@ namespace Urbaxio {
             "uniform mat4 projection;\n"
             "uniform mat4 view;\n"
             "uniform mat4 model;\n"
+            "uniform bool u_enableMask;\n"
+            "uniform mat4 u_maskTransform;\n"
             "out vec2 vUv;\n"
+            "out vec2 vMaskLocalPos;\n"
             "void main() {\n"
             "    vUv = aPos.xy;\n"
-            "    gl_Position = projection * view * model * vec4(aPos, 1.0);\n"
+            "    vec4 worldPos = model * vec4(aPos, 1.0);\n"
+            "    if (u_enableMask) {\n"
+            "        vMaskLocalPos = (inverse(u_maskTransform) * worldPos).xy;\n"
+            "    }\n"
+            "    gl_Position = projection * view * worldPos;\n"
             "}\n";
         vrMenuWidgetFragmentShaderSource =
             "#version 330 core\n"
             "out vec4 FragColor;\n"
             "in vec2 vUv;\n"
+            "in vec2 vMaskLocalPos;\n"
             "\n"
             "uniform sampler2D u_texture;\n"
             "uniform bool u_useTexture;\n"
@@ -403,6 +412,9 @@ namespace Urbaxio {
             "uniform float u_rectCornerRadius;\n"
             "uniform vec2 u_rectSize;\n"
             "uniform float u_panelAspectRatio;\n"
+            "uniform bool u_enableMask;\n"
+            "uniform vec2 u_maskSize;\n"
+            "uniform float u_maskCornerRadius;\n"
             "\n"
             "// SDF for a rounded box\n"
             "float sdRoundedBox( in vec2 p, in vec2 b, in float r )\n"
@@ -414,8 +426,18 @@ namespace Urbaxio {
             "const float edgeSoftness = 0.4;\n"
             "\n"
             "void main() {\n"
+            "    float baseFinalAlpha = u_globalAlpha;\n"
+            "    \n"
+            "    // Apply mask if enabled\n"
+            "    if (u_enableMask) {\n"
+            "        vec2 maskHalfSize = u_maskSize * 0.5;\n"
+            "        float dist = sdRoundedBox(vMaskLocalPos, maskHalfSize, u_maskCornerRadius);\n"
+            "        float maskAlpha = 1.0 - smoothstep(-0.01, 0.0, dist);\n"
+            "        baseFinalAlpha *= maskAlpha;\n"
+            "        if (baseFinalAlpha < 0.01) discard;\n"
+            "    }\n"
+            "    \n"
             "    if (u_shapeType == 1) { // Rounded Rect (Panel Background OR Display)\n"
-            "        // Correct UVs and parameters for aspect ratio\n"
             "        vec2 p = vUv;\n"
             "        p.x *= u_panelAspectRatio;\n"
             "        vec2 b = u_rectSize;\n"
@@ -429,27 +451,24 @@ namespace Urbaxio {
             "        bool isMainPanel = u_baseColor.g > 0.5;\n"
             "\n"
             "        if (isMainPanel) {\n"
-            "            // --- FIX: Faster and correct fade ---\n"
-            "            // The pow(..., 16.0) makes the fade extremely sharp and close to the edge.\n"
-            "            float fade_distance = 0.4; // The fade will complete at this distance from the border.\n"
+            "            float fade_distance = 0.4;\n"
             "            float fade_factor = pow(clamp(1.0 + dist / fade_distance, 0.0, 1.0), 16.0);\n"
-            "            \n"
             "            final_output_color = vec4(u_baseColor, fill_mask * fade_factor);\n"
-            "        } else { // Display panel logic (unchanged)\n"
+            "        } else {\n"
             "            final_output_color = vec4(u_baseColor, fill_mask);\n"
             "        }\n"
             "\n"
-            "        FragColor = vec4(final_output_color.rgb, final_output_color.a * u_globalAlpha);\n"
+            "        FragColor = vec4(final_output_color.rgb, final_output_color.a * baseFinalAlpha);\n"
             "        return;\n"
             "    }\n"
             "\n"
-            "    // --- Original logic for other shapes (circles, icons) ---\n"
+            "    // Circle logic for buttons and icons\n"
             "    float dist = length(vUv) - 0.5;\n"
             "\n"
             "    if (u_useTexture) {\n"
             "        vec4 texColor = texture(u_texture, vUv + vec2(0.5));\n"
             "        float finalAlpha = (1.0 - smoothstep(-edgeSoftness, edgeSoftness, dist));\n"
-            "        FragColor = vec4(texColor.rgb, texColor.a * finalAlpha * u_globalAlpha);\n"
+            "        FragColor = vec4(texColor.rgb, texColor.a * finalAlpha * baseFinalAlpha);\n"
             "        return;\n"
             "    }\n"
             "\n"
@@ -470,7 +489,7 @@ namespace Urbaxio {
             "    vec3 finalRGB = colorBase.rgb * colorBase.a + colorR.rgb * colorR.a + colorB.rgb * colorB.a;\n"
             "    float finalAlpha = max(colorBase.a, max(colorR.a, colorB.a));\n"
             "\n"
-            "    FragColor = vec4(finalRGB, finalAlpha * u_globalAlpha);\n"
+            "    FragColor = vec4(finalRGB, finalAlpha * baseFinalAlpha);\n"
             "}\n";
     }
     // -- START OF MODIFICATION --
@@ -1989,17 +2008,28 @@ namespace Urbaxio {
         const glm::mat4& model,
         const glm::vec3& baseColor, float aberration, float globalAlpha,
         const glm::vec3& aberrationColor1, const glm::vec3& aberrationColor2,
-        GLuint textureId
+        GLuint textureId,
+        const std::optional<UI::MaskData>& mask
     ) {
         if (vrMenuWidgetShaderProgram == 0 || splatVAO == 0) return;
 
-        glDepthMask(GL_FALSE); // Отключаем ЗАПИСЬ в буфер глубины для полупрозрачных виджетов
+        glDepthMask(GL_FALSE);
 
         glm::mat4 finalView = (view == glm::mat4(1.0f)) ? vrMenuWidgetShaderProgram_viewMatrix_HACK : view;
         glUseProgram(vrMenuWidgetShaderProgram);
         glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(finalView));
         glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+        
+        // Mask uniforms
+        if (mask.has_value()) {
+            glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_enableMask"), 1);
+            glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_maskTransform"), 1, GL_FALSE, glm::value_ptr(mask->transform));
+            glUniform2fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_maskSize"), 1, glm::value_ptr(mask->size));
+            glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_maskCornerRadius"), mask->cornerRadius);
+        } else {
+            glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_enableMask"), 0);
+        }
         
         if (textureId != 0) {
             glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_useTexture"), 1);
@@ -2010,7 +2040,7 @@ namespace Urbaxio {
             glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_useTexture"), 0);
         }
         
-        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 0); // 0 for circle
+        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 0);
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(baseColor));
         glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), globalAlpha);
         glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationAmount"), aberration);
@@ -2036,6 +2066,9 @@ namespace Urbaxio {
             glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
             glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+            
+            // FIX: DISABLE MASK FOR PANEL BACKGROUND!
+            glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_enableMask"), 0);
             
             glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 1);
             glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(color));

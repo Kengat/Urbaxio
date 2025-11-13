@@ -56,6 +56,8 @@ public:
     bool IsPinned() const;
     bool WasPinButtonClicked();
     
+    void OnSizeChanged();
+    
     glm::mat4 transform;
     float alpha = 0.0f;
 

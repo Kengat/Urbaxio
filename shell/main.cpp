@@ -866,20 +866,30 @@ namespace { // Anonymous namespace for helpers
         // --- FINAL: Default constructor parameters from your tuning ---
         float panelWidth = 0.064f;
         float panelHeight = 0.394f;
-        float cornerRadius = 0.5f;
+        float cornerRadius = 0.1f;
 
         auto& toolMenu = vruiManager.AddPanel("StandardTools", "Standard", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
         
-        // Adjust layout for 5 buttons
-        toolMenu.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f, true)); // Reduced spacing a bit
+        // Create a scroll widget with adaptive grid (fixed button sizes)
+        const float padding = 0.01f;
+        const float buttonSize = 0.06f;
+        
+        glm::vec2 scrollSize(panelWidth - padding, panelHeight - padding);
+        auto scrollWidget = std::make_unique<Urbaxio::UI::VRScrollWidget>(glm::vec3(0, 0, 0.01f), scrollSize);
+        
+        // Use adaptive grid with FIXED button sizes
+        auto gridLayout = std::make_unique<Urbaxio::UI::AdaptiveGridLayout>(buttonSize, glm::vec2(0.005f, 0.005f));
+        
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Select", glm::vec3(0), glm::vec2(buttonSize), selectIcon, Urbaxio::Tools::ToolType::Select, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Select); }));
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Line", glm::vec3(0), glm::vec2(buttonSize), lineIcon, Urbaxio::Tools::ToolType::Line, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Line); }));
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Push/Pull", glm::vec3(0), glm::vec2(buttonSize), pushpullIcon, Urbaxio::Tools::ToolType::PushPull, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull); }));
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Move", glm::vec3(0), glm::vec2(buttonSize), moveIcon, Urbaxio::Tools::ToolType::Move, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Move); }));
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Paint", glm::vec3(0), glm::vec2(buttonSize), paintIcon, Urbaxio::Tools::ToolType::Paint, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Paint); }));
 
-        toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Select", glm::vec3(0), glm::vec2(0), selectIcon, Urbaxio::Tools::ToolType::Select, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Select); }));
-        toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Line", glm::vec3(0), glm::vec2(0), lineIcon, Urbaxio::Tools::ToolType::Line, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Line); }));
-        toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Push/Pull", glm::vec3(0), glm::vec2(0), pushpullIcon, Urbaxio::Tools::ToolType::PushPull, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull); }));
-        toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Move", glm::vec3(0), glm::vec2(0), moveIcon, Urbaxio::Tools::ToolType::Move, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Move); }));
-        toolMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Paint", glm::vec3(0), glm::vec2(0), paintIcon, Urbaxio::Tools::ToolType::Paint, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Paint); }));
-
-        toolMenu.RecalculateLayout();
+        scrollWidget->SetLayout(std::move(gridLayout));
+        scrollWidget->RecalculateContentLayout();
+        
+        toolMenu.AddWidget(std::move(scrollWidget));
     }
 
     void SetupSculptToolsPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, const Urbaxio::Tools::ToolContext& toolContext, unsigned int dragIcon, unsigned int pinIcon, unsigned int sculptIcon, unsigned int sculptDrawIcon, unsigned int sculptPinchIcon, unsigned int sculptSmoothIcon, unsigned int voxelizationIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
@@ -903,11 +913,19 @@ namespace { // Anonymous namespace for helpers
 #else
         float panelHeight = 0.394f; // 5 buttons
 #endif
-        float cornerRadius = 0.5f;
+        float cornerRadius = 0.1f;
 
         auto& sculptMenu = vruiManager.AddPanel("SculptureTools", "Sculpture", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIcon, pinIcon, closeIcon, minimizeIcon);
         
-        sculptMenu.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f, true)); // Same layout
+        // Create a scroll widget with adaptive grid (fixed button sizes)
+        const float padding = 0.01f;
+        const float buttonSize = 0.06f;
+        
+        glm::vec2 scrollSize(panelWidth - padding, panelHeight - padding);
+        auto scrollWidget = std::make_unique<Urbaxio::UI::VRScrollWidget>(glm::vec3(0, 0, 0.01f), scrollSize);
+
+        // Use adaptive grid with FIXED button sizes
+        auto gridLayout = std::make_unique<Urbaxio::UI::AdaptiveGridLayout>(buttonSize, glm::vec2(0.005f, 0.005f));
 
         // Voxelize Action Button Callback
         auto voxelizeCallback = [&toolContext]() {
@@ -936,8 +954,8 @@ namespace { // Anonymous namespace for helpers
             {0.99f, 0.46f, 0.29f}  // aberration2
         };
 
-        // Add buttons to the panel, passing the new color themes
-        sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Sculpt", glm::vec3(0), glm::vec2(0), sculptIcon, Urbaxio::Tools::ToolType::Sculpt, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Sculpt); }, sculptSelectedColors, sculptInactiveColors));
+        // Add buttons to the scroll widget, passing the new color themes
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Sculpt", glm::vec3(0), glm::vec2(buttonSize), sculptIcon, Urbaxio::Tools::ToolType::Sculpt, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Sculpt); }, sculptSelectedColors, sculptInactiveColors));
         
 #ifdef URBAXIO_GPU_ENABLED
 #if URBAXIO_GPU_ENABLED
@@ -952,16 +970,19 @@ namespace { // Anonymous namespace for helpers
             {0.29f, 0.99f, 0.66f}, // aberration1
             {0.46f, 0.99f, 0.99f}  // aberration2
         };
-        sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("GPU Sculpt", glm::vec3(0), glm::vec2(0), sculptIcon, Urbaxio::Tools::ToolType::SculptGpu, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptGpu); }, gpuSelectedColors, gpuInactiveColors));
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("GPU Sculpt", glm::vec3(0), glm::vec2(buttonSize), sculptIcon, Urbaxio::Tools::ToolType::SculptGpu, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptGpu); }, gpuSelectedColors, gpuInactiveColors));
 #endif
 #endif
         
-        sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Draw", glm::vec3(0), glm::vec2(0), sculptDrawIcon, Urbaxio::Tools::ToolType::SculptDraw, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptDraw); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
-        sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Pinch", glm::vec3(0), glm::vec2(0), sculptPinchIcon, Urbaxio::Tools::ToolType::SculptPinch, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptPinch); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
-        sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Smooth", glm::vec3(0), glm::vec2(0), sculptSmoothIcon, Urbaxio::Tools::ToolType::SculptSmooth, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptSmooth); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
-        sculptMenu.AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Voxelize", glm::vec3(0), glm::vec2(0), voxelizationIcon, Urbaxio::Tools::ToolType::VoxelizeAction, toolManager, voxelizeCallback, sculptSelectedColors, sculptInactiveColors));
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Draw", glm::vec3(0), glm::vec2(buttonSize), sculptDrawIcon, Urbaxio::Tools::ToolType::SculptDraw, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptDraw); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Pinch", glm::vec3(0), glm::vec2(buttonSize), sculptPinchIcon, Urbaxio::Tools::ToolType::SculptPinch, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptPinch); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Smooth", glm::vec3(0), glm::vec2(buttonSize), sculptSmoothIcon, Urbaxio::Tools::ToolType::SculptSmooth, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptSmooth); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Voxelize", glm::vec3(0), glm::vec2(buttonSize), voxelizationIcon, Urbaxio::Tools::ToolType::VoxelizeAction, toolManager, voxelizeCallback, sculptSelectedColors, sculptInactiveColors));
         
-        sculptMenu.RecalculateLayout();
+        scrollWidget->SetLayout(std::move(gridLayout));
+        scrollWidget->RecalculateContentLayout();
+        
+        sculptMenu.AddWidget(std::move(scrollWidget));
     }
 
     void SetupFileMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon, SDL_Window* window, std::atomic<bool>& isFileDialogActive, std::atomic<bool>& fileDialogResultReady, std::string& filePathFromDialog, std::mutex& filePathMutex, bool& isImportDialog) {

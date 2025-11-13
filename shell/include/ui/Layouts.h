@@ -68,5 +68,29 @@ private:
 
 };
 
+// Adaptive grid that automatically adjusts columns/rows based on panel aspect ratio
+
+class AdaptiveGridLayout : public ILayout {
+
+public:
+
+    AdaptiveGridLayout(float buttonSize = 0.06f, const glm::vec2& spacing = {0.005f, 0.005f}) 
+
+        : buttonSize_(buttonSize), spacing_(spacing) {}
+
+
+
+    void Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets, const glm::vec2& panelSize) override;
+
+
+
+private:
+
+    float buttonSize_;
+
+    glm::vec2 spacing_;
+
+};
+
 }
 

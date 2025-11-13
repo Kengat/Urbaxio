@@ -1,6 +1,7 @@
 #pragma once
 
 #include "snapping.h"
+#include "ui/IVRWidget.h"
 #include <engine/line.h> // <--- ADDED: Fix for unknown type 'Line'
 #include <engine/Material.h> // <-- ADD THIS
 #include <cad_kernel/MeshBuffers.h> // <-- ADDED for Ghost Mesh
@@ -124,7 +125,8 @@ namespace Urbaxio {
             const glm::mat4& model,
             const glm::vec3& baseColor, float aberration, float globalAlpha,
             const glm::vec3& aberrationColor1, const glm::vec3& aberrationColor2,
-            GLuint textureId = 0
+            GLuint textureId = 0,
+            const std::optional<UI::MaskData>& mask = std::nullopt
         );
 
         void RenderVRPanel(

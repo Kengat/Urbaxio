@@ -8,6 +8,7 @@
 #include <glm/gtx/intersect.hpp>
 #include <glm/gtx/norm.hpp>
 #include <algorithm>
+#include <vector>
 #include <numeric>
 #include <limits>
 #include <iostream>
@@ -35,21 +36,43 @@ void VRScrollWidget::ClearState() {
 }
 
 void VRScrollWidget::RecalculateContentLayout() {
-    totalContentHeight_ = 0.0f;
-    const float spacing = 0.005f;
-
-    if (!children_.empty()) {
-        for (const auto& child : children_) {
-            totalContentHeight_ += child->GetSize().y;
+    if (layout_) {
+        // Use layout to position children
+        layout_->Apply(children_, size_);
+        
+        // Calculate total content height from positioned widgets
+        if (children_.empty()) {
+            totalContentHeight_ = 0.0f;
+        } else {
+            float minY = std::numeric_limits<float>::max();
+            float maxY = std::numeric_limits<float>::lowest();
+            for (const auto& child : children_) {
+                const auto& pos = child->GetLocalPosition();
+                const auto& childSize = child->GetSize();
+                minY = std::min(minY, pos.y - childSize.y / 2.0f);
+                maxY = std::max(maxY, pos.y + childSize.y / 2.0f);
+            }
+            totalContentHeight_ = maxY - minY;
         }
-        totalContentHeight_ += (children_.size() - 1) * spacing;
-    }
-    
-    float currentY = size_.y / 2.0f;
-    for (auto& child : children_) {
-        const auto& childSize = child->GetSize();
-        child->SetLocalPosition({0.0f, currentY - childSize.y / 2.0f, 0.001f});
-        currentY -= (childSize.y + spacing);
+    } else {
+        // Old vertical layout logic
+        totalContentHeight_ = 0.0f;
+        const float spacing = 0.005f;
+
+        if (!children_.empty()) {
+            for (const auto& child : children_) {
+                totalContentHeight_ += child->GetSize().y;
+            }
+            totalContentHeight_ += (children_.size() - 1) * spacing;
+        }
+        
+        float currentY = totalContentHeight_ / 2.0f;
+        for (auto& child : children_) {
+            const auto& childSize = child->GetSize();
+            currentY -= childSize.y / 2.0f;
+            child->SetLocalPosition({0.0f, currentY, 0.001f});
+            currentY -= (childSize.y / 2.0f + spacing);
+        }
     }
 
     float maxScroll = std::max(0.0f, totalContentHeight_ - size_.y);
@@ -148,18 +171,42 @@ void VRScrollWidget::Update(const Ray& localRay, bool triggerPressed, bool trigg
 }
 
 void VRScrollWidget::Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& scissor) const {
+    // FIX: Expand mask area slightly beyond panel bounds for smoother edges
+    const float MASK_PADDING = 0.02f; // 20mm padding
+    glm::vec2 expandedSize = size_ + glm::vec2(MASK_PADDING * 2.0f);
+
     glm::mat4 maskTransform = panelTransform * glm::translate(glm::mat4(1.0f), localPosition_);
 
     MaskData maskData = {
         maskTransform,
-        size_,
+        expandedSize,
         0.0f
     };
 
     glm::mat4 contentTransform = panelTransform * glm::translate(glm::mat4(1.0f), localPosition_ + glm::vec3(0.0f, scrollOffset_, 0.0f));
 
+    // FIX: Sort children by distance from camera for correct depth rendering
+    glm::vec3 cameraPos = glm::vec3(glm::inverse(view)[3]);
+    
+    struct ChildWithDepth {
+        IVRWidget* child;
+        float depth;
+    };
+    
+    std::vector<ChildWithDepth> sortedChildren;
     for (auto& child : children_) {
-        child->Render(renderer, textRenderer, contentTransform, view, projection, alpha, maskData);
+        glm::vec3 childWorldPos = contentTransform * glm::vec4(child->GetLocalPosition(), 1.0f);
+        float distance = glm::distance(cameraPos, childWorldPos);
+        sortedChildren.push_back({child.get(), distance});
+    }
+    
+    // Sort back-to-front (furthest first) for correct alpha blending
+    std::sort(sortedChildren.begin(), sortedChildren.end(), 
+              [](const ChildWithDepth& a, const ChildWithDepth& b) { return a.depth > b.depth; });
+
+    // Render sorted children with shader-based mask (no GL_SCISSOR_TEST)
+    for (const auto& item : sortedChildren) {
+        item.child->Render(renderer, textRenderer, contentTransform, view, projection, alpha, maskData);
     }
 }
 
@@ -209,8 +256,15 @@ void VRScrollWidget::HandleClick() {
 
 void VRScrollWidget::SetLocalPosition(const glm::vec3& pos) { localPosition_ = pos; }
 const glm::vec3& VRScrollWidget::GetLocalPosition() const { return localPosition_; }
-void VRScrollWidget::SetSize(const glm::vec2& size) { size_ = size; }
+void VRScrollWidget::SetSize(const glm::vec2& size) { 
+    size_ = size; 
+    RecalculateContentLayout(); // Recalculate when size changes
+}
 glm::vec2 VRScrollWidget::GetSize() const { return size_; }
+
+void VRScrollWidget::SetLayout(std::unique_ptr<ILayout> layout) {
+    layout_ = std::move(layout);
+}
 
 } // namespace Urbaxio::UI
 

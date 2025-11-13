@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/IVRWidget.h"
+#include "ui/Layouts.h"
 #include <vector>
 #include <memory>
 
@@ -26,6 +27,8 @@ public:
     void SetSize(const glm::vec2& size) override;
     glm::vec2 GetSize() const override;
 
+    void SetLayout(std::unique_ptr<ILayout> layout);
+
 private:
     glm::vec3 localPosition_;
     glm::vec2 size_;
@@ -40,6 +43,7 @@ private:
     glm::vec3 dragStartPoint_;
     float scrollOffsetAtDragStart_ = 0.0f;
     IVRWidget* clickedWidget_ = nullptr;
+    std::unique_ptr<ILayout> layout_;
 };
 
 } // namespace Urbaxio::UI
