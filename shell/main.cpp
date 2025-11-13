@@ -864,8 +864,8 @@ namespace { // Anonymous namespace for helpers
                                 glm::scale(glm::mat4(1.0f), scale);
         
         // --- CHANGED: Use the new default size ---
-        float panelWidth = 0.065f;
-        float panelHeight = 0.345f;
+        float panelWidth = 0.067f;
+        float panelHeight = 0.342f;
         float cornerRadius = 0.04f;
 
         auto& toolMenu = vruiManager.AddPanel("StandardTools", "Standard", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
@@ -903,8 +903,8 @@ namespace { // Anonymous namespace for helpers
                                 glm::scale(glm::mat4(1.0f), scale);
 
         // --- CHANGED: Use the new default size ---
-        float panelWidth = 0.065f;
-        float panelHeight = 0.345f;
+        float panelWidth = 0.067f;
+        float panelHeight = 0.342f;
         float cornerRadius = 0.04f;
 
         auto& sculptMenu = vruiManager.AddPanel("SculptureTools", "Sculpture", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIcon, pinIcon, closeIcon, minimizeIcon);

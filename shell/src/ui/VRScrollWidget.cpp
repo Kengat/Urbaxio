@@ -222,8 +222,19 @@ void VRScrollWidget::Update(const Ray& localRay, bool triggerPressed, bool trigg
 void VRScrollWidget::Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& scissor) const {
     ScrollDirection direction = DetermineScrollDirection();
     
-    const float MASK_PADDING = 0.02f;
-    glm::vec2 expandedSize = size_ + glm::vec2(MASK_PADDING * 2.0f);
+    // --- START OF MODIFICATION: Adaptive mask padding based on orientation ---
+    const float LARGE_PADDING = 0.02f;  // Wider sides (perpendicular to scroll)
+    const float SMALL_PADDING = 0.005f; // Narrower sides (parallel to scroll)
+    
+    glm::vec2 expandedSize;
+    if (direction == ScrollDirection::VERTICAL) {
+        // Vertical scroll: wider on left/right, narrower on top/bottom
+        expandedSize = size_ + glm::vec2(LARGE_PADDING * 2.0f, SMALL_PADDING * 2.0f);
+    } else {
+        // Horizontal scroll: narrower on left/right, wider on top/bottom
+        expandedSize = size_ + glm::vec2(SMALL_PADDING * 2.0f, LARGE_PADDING * 2.0f);
+    }
+    // --- END OF MODIFICATION ---
 
     glm::mat4 maskTransform = panelTransform * glm::translate(glm::mat4(1.0f), localPosition_);
 
@@ -336,6 +347,3 @@ void VRScrollWidget::SetLayout(std::unique_ptr<ILayout> layout) {
 }
 
 } // namespace Urbaxio::UI
-
-
-

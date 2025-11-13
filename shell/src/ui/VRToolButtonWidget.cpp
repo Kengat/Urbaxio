@@ -4,6 +4,7 @@
 #include "TextRenderer.h"
 #include <glm/gtx/intersect.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glad/glad.h>
 
 namespace Urbaxio::UI {
 
@@ -54,27 +55,15 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
     glm::vec3 sphereLocalPos = localPosition_; 
     glm::vec3 sphereWorldPos = panelTransform * glm::vec4(sphereLocalPos, 1.0f);
 
-    // -- START OF MODIFICATION --
-
     // Spherical billboard logic using camera's UP vector to prevent flipping.
-
     glm::vec3 cameraPos = renderer.getCyclopsEyePosition();
-
     glm::vec3 cameraUp = glm::inverse(view)[1]; // Get camera's up vector in world space
-
     glm::mat4 lookAtMatrix = glm::lookAt(sphereWorldPos, cameraPos, cameraUp);
-
     glm::mat4 rotationMatrix = glm::inverse(lookAtMatrix);
-
     rotationMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f); // Remove translation component
-
     glm::mat4 sphereModel = glm::translate(glm::mat4(1.0f), sphereWorldPos) *
-
                             rotationMatrix *
-
                             glm::scale(glm::mat4(1.0f), glm::vec3(sphereDiameter * panelLocalScale));
-
-    // -- END OF MODIFICATION --
 
     float aberration = 0.05f + sphereHoverAlpha_ * 0.10f;
     
@@ -83,58 +72,70 @@ void VRToolButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRender
                             currentColors.aberration1, currentColors.aberration2, 0, mask);
 
     if (textureId_ != 0) {
-        // -- START OF MODIFICATION --
-
-        const float ICON_FORWARD_FACTOR = 0.05f; // Reduced forward offset for subtler depth
-
-        const float DISPARITY_OFFSET = 0.02f;    // Reduced stereo disparity
-
+        const float ICON_FORWARD_FACTOR = 0.05f;
+        const float DISPARITY_OFFSET = 0.02f;
         float scaledSphereDiameter = sphereDiameter * panelLocalScale;
-
         
-
         glm::vec3 z_axis = glm::vec3(rotationMatrix[2]);
-
-        // Use base sphereDiameter (not scaled) for offsets to maintain proportional effect regardless of scale
         glm::vec3 iconWorldPos = sphereWorldPos + z_axis * (sphereDiameter * ICON_FORWARD_FACTOR);
-
         int eyeIndex = renderer.getCurrentEyeIndex();
-
-        // For CONCAVE (pushed in): left eye sees left (-), right eye sees right (+)
-
         float disparity = (eyeIndex == 0) ? -DISPARITY_OFFSET : DISPARITY_OFFSET;
-
         
-
         glm::vec3 cameraRight = glm::inverse(view)[0];
-
         iconWorldPos += cameraRight * (sphereDiameter * disparity);
-
         
-
         glm::mat4 iconModel = glm::translate(glm::mat4(1.0f), iconWorldPos) *
-
                               rotationMatrix *
-
                               glm::scale(glm::mat4(1.0f), glm::vec3(scaledSphereDiameter * 0.8f));
-
-        // -- END OF MODIFICATION --
 
         renderer.RenderVRMenuWidget(view, projection, iconModel, glm::vec3(1.0f), 0.0f, alpha, 
                             glm::vec3(0.0f), glm::vec3(0.0f), textureId_, mask);
     }
 
+    // --- START OF MODIFICATION: Render tooltip with background ---
     if (textHoverAlpha_ > 0.01f) {
         float textHeight = size_.y * 0.6f;
-        glm::vec4 textColor = glm::vec4(1.0f, 1.0f, 1.0f, alpha * textHoverAlpha_);
-
+        
+        // Calculate text size for background
+        glm::vec2 textSize = textRenderer.GetTextSize(text_, textHeight);
+        
+        // Position calculations
         float slideOffset = 0.015f;
         glm::vec3 textLocalPos = localPosition_;
         textLocalPos.x += (sphereDiameter * 0.7f);
         textLocalPos.x -= slideOffset * (1.0f - textHoverAlpha_);
-
-        textRenderer.AddTextOnPanel(text_, textLocalPos, textColor, textHeight, Urbaxio::TextAlign::LEFT, mask);
+        textLocalPos.y -= 0.005f; // Slightly lower
+        
+        // Background padding
+        const float PADDING_X = 0.003f;
+        const float PADDING_Y = 0.002f;
+        glm::vec2 bgSize = textSize + glm::vec2(PADDING_X * 2.0f, PADDING_Y * 2.0f);
+        
+        // Background position (centered on text, flat on panel)
+        glm::vec3 bgLocalPos = textLocalPos;
+        bgLocalPos.x += textSize.x * 0.5f; // Move to center of text
+        bgLocalPos.y += 0.005f; // Slightly higher
+        bgLocalPos.z = -0.001f; // Slightly behind text
+        
+        // Transform to world space (flat on panel, no billboard)
+        glm::mat4 bgModel = panelTransform * 
+                           glm::translate(glm::mat4(1.0f), bgLocalPos) *
+                           glm::scale(glm::mat4(1.0f), glm::vec3(bgSize.x, bgSize.y, 1.0f));
+        
+        // Render dark background WITHOUT depth test and WITHOUT mask
+        glDisable(GL_DEPTH_TEST);
+        renderer.RenderVRPanel(view, projection, bgModel, glm::vec3(0.1f, 0.1f, 0.15f), 0.02f, 0.85f * alpha * textHoverAlpha_);
+        glEnable(GL_DEPTH_TEST);
+        
+        // Render text WITHOUT depth test and WITHOUT mask
+        // IMPORTANT: Set the correct transform that includes scroll offset
+        textRenderer.SetPanelModelMatrix(panelTransform);
+        glDisable(GL_DEPTH_TEST);
+        glm::vec4 textColor = glm::vec4(1.0f, 1.0f, 1.0f, alpha * textHoverAlpha_);
+        textRenderer.AddTextOnPanel(text_, textLocalPos, textColor, textHeight, Urbaxio::TextAlign::LEFT, std::nullopt);
+        glEnable(GL_DEPTH_TEST);
     }
+    // --- END OF MODIFICATION ---
 }
 
 void VRToolButtonWidget::SetLocalPosition(const glm::vec3& pos) { localPosition_ = pos; }
@@ -146,4 +147,3 @@ glm::vec2 VRToolButtonWidget::GetSize() const { return size_; }
 void VRToolButtonWidget::SetSize(const glm::vec2& size) { size_ = size; }
 
 } // namespace Urbaxio::UI
-
