@@ -138,10 +138,12 @@ void SculptTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, 
         isSculpting_ = true;
         sculptedObjectId_ = hitObjectId;
         
-        Engine::SceneObject* obj = context.scene->get_object_by_id(sculptedObjectId_);
+        Engine::SceneObject* obj = context.scene->get_object_by_id(hitObjectId);
         auto* volGeom = obj ? dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry()) : nullptr;
         if (volGeom && volGeom->getGrid()) {
-            gridDataBeforeStroke_ = volGeom->getGrid()->toFullDenseArray();
+            // NEW: Capture the active bounding box and the dense array relative to it
+            savedBeforeBBox_ = volGeom->getGrid()->getActiveBounds();
+            gridDataBeforeStroke_ = volGeom->getGrid()->toDenseArray();
             std::cout << "[SculptTool] Mouse Down. Captured state for object " << sculptedObjectId_ 
                       << " (" << volGeom->getGrid()->getActiveVoxelCount() << " active voxels)" << std::endl;
             
@@ -166,14 +168,21 @@ void SculptTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
         return;
     }
     
+    // NEW: Update logical dimensions to encompass all sculpted changes
+    volGeom->getGrid()->updateDimensions();
+    
     // The live grid is now in the "after" state. Capture it for the command.
-    std::vector<float> dataAfter = volGeom->getGrid()->toFullDenseArray();
+    // NEW: Capture the new active bounding box and the corresponding dense array
+    openvdb::CoordBBox afterBBox = volGeom->getGrid()->getActiveBounds();
+    std::vector<float> dataAfter = volGeom->getGrid()->toDenseArray();
     
     auto command = std::make_unique<Engine::SculptCommand>(
         context.scene,
         sculptedObjectId_,
         std::move(gridDataBeforeStroke_), // 'before' state was captured on mouse down
-        std::move(dataAfter)
+        std::move(dataAfter),
+        savedBeforeBBox_, // Pass the 'before' bounding box
+        afterBBox         // Pass the 'after' bounding box
     );
     context.scene->getCommandManager()->ExecuteCommand(std::move(command));
 

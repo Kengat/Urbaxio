@@ -2,6 +2,7 @@
 
 #include "tools/ITool.h"
 
+#include <openvdb/openvdb.h>
 #include <glm/glm.hpp>
 
 namespace Urbaxio::Tools {
@@ -39,6 +40,8 @@ private:
     std::vector<float> gridDataBeforeStroke_;
     glm::vec3 lastBrushApplyPos_{0.0f};
     std::vector<float> workingGridData_;
+    // NEW: Bounding box for the 'before' state of a stroke
+    openvdb::CoordBBox savedBeforeBBox_;
 };
 
 } // namespace Urbaxio::Tools
