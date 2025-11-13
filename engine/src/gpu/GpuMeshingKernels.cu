@@ -588,24 +588,43 @@ __global__ void GenerateTrianglesKernel(
         outVertices[globalOffset * 9 + 7] = v1.y;
         outVertices[globalOffset * 9 + 8] = v1.z;
         
-        // Calculate normal (swap edges to match winding)
-        float3 edge1 = make_float3(v2.x - v0.x, v2.y - v0.y, v2.z - v0.z);
-        float3 edge2 = make_float3(v1.x - v0.x, v1.y - v0.y, v1.z - v0.z);
-        float3 normal = make_float3(
-            edge1.y * edge2.z - edge1.z * edge2.y,
-            edge1.z * edge2.x - edge1.x * edge2.z,
-            edge1.x * edge2.y - edge1.y * edge2.x
-        );
-        float len = sqrtf(normal.x*normal.x + normal.y*normal.y + normal.z*normal.z);
-        if (len > 0.0001f) {
-            normal.x /= len; normal.y /= len; normal.z /= len;
-        }
+        // Calculate smooth normals using SDF gradient at each vertex
+        float3 vertices[3] = {v0, v2, v1};
         
-        // Write normals
         for (int j = 0; j < 3; ++j) {
-            outNormals[globalOffset * 9 + j*3 + 0] = normal.x;
-            outNormals[globalOffset * 9 + j*3 + 1] = normal.y;
-            outNormals[globalOffset * 9 + j*3 + 2] = normal.z;
+            nanovdb::Vec3f worldPos(vertices[j].x, vertices[j].y, vertices[j].z);
+            nanovdb::Vec3f indexPos = grid->worldToIndexF(worldPos);
+            nanovdb::Coord center(
+                __float2int_rn(indexPos[0]),
+                __float2int_rn(indexPos[1]),
+                __float2int_rn(indexPos[2])
+            );
+            
+            float dx = acc.getValue(nanovdb::Coord(center[0]+1, center[1], center[2])) -
+                       acc.getValue(nanovdb::Coord(center[0]-1, center[1], center[2]));
+            float dy = acc.getValue(nanovdb::Coord(center[0], center[1]+1, center[2])) -
+                       acc.getValue(nanovdb::Coord(center[0], center[1]-1, center[2]));
+            float dz = acc.getValue(nanovdb::Coord(center[0], center[1], center[2]+1)) -
+                       acc.getValue(nanovdb::Coord(center[0], center[1], center[2]-1));
+            
+            float len = sqrtf(dx*dx + dy*dy + dz*dz);
+            if (len > 0.0001f) {
+                dx /= len; dy /= len; dz /= len;
+            } else {
+                float3 edge1 = make_float3(v2.x - v0.x, v2.y - v0.y, v2.z - v0.z);
+                float3 edge2 = make_float3(v1.x - v0.x, v1.y - v0.y, v1.z - v0.z);
+                dx = edge1.y * edge2.z - edge1.z * edge2.y;
+                dy = edge1.z * edge2.x - edge1.x * edge2.z;
+                dz = edge1.x * edge2.y - edge1.y * edge2.x;
+                len = sqrtf(dx*dx + dy*dy + dz*dz);
+                if (len > 0.0001f) {
+                    dx /= len; dy /= len; dz /= len;
+                }
+            }
+            
+            outNormals[globalOffset * 9 + j*3 + 0] = dx;
+            outNormals[globalOffset * 9 + j*3 + 1] = dy;
+            outNormals[globalOffset * 9 + j*3 + 2] = dz;
         }
         
         triCounter++;
