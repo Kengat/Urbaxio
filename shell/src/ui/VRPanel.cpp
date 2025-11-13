@@ -419,7 +419,7 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     textRenderer.Render(view, projection);
 }
 
-HitResult VRPanel::CheckIntersection(const Ray& worldRay, const glm::mat4& parentTransform) {
+HitResult VRPanel::CheckIntersection(const Ray& worldRay, const glm::mat4& parentTransform) const {
     HitResult result;
     if (!isVisible_) return result;
     

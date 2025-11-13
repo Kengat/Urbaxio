@@ -2251,19 +2251,34 @@ int main(int argc, char* argv[]) {
                     }
 
                 // --- VR Tool Interaction Logic ---
-                if (toolManager.GetActiveTool() && !isInteractingWithPanelSystem) {
-                    // Only update hover if a VR UI Panel is not being interacted with
-                    if (vruiManager.GetHoveredPanel() == nullptr) {
+                // NEW: Check if ray is blocked by ANY visible panel
+                bool isRayBlockedByUI = vruiManager.IsRayBlockedByPanel(worldRay, leftControllerUnscaledTransform);
+                
+                // NEW: Also check if ray hits the menu sphere widget when it's visible
+                if (!isRayBlockedByUI && menuSphereWidget && isLeftTriggerPressed) {
+                    glm::mat4 sphereWorldTransform = leftControllerUnscaledTransform * menuSphereOffset;
+                    Urbaxio::UI::Ray localRay;
+                    glm::mat4 invSphereTransform = glm::inverse(sphereWorldTransform);
+                    localRay.origin = invSphereTransform * glm::vec4(vrRayOrigin, 1.0f);
+                    localRay.direction = glm::normalize(glm::vec3(invSphereTransform * glm::vec4(vrRayDirection, 0.0f)));
+                    Urbaxio::UI::HitResult sphereHit = menuSphereWidget->CheckIntersection(localRay);
+                    if (sphereHit.didHit) {
+                        isRayBlockedByUI = true;
+                    }
+                }
+                
+                if (toolManager.GetActiveTool() && !isInteractingWithPanelSystem && !isRayBlockedByUI) {
+                    // Only update hover if ray is not blocked by UI
                     if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::PushPull) {
                         static_cast<Urbaxio::Tools::PushPullTool*>(toolManager.GetActiveTool())->updateHover(vrRayOrigin, vrRayDirection);
                     }
-                    } else {
-                        // Clear hover if pointer is on any panel
-                        *toolContext.hoveredObjId = 0;
-                        toolContext.hoveredFaceTriangleIndices->clear();
-                    }
-                    // Step 2: Update tool with current snap result for drawing/actions
+                    
+                    // Update tool with current snap result for drawing/actions
                     toolManager.GetActiveTool()->OnUpdate(vrSnap, vrRayOrigin, vrRayDirection);
+                } else if (isRayBlockedByUI) {
+                    // Clear hover if pointer is blocked by UI
+                    *toolContext.hoveredObjId = 0;
+                    toolContext.hoveredFaceTriangleIndices->clear();
                 }
 
                 // Update numpad display text
@@ -2319,7 +2334,7 @@ int main(int argc, char* argv[]) {
                         clickConsumed = vruiManager.HandleClick();
                     }
                     
-                    if (!sphereConsumedClick && !clickConsumed && !isInteractingWithPanelSystem) {
+                    if (!sphereConsumedClick && !clickConsumed && !isInteractingWithPanelSystem && !isRayBlockedByUI) {
                         // If not interacting with UI, it's a world action for the current tool
                         toolManager.OnLeftMouseDown(0, 0, shiftDown, ctrlDown, vrRayOrigin, vrRayDirection);
                     }

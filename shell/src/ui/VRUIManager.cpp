@@ -83,5 +83,18 @@ const std::map<std::string, VRPanel>& VRUIManager::GetPanels() const {
     return panels_;
 }
 
+bool VRUIManager::IsRayBlockedByPanel(const Ray& worldRay, const glm::mat4& parentTransform) const {
+    // Check all panels that are currently visible (even partially fading in/out)
+    for (const auto& [name, panel] : panels_) {
+        if (panel.alpha > 0.01f && panel.IsVisible()) {
+            HitResult hit = panel.CheckIntersection(worldRay, parentTransform);
+            if (hit.didHit) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 }
 

@@ -36,7 +36,7 @@ public:
     void RecalculateLayout();
     void Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, bool aButtonHeld, bool bButtonIsPressed, float stickY, bool isLeftTriggerPressed);
     void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection) const;
-    HitResult CheckIntersection(const Ray& worldRay, const glm::mat4& parentTransform);
+    HitResult CheckIntersection(const Ray& worldRay, const glm::mat4& parentTransform) const;
     bool HandleClick();
 
     void SetVisible(bool visible);

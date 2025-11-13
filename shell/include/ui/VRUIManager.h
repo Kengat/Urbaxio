@@ -25,6 +25,7 @@ public:
     void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection);
     bool HandleClick();
     bool IsInteracting() const;
+    bool IsRayBlockedByPanel(const Ray& worldRay, const glm::mat4& parentTransform) const;
 
 private:
     std::map<std::string, VRPanel> panels_;
