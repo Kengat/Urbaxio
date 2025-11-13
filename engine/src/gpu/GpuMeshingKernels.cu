@@ -362,17 +362,17 @@ __global__ void CountTrianglesPerCellKernel(
     int cy = (cellIdxInLeaf / 7) % 7;
     int cz = cellIdxInLeaf / 49;
     
-    // Sample 8 corners
+    // Sample 8 corners with standard Marching Cubes vertex order
+    const int vertexOrder[8][3] = {
+        {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0},
+        {0,0,1}, {1,0,1}, {1,1,1}, {0,1,1}
+    };
     float v[8];
     for (int i = 0; i < 8; ++i) {
-        int dx = (i & 1);
-        int dy = (i & 2) >> 1;
-        int dz = (i & 4) >> 2;
+        int gx = leafOrigin[0] + cx + vertexOrder[i][0];
+        int gy = leafOrigin[1] + cy + vertexOrder[i][1];
+        int gz = leafOrigin[2] + cz + vertexOrder[i][2];
         
-        int gx = leafOrigin[0] + cx + dx;
-        int gy = leafOrigin[1] + cy + dy;
-        int gz = leafOrigin[2] + cz + dz;
-
         v[i] = acc.getValue(nanovdb::Coord(gx, gy, gz));
     }
     
@@ -494,18 +494,18 @@ __global__ void GenerateTrianglesKernel(
     int cy = (cellIdxInLeaf / 7) % 7;
     int cz = cellIdxInLeaf / 49;
     
-    // Sample 8 corners
+    // Sample 8 corners with standard Marching Cubes vertex order
+    const int vertexOrder[8][3] = {
+        {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0},
+        {0,0,1}, {1,0,1}, {1,1,1}, {0,1,1}
+    };
     float v[8];
     float3 p[8];
     
     for (int i = 0; i < 8; ++i) {
-        int dx = (i & 1);
-        int dy = (i & 2) >> 1;
-        int dz = (i & 4) >> 2;
-        
-        int gx = leafOrigin[0] + cx + dx;
-        int gy = leafOrigin[1] + cy + dy;
-        int gz = leafOrigin[2] + cz + dz;
+        int gx = leafOrigin[0] + cx + vertexOrder[i][0];
+        int gy = leafOrigin[1] + cy + vertexOrder[i][1];
+        int gz = leafOrigin[2] + cz + vertexOrder[i][2];
         
         // DEBUG: Print coordinates for cell 0
         if (globalCellIdx == 0 && i == 0) {
@@ -577,20 +577,20 @@ __global__ void GenerateTrianglesKernel(
         float3 v1 = vertList[d_triTable[cubeIndex][i+1]];
         float3 v2 = vertList[d_triTable[cubeIndex][i+2]];
         
-        // Write vertices
+        // Write vertices (swap v1/v2 to fix winding for SDF)
         outVertices[globalOffset * 9 + 0] = v0.x;
         outVertices[globalOffset * 9 + 1] = v0.y;
         outVertices[globalOffset * 9 + 2] = v0.z;
-        outVertices[globalOffset * 9 + 3] = v1.x;
-        outVertices[globalOffset * 9 + 4] = v1.y;
-        outVertices[globalOffset * 9 + 5] = v1.z;
-        outVertices[globalOffset * 9 + 6] = v2.x;
-        outVertices[globalOffset * 9 + 7] = v2.y;
-        outVertices[globalOffset * 9 + 8] = v2.z;
+        outVertices[globalOffset * 9 + 3] = v2.x;
+        outVertices[globalOffset * 9 + 4] = v2.y;
+        outVertices[globalOffset * 9 + 5] = v2.z;
+        outVertices[globalOffset * 9 + 6] = v1.x;
+        outVertices[globalOffset * 9 + 7] = v1.y;
+        outVertices[globalOffset * 9 + 8] = v1.z;
         
-        // Calculate normal
-        float3 edge1 = make_float3(v1.x - v0.x, v1.y - v0.y, v1.z - v0.z);
-        float3 edge2 = make_float3(v2.x - v0.x, v2.y - v0.y, v2.z - v0.z);
+        // Calculate normal (swap edges to match winding)
+        float3 edge1 = make_float3(v2.x - v0.x, v2.y - v0.y, v2.z - v0.z);
+        float3 edge2 = make_float3(v1.x - v0.x, v1.y - v0.y, v1.z - v0.z);
         float3 normal = make_float3(
             edge1.y * edge2.z - edge1.z * edge2.y,
             edge1.z * edge2.x - edge1.x * edge2.z,
@@ -1002,4 +1002,7 @@ bool GpuMeshingKernels::MarchingCubesAsync(
 }
 
 } // namespace Urbaxio::Engine
+
+
+
 
