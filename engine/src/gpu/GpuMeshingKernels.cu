@@ -600,12 +600,16 @@ __global__ void GenerateTrianglesKernel(
                 __float2int_rn(indexPos[2])
             );
             
-            float dx = acc.getValue(nanovdb::Coord(center[0]+1, center[1], center[2])) -
-                       acc.getValue(nanovdb::Coord(center[0]-1, center[1], center[2]));
-            float dy = acc.getValue(nanovdb::Coord(center[0], center[1]+1, center[2])) -
-                       acc.getValue(nanovdb::Coord(center[0], center[1]-1, center[2]));
-            float dz = acc.getValue(nanovdb::Coord(center[0], center[1], center[2]+1)) -
-                       acc.getValue(nanovdb::Coord(center[0], center[1], center[2]-1));
+            const int h = 2;
+            float dx = acc.getValue(nanovdb::Coord(center[0]+h, center[1], center[2])) -
+                       acc.getValue(nanovdb::Coord(center[0]-h, center[1], center[2]));
+            float dy = acc.getValue(nanovdb::Coord(center[0], center[1]+h, center[2])) -
+                       acc.getValue(nanovdb::Coord(center[0], center[1]-h, center[2]));
+            float dz = acc.getValue(nanovdb::Coord(center[0], center[1], center[2]+h)) -
+                       acc.getValue(nanovdb::Coord(center[0], center[1], center[2]-h));
+            dx /= (2.0f * h);
+            dy /= (2.0f * h);
+            dz /= (2.0f * h);
             
             float len = sqrtf(dx*dx + dy*dy + dz*dz);
             if (len > 0.0001f) {
