@@ -316,6 +316,17 @@ namespace { // Anonymous namespace for helpers
                                glm::scale(glm::mat4(1.0f), scale);
         
         auto& panelMgr = vruiManager.AddPanel("PanelManager", "Panels", glm::vec2(0.217f, 0.381f), panelOffset, 0.1f, dragIcon, closeIcon, minimizeIcon);
+        // --- NEW: Add 10 test buttons to test scrolling ---
+        for (int i = 1; i <= 10; i++) {
+            std::string buttonText = "Test Button " + std::to_string(i);
+            panelMgr.AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>(
+                buttonText, 
+                glm::vec3(0), 
+                glm::vec2(0.15f, 0.03f), 
+                [i](){ std::cout << "Clicked Test Button " << i << std::endl; }
+            ));
+        }
+        // --- END NEW ---
         auto listWidget = std::make_unique<VRPanelListWidget>(vruiManager, glm::vec3(0.0f, -0.01f, 0.01f), glm::vec2(0.18f, 0.3f), backIcon, minimizeIcon, closeIcon);
         panelMgr.AddWidget(std::move(listWidget));
     }

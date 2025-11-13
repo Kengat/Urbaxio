@@ -27,6 +27,7 @@ void VRScrollWidget::ClearChildren() {
 
 void VRScrollWidget::ClearState() {
     hoveredChild_ = nullptr;
+    clickedWidget_ = nullptr;
     isAwaitingDrag_ = false;
     isDraggingScroll_ = false;
     scrollOffset_ = 0.0f;
@@ -56,67 +57,94 @@ void VRScrollWidget::RecalculateContentLayout() {
 }
 
 void VRScrollWidget::Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) {
-	Ray contentRay = localRay;
-	contentRay.origin -= localPosition_;
-	contentRay.origin.y -= scrollOffset_;
+    Ray contentRay = localRay;
+    contentRay.origin -= localPosition_;
+    contentRay.origin.y -= scrollOffset_;
 
-	HitResult hit = CheckIntersection(localRay);
-	bool isInside = hit.didHit;
-	float maxScroll = std::max(0.0f, totalContentHeight_ - size_.y);
+    HitResult hit = CheckIntersection(localRay);
+    bool isInside = hit.didHit;
+    float maxScroll = std::max(0.0f, totalContentHeight_ - size_.y);
 
-	const float STICK_SCROLL_SPEED = 0.05f;
-	const float STICK_DEAD_ZONE = 0.2f;
-	if (isInside && !triggerHeld && std::abs(stickY) > STICK_DEAD_ZONE) {
-		scrollOffset_ += stickY * STICK_SCROLL_SPEED;
-		scrollOffset_ = std::clamp(scrollOffset_, 0.0f, maxScroll);
-	}
+    // Stick scrolling (only when NOT holding trigger)
+    const float STICK_SCROLL_SPEED = 0.05f;
+    const float STICK_DEAD_ZONE = 0.2f;
+    if (isInside && !triggerHeld && std::abs(stickY) > STICK_DEAD_ZONE) {
+        scrollOffset_ += stickY * STICK_SCROLL_SPEED;
+        scrollOffset_ = std::clamp(scrollOffset_, 0.0f, maxScroll);
+    }
 
-	const float kDragThresholdSq = 0.003f * 0.003f;
-	if (triggerPressed && isInside) {
-		isAwaitingDrag_ = true;
-		dragStartPoint_ = localRay.origin + localRay.direction * hit.distance;
-		scrollOffsetAtDragStart_ = scrollOffset_;
-	}
+    const float kDragThresholdSq = 0.003f * 0.003f;
 
-	if (triggerHeld && isAwaitingDrag_) {
-		float t_plane;
-		if (glm::intersectRayPlane(localRay.origin, localRay.direction, localPosition_, glm::vec3(0, 0, 1), t_plane)) {
-			glm::vec3 currentDragPoint = localRay.origin + localRay.direction * t_plane;
-			if (glm::distance2(currentDragPoint, dragStartPoint_) > kDragThresholdSq) {
-				isDraggingScroll_ = true;
-				isAwaitingDrag_ = false;
-			}
-		}
-	}
+    // On trigger press: remember the widget we're hovering AND start awaiting drag
+    if (triggerPressed && isInside) {
+        isAwaitingDrag_ = true;
+        dragStartPoint_ = localRay.origin + localRay.direction * hit.distance;
+        scrollOffsetAtDragStart_ = scrollOffset_;
+        // NEW: Remember which widget was clicked
+        clickedWidget_ = reinterpret_cast<IVRWidget*>(hit.hitWidget);
+    }
 
-	if (triggerHeld && isDraggingScroll_) {
-		float t_plane;
-		if (glm::intersectRayPlane(localRay.origin, localRay.direction, localPosition_, glm::vec3(0, 0, 1), t_plane)) {
-			glm::vec3 currentDragPoint = localRay.origin + localRay.direction * t_plane;
-			float deltaY = currentDragPoint.y - dragStartPoint_.y;
-			scrollOffset_ = std::clamp(scrollOffsetAtDragStart_ + deltaY, 0.0f, maxScroll);
-		}
-	}
+    // While holding trigger: check if we exceed threshold to start scrolling
+    if (triggerHeld && isAwaitingDrag_) {
+        float t_plane;
+        if (glm::intersectRayPlane(localRay.origin, localRay.direction, localPosition_, glm::vec3(0, 0, 1), t_plane)) {
+            glm::vec3 currentDragPoint = localRay.origin + localRay.direction * t_plane;
+            if (glm::distance2(currentDragPoint, dragStartPoint_) > kDragThresholdSq) {
+                // We've moved enough - start actual scrolling
+                isDraggingScroll_ = true;
+                isAwaitingDrag_ = false;
+                clickedWidget_ = nullptr; // Cancel click
+            }
+        }
+    }
 
-	if (triggerReleased) {
-		isAwaitingDrag_ = false;
-		isDraggingScroll_ = false;
-	}
+    // Active scrolling
+    if (triggerHeld && isDraggingScroll_) {
+        float t_plane;
+        if (glm::intersectRayPlane(localRay.origin, localRay.direction, localPosition_, glm::vec3(0, 0, 1), t_plane)) {
+            glm::vec3 currentDragPoint = localRay.origin + localRay.direction * t_plane;
+            float deltaY = currentDragPoint.y - dragStartPoint_.y;
+            scrollOffset_ = std::clamp(scrollOffsetAtDragStart_ + deltaY, 0.0f, maxScroll);
+        }
+    }
 
-	IVRWidget* newHovered = (!isDraggingScroll_ && !isAwaitingDrag_ && isInside) ? reinterpret_cast<IVRWidget*>(hit.hitWidget) : nullptr;
-	if (hoveredChild_ != newHovered) {
-		if (hoveredChild_) hoveredChild_->SetHover(false);
-		hoveredChild_ = newHovered;
-		if (hoveredChild_) hoveredChild_->SetHover(true);
-	}
+    // On trigger release: if we didn't scroll, it's a click!
+    if (triggerReleased) {
+        if (isAwaitingDrag_ && clickedWidget_) {
+            // No scroll happened - this was a click!
+            clickedWidget_->HandleClick();
+        }
+        
+        // Reset all drag state
+        isAwaitingDrag_ = false;
+        isDraggingScroll_ = false;
+        clickedWidget_ = nullptr;
+    }
 
-    // --- START OF MODIFICATION ---
+    // NEW HOVER LOGIC: Keep hover active during awaiting phase, only clear during actual scroll
+    IVRWidget* newHovered = nullptr;
+    if (isDraggingScroll_) {
+        // During active scrolling - no hover
+        newHovered = nullptr;
+    } else if (isAwaitingDrag_ && clickedWidget_) {
+        // During awaiting phase - keep hover on clicked widget
+        newHovered = clickedWidget_;
+    } else if (isInside) {
+        // Normal hover
+        newHovered = reinterpret_cast<IVRWidget*>(hit.hitWidget);
+    }
+    
+    if (hoveredChild_ != newHovered) {
+        if (hoveredChild_) hoveredChild_->SetHover(false);
+        hoveredChild_ = newHovered;
+        if (hoveredChild_) hoveredChild_->SetHover(true);
+    }
+
+    // Update children with proper gating
     for (auto& child : children_) {
         bool childIsHovered = (hoveredChild_ == child.get());
-        // Pass triggerPressed and aButtonPressed separately, gated by hover.
         child->Update(contentRay, triggerPressed && childIsHovered, triggerReleased, triggerHeld, aButtonPressed && childIsHovered, stickY);
     }
-    // --- END OF MODIFICATION ---
 }
 
 void VRScrollWidget::Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& scissor) const {

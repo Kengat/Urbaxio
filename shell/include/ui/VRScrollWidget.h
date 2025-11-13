@@ -39,6 +39,7 @@ private:
     bool isDraggingScroll_ = false;
     glm::vec3 dragStartPoint_;
     float scrollOffsetAtDragStart_ = 0.0f;
+    IVRWidget* clickedWidget_ = nullptr;
 };
 
 } // namespace Urbaxio::UI
