@@ -1,31 +1,19 @@
-// VR Draw Tool - Multi-chunk GPU system (unlimited + fast)
-
+// VR Draw Tool - Using custom DynamicGpuHashGrid (unlimited + fast)
 #include "tools/VrDrawTool.h"
 
 #include "engine/Scene.h"
 #include "engine/scene_object.h"
-#include "engine/geometry/VolumetricGeometry.h"
-#include "engine/geometry/VoxelGrid.h"
-#include "engine/gpu/GpuVoxelManager.h"
-#include "engine/gpu/GpuSculptKernels.h"
-#include "engine/gpu/GpuMeshingKernels.h"
+#include "engine/gpu/DynamicGpuHashGrid.h"
 #include "engine/MeshManager.h"
 #include "LoadingManager.h"
 #include "imgui.h"
 
-#include <openvdb/openvdb.h>
-#include <cuda_runtime.h>
 #include <iostream>
-#include <string>
+#include <cuda_runtime.h>
+#include <chrono>
+#include <optional>
 
 namespace Urbaxio::Shell {
-
-struct ChunkInfo {
-    uint64_t objectId = 0;
-    uint64_t gpuHandle = 0;
-    glm::ivec3 chunkCoord{0};
-    openvdb::CoordBBox bounds;
-};
 
 struct VrDrawTool::Impl {
     Tools::ToolContext context;
@@ -37,337 +25,302 @@ struct VrDrawTool::Impl {
     float brushStrength = 1.0f;
     float minDrawDistanceFactor = 0.3f;
     
-    std::vector<ChunkInfo> chunks;
-    ChunkInfo* activeChunk = nullptr;
+    // Our custom GPU hash grid (UNLIMITED range!)
+    std::unique_ptr<Engine::DynamicGpuHashGrid> hashGrid;
+    uint64_t sceneObjectId = 0;
     
-    Engine::GpuVoxelManager* gpuManager = nullptr;
     void* cudaStream = nullptr;
+    
+    struct PendingMeshUpdate {
+        void* cudaEvent = nullptr;
+        float* d_vertices = nullptr;
+        float* d_normals = nullptr;
+        int* d_triangleCounter = nullptr;
+    };
+    std::optional<PendingMeshUpdate> pendingUpdate;
     
     int strokeCount = 0;
     float totalGpuTime = 0.0f;
     
-    static constexpr int CHUNK_SIZE = 512;
-    static constexpr float VOXEL_SIZE = 0.05f;
-    
     float getMinDrawDistance() const {
         return brushRadius * minDrawDistanceFactor;
-    }
-    
-    glm::ivec3 worldPosToChunkCoord(const glm::vec3& worldPos) const {
-        float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
-        return glm::ivec3(
-            static_cast<int>(std::floor(worldPos.x / chunkWorldSize)),
-            static_cast<int>(std::floor(worldPos.y / chunkWorldSize)),
-            static_cast<int>(std::floor(worldPos.z / chunkWorldSize))
-        );
-    }
-    
-    ChunkInfo* findChunk(const glm::ivec3& coord) {
-        for (auto& chunk : chunks) {
-            if (chunk.chunkCoord == coord) return &chunk;
-        }
-        return nullptr;
     }
 };
 
 VrDrawTool::VrDrawTool() : impl_(std::make_unique<Impl>()) {
     cudaStreamCreate(reinterpret_cast<cudaStream_t*>(&impl_->cudaStream));
-    std::cout << "[VrDrawTool] Multi-chunk GPU system initialized (UNLIMITED + FAST)" << std::endl;
+    std::cout << "[VrDrawTool] Initialized with DynamicGpuHashGrid (UNLIMITED + FAST)" << std::endl;
+}
+
+Tools::ToolType VrDrawTool::GetType() const {
+    return Tools::ToolType::SculptDraw;
+}
+
+const char* VrDrawTool::GetName() const {
+    return "VR Draw";
 }
 
 VrDrawTool::~VrDrawTool() {
+    checkForAsyncUpdate(true);
+    
     if (impl_->cudaStream) {
         cudaStreamDestroy(static_cast<cudaStream_t>(impl_->cudaStream));
     }
     
-    if (impl_->gpuManager) {
-    delete impl_->gpuManager;
-        impl_->gpuManager = nullptr;
+    if (impl_->pendingUpdate && impl_->pendingUpdate->cudaEvent) {
+        cudaEventDestroy(static_cast<cudaEvent_t>(impl_->pendingUpdate->cudaEvent));
     }
 }
 
 void VrDrawTool::Activate(const Tools::ToolContext& context) {
     Tools::ITool::Activate(context);
     impl_->context = context;
-    
-    if (!impl_->gpuManager) {
-        impl_->gpuManager = new Engine::GpuVoxelManager();
-    }
-    
     impl_->strokeCount = 0;
     impl_->totalGpuTime = 0.0f;
-    std::cout << "[VrDrawTool] Activated - ready for unlimited drawing!" << std::endl;
+
+    std::cout << "[VrDrawTool] Activated - ready for UNLIMITED drawing!" << std::endl;
 }
 
 void VrDrawTool::Deactivate() {
+    checkForAsyncUpdate(true);
+    
     Tools::ITool::Deactivate();
     impl_->isDrawing = false;
-    impl_->activeChunk = nullptr;
-    impl_->chunks.clear();
+    impl_->hashGrid.reset();
+    impl_->sceneObjectId = 0;
 }
 
-Engine::SceneObject* VrDrawTool::createChunk(const glm::ivec3& chunkCoord) {
-    std::cout << "[VrDrawTool] Creating chunk at " << chunkCoord.x << "," 
-              << chunkCoord.y << "," << chunkCoord.z << std::endl;
-    
-    glm::vec3 chunkWorldOrigin(
-        chunkCoord.x * impl_->CHUNK_SIZE * impl_->VOXEL_SIZE,
-        chunkCoord.y * impl_->CHUNK_SIZE * impl_->VOXEL_SIZE,
-        chunkCoord.z * impl_->CHUNK_SIZE * impl_->VOXEL_SIZE
-    );
-    
-    glm::uvec3 dims(impl_->CHUNK_SIZE, impl_->CHUNK_SIZE, impl_->CHUNK_SIZE);
-    auto grid = std::make_unique<Engine::VoxelGrid>(dims, chunkWorldOrigin, impl_->VOXEL_SIZE);
-        
-        auto floatGrid = openvdb::FloatGrid::create(1.0f);
-    floatGrid->setTransform(
-        openvdb::math::Transform::createLinearTransform(impl_->VOXEL_SIZE)
-        );
-        
-    openvdb::Coord chunkOrigin(
-        chunkCoord.x * impl_->CHUNK_SIZE,
-        chunkCoord.y * impl_->CHUNK_SIZE,
-        chunkCoord.z * impl_->CHUNK_SIZE
-    );
-        
-        auto accessor = floatGrid->getAccessor();
-    const int SHELL = 4;
-    
-    for (int face = 0; face < 6; ++face) {
-        for (int u = 0; u < impl_->CHUNK_SIZE; ++u) {
-            for (int v = 0; v < impl_->CHUNK_SIZE; ++v) {
-                for (int s = 0; s < SHELL; ++s) {
-                    openvdb::Coord ijk;
-                    switch(face) {
-                        case 0: ijk = chunkOrigin.offsetBy(s, u, v); break;
-                        case 1: ijk = chunkOrigin.offsetBy(impl_->CHUNK_SIZE-1-s, u, v); break;
-                        case 2: ijk = chunkOrigin.offsetBy(u, s, v); break;
-                        case 3: ijk = chunkOrigin.offsetBy(u, impl_->CHUNK_SIZE-1-s, v); break;
-                        case 4: ijk = chunkOrigin.offsetBy(u, v, s); break;
-                        case 5: ijk = chunkOrigin.offsetBy(u, v, impl_->CHUNK_SIZE-1-s); break;
-                    }
-                    accessor.setValue(ijk, 1.0f);
-                }
-                }
-            }
-        }
-        
-        grid->grid_ = floatGrid;
-        
-    std::string chunkName = "Drawing Chunk " + std::to_string(chunkCoord.x) + "," + 
-                            std::to_string(chunkCoord.y) + "," + std::to_string(chunkCoord.z);
-    auto* obj = impl_->context.scene->create_object(chunkName);
-        
-        auto volGeo = std::make_unique<Engine::VolumetricGeometry>(std::move(grid));
-    auto* vg = volGeo->getGrid();
-        obj->setGeometry(std::move(volGeo));
-    
-    uint64_t handle = impl_->gpuManager->UploadGrid(vg);
-    
-    ChunkInfo info;
-    info.objectId = obj->get_id();
-    info.gpuHandle = handle;
-    info.chunkCoord = chunkCoord;
-    info.bounds = vg->getActiveBounds();
-    impl_->chunks.push_back(info);
-    
-    std::cout << "[VrDrawTool] ✅ Chunk created with " 
-              << floatGrid->activeVoxelCount() << " voxels" << std::endl;
-    
-    return obj;
-    }
-    
-void VrDrawTool::OnTriggerPressed(bool isRightHand, const glm::vec3& pos) {
-    glm::ivec3 chunkCoord = impl_->worldPosToChunkCoord(pos);
-    
-    impl_->activeChunk = impl_->findChunk(chunkCoord);
-    
-    if (!impl_->activeChunk) {
-        createChunk(chunkCoord);
-        impl_->activeChunk = &impl_->chunks.back();
+void VrDrawTool::OnTriggerPressed(bool, const glm::vec3& pos) {
+    if (!impl_->context.scene) return;
+
+    // Create hash grid if first time
+    if (!impl_->hashGrid) {
+        Engine::DynamicGpuHashGrid::Config config;
+        config.voxelSize = 0.05f;           // 5cm voxels
+        config.maxBlocks = 2 * 1024 * 1024; // 2M blocks = 1GB = ~800m³ drawing space
+        config.hashTableSize = 4 * 1024 * 1024; // 4M hash entries
+
+        impl_->hashGrid = std::make_unique<Engine::DynamicGpuHashGrid>(config);
+
+        // Create a scene object to hold the mesh
+        auto* obj = impl_->context.scene->create_object("VR Drawing");
+        impl_->sceneObjectId = obj->get_id();
+
+        std::cout << "[VrDrawTool] Created hash grid for unlimited drawing!" << std::endl;
     }
     
     impl_->isDrawing = true;
     impl_->lastDrawPos = pos;
     
+    // Apply first stroke
     drawStroke(pos);
     
-    std::cout << "[VrDrawTool] 🎨 Started drawing in chunk " << chunkCoord.x 
-              << "," << chunkCoord.y << "," << chunkCoord.z << std::endl;
+    std::cout << "[VrDrawTool] 🎨 Started drawing at (" << pos.x << ", " << pos.y << ", " << pos.z << ")" << std::endl;
 }
 
-void VrDrawTool::OnTriggerHeld(bool isRightHand, const glm::vec3& pos) {
-    if (!impl_->isDrawing) return;
-    
-    glm::ivec3 newChunkCoord = impl_->worldPosToChunkCoord(pos);
-    
-    if (impl_->activeChunk && newChunkCoord != impl_->activeChunk->chunkCoord) {
-        std::cout << "[VrDrawTool] 🔄 Switching to chunk " << newChunkCoord.x 
-                  << "," << newChunkCoord.y << "," << newChunkCoord.z << std::endl;
-        
-        impl_->activeChunk = impl_->findChunk(newChunkCoord);
-        
-        if (!impl_->activeChunk) {
-            createChunk(newChunkCoord);
-            impl_->activeChunk = &impl_->chunks.back();
-        }
-    }
+void VrDrawTool::OnTriggerHeld(bool, const glm::vec3& pos) {
+    if (!impl_->isDrawing || !impl_->hashGrid) return;
     
     float minDist = impl_->getMinDrawDistance();
     if (glm::distance(pos, impl_->lastDrawPos) >= minDist) {
         drawStroke(pos);
         impl_->lastDrawPos = pos;
         
-        static int counter = 0;
-        if (++counter >= 5) {
-            counter = 0;
-            updateMeshRealtime();
+        // Real-time meshing every 50 strokes to reduce GPU load
+        if (impl_->strokeCount % 50 == 0) {
+            updateMesh();
         }
     }
 }
 
-void VrDrawTool::OnTriggerReleased(bool isRightHand) {
+void VrDrawTool::OnTriggerReleased(bool) {
     if (!impl_->isDrawing) return;
     
-    updateMeshRealtime();
-    
-        impl_->isDrawing = false;
-    impl_->activeChunk = nullptr;
-    
-    std::cout << "[VrDrawTool] ✅ Drawing completed. Total chunks: " 
-              << impl_->chunks.size() << std::endl;
+    std::cout << "[VrDrawTool] ✅ Drawing completed. Total strokes: " << impl_->strokeCount << std::endl;
+
+    if (impl_->hashGrid) {
+        impl_->hashGrid->PrintStats();
+    }
+
+    // Final high-quality mesh extraction
+    updateMesh();
+
+    impl_->isDrawing = false;
 }
 
-bool VrDrawTool::drawStroke(const glm::vec3& worldPos) {
-    if (!impl_->activeChunk) return false;
+void VrDrawTool::updateMesh() {
+    if (!impl_->hashGrid || impl_->sceneObjectId == 0) return;
     
-    auto* obj = impl_->context.scene->get_object_by_id(impl_->activeChunk->objectId);
-    if (!obj) return false;
-    
-    auto* volGeo = dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry());
-    if (!volGeo) return false;
-    
-    auto* grid = volGeo->getGrid();
-    
-    openvdb::Vec3d indexPos = grid->grid_->transform().worldToIndex(
-        openvdb::Vec3d(worldPos.x, worldPos.y, worldPos.z)
-    );
-    glm::vec3 brushPosIndex(indexPos.x(), indexPos.y(), indexPos.z());
-    
-    float brushRadiusVoxels = impl_->brushRadius / grid->voxelSize;
-    
-    void* devicePtr = impl_->gpuManager->GetDeviceGridPointer(impl_->activeChunk->gpuHandle);
-    uint64_t leafCount = impl_->gpuManager->GetLeafCount(impl_->activeChunk->gpuHandle);
-    
-    auto bbox = grid->getActiveBounds();
-    glm::ivec3 gridMin(bbox.min().x(), bbox.min().y(), bbox.min().z());
-    glm::ivec3 gridMax(bbox.max().x(), bbox.max().y(), bbox.max().z());
-    
-    auto t_start = std::chrono::high_resolution_clock::now();
-    
-    bool success = Engine::GpuSculptKernels::ApplySphericalBrush(
-        devicePtr,
-        leafCount,
-        brushPosIndex,
-        brushRadiusVoxels,
-        1.0f,
-        Engine::GpuSculptKernels::SculptMode::ADD,
-        impl_->brushStrength,
-        gridMin, gridMax,
-        nullptr, nullptr, nullptr,
-        impl_->cudaStream
-    );
-    
-    auto t_end = std::chrono::high_resolution_clock::now();
-    float elapsed = std::chrono::duration<float, std::milli>(t_end - t_start).count();
-    
-    if (success) {
-        impl_->strokeCount++;
-        impl_->totalGpuTime += elapsed;
+    if (impl_->pendingUpdate) {
+        std::cout << "[VrDrawTool] Mesh update already in progress, skipping." << std::endl;
+        return;
     }
     
-    return success;
-}
-
-void VrDrawTool::updateMeshRealtime() {
-    if (!impl_->activeChunk) return;
-    
-    auto* obj = impl_->context.scene->get_object_by_id(impl_->activeChunk->objectId);
+    auto* obj = impl_->context.scene->get_object_by_id(impl_->sceneObjectId);
     if (!obj) return;
     
-    auto* volGeo = dynamic_cast<Engine::VolumetricGeometry*>(obj->getGeometry());
-    if (!volGeo) return;
-    
-    uint64_t leafCount = impl_->gpuManager->GetLeafCount(impl_->activeChunk->gpuHandle);
+    std::cout << "[VrDrawTool] Requesting async mesh extraction..." << std::endl;
     
     float* d_vertices = nullptr;
     float* d_normals = nullptr;
-    int triangleCount = 0;
+    int* d_triangleCounter = nullptr;
     
-    bool meshSuccess = Engine::GpuMeshingKernels::MarchingCubesAsync(
-        impl_->gpuManager->GetDeviceGridPointer(impl_->activeChunk->gpuHandle),
-        leafCount,
+    bool success = impl_->hashGrid->ExtractMesh(
         0.0f,
-        volGeo->getGrid()->voxelSize,
         &d_vertices,
         &d_normals,
-        &triangleCount,
+        &d_triangleCounter,
         impl_->cudaStream
     );
     
-    if (meshSuccess && triangleCount > 0) {
-        cudaStreamSynchronize(static_cast<cudaStream_t>(impl_->cudaStream));
+    if (!success) {
+        std::cout << "[VrDrawTool] Mesh extraction failed to launch." << std::endl;
+        return;
+    }
+    
+    impl_->pendingUpdate.emplace();
+    impl_->pendingUpdate->d_vertices = d_vertices;
+    impl_->pendingUpdate->d_normals = d_normals;
+    impl_->pendingUpdate->d_triangleCounter = d_triangleCounter;
+    
+    cudaEventCreate(reinterpret_cast<cudaEvent_t*>(&impl_->pendingUpdate->cudaEvent));
+    cudaEventRecord(
+        static_cast<cudaEvent_t>(impl_->pendingUpdate->cudaEvent),
+        static_cast<cudaStream_t>(impl_->cudaStream)
+    );
+}
+
+bool VrDrawTool::drawStroke(const glm::vec3& worldPos) {
+    if (!impl_->hashGrid) return false;
+
+    auto t_start = std::chrono::high_resolution_clock::now();
+
+    bool success = impl_->hashGrid->ApplySphericalBrush(
+        worldPos,
+        impl_->brushRadius,
+        impl_->brushStrength,
+        true, // addMode
+        impl_->cudaStream
+    );
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    float elapsed = std::chrono::duration<float, std::milli>(t_end - t_start).count();
+
+    if (success) {
+        impl_->strokeCount++;
+        impl_->totalGpuTime += elapsed;
+
+        if (impl_->strokeCount % 100 == 0) {
+            std::cout << "[VrDrawTool] Stroke " << impl_->strokeCount
+                      << " - Avg time: " << (impl_->totalGpuTime / impl_->strokeCount) << "ms" << std::endl;
+        }
+    }
+
+    return success;
+}
+
+void VrDrawTool::OnUpdate(const SnapResult&, const glm::vec3&, const glm::vec3&) {
+    checkForAsyncUpdate();
+}
+
+void VrDrawTool::checkForAsyncUpdate(bool forceSync) {
+    if (!impl_->pendingUpdate) return;
+    
+    cudaError_t eventStatus;
+    if (forceSync) {
+        eventStatus = cudaEventSynchronize(static_cast<cudaEvent_t>(impl_->pendingUpdate->cudaEvent));
+    } else {
+        eventStatus = cudaEventQuery(static_cast<cudaEvent_t>(impl_->pendingUpdate->cudaEvent));
+    }
+    
+    if (eventStatus == cudaSuccess) {
+        std::cout << "[VrDrawTool] Async mesh is ready, updating VBOs..." << std::endl;
         
-        std::string meshId = std::to_string(impl_->activeChunk->objectId);
-        auto* gpuMesh = impl_->context.meshManager->UpdateMeshFromGpuBuffers(
-            meshId, d_vertices, d_normals, triangleCount * 3, impl_->cudaStream
-        );
+        int triangleCount = 0;
+        cudaMemcpy(&triangleCount, impl_->pendingUpdate->d_triangleCounter, sizeof(int), cudaMemcpyDeviceToHost);
         
-        if (gpuMesh) {
-            obj->setGpuManaged(true);
-            obj->vao = gpuMesh->vao;
-            obj->index_count = gpuMesh->index_count;
-            
-            obj->meshGroups.clear();
-            Engine::MeshGroup group;
-            group.materialName = "Default";
-            group.startIndex = 0;
-            group.indexCount = gpuMesh->index_count;
-            obj->meshGroups.push_back(group);
-            
-            impl_->context.scene->MarkStaticGeometryDirty();
+        if (triangleCount > 0) {
+            auto* obj = impl_->context.scene->get_object_by_id(impl_->sceneObjectId);
+            if (obj) {
+                std::string meshId = std::to_string(impl_->sceneObjectId);
+                auto* gpuMesh = impl_->context.meshManager->UpdateMeshFromGpuBuffers(
+                    meshId,
+                    impl_->pendingUpdate->d_vertices,
+                    impl_->pendingUpdate->d_normals,
+                    triangleCount * 3,
+                    impl_->cudaStream
+                );
+                
+                if (gpuMesh) {
+                    obj->setGpuManaged(true);
+                    obj->vao = gpuMesh->vao;
+                    obj->index_count = gpuMesh->index_count;
+                    
+                    obj->meshGroups.clear();
+                    Engine::MeshGroup defaultGroup;
+                    defaultGroup.materialName = "Default";
+                    defaultGroup.startIndex = 0;
+                    defaultGroup.indexCount = gpuMesh->index_count;
+                    obj->meshGroups.push_back(defaultGroup);
+                    
+                    impl_->context.scene->MarkStaticGeometryDirty();
+                    
+                    std::cout << "[VrDrawTool] ✅ Async mesh updated: " << triangleCount << " tris" << std::endl;
+                }
+            }
         }
         
-        cudaFree(d_vertices);
-        cudaFree(d_normals);
+        cudaFree(impl_->pendingUpdate->d_vertices);
+        cudaFree(impl_->pendingUpdate->d_normals);
+        cudaFree(impl_->pendingUpdate->d_triangleCounter);
+        cudaEventDestroy(static_cast<cudaEvent_t>(impl_->pendingUpdate->cudaEvent));
+        impl_->pendingUpdate.reset();
+        
+    } else if (eventStatus != cudaErrorNotReady) {
+        std::cerr << "[VrDrawTool] ❌ CUDA event error: " << cudaGetErrorString(eventStatus) << std::endl;
+        cudaFree(impl_->pendingUpdate->d_vertices);
+        cudaFree(impl_->pendingUpdate->d_normals);
+        cudaFree(impl_->pendingUpdate->d_triangleCounter);
+        cudaEventDestroy(static_cast<cudaEvent_t>(impl_->pendingUpdate->cudaEvent));
+        impl_->pendingUpdate.reset();
     }
 }
 
-void VrDrawTool::OnUpdate(const SnapResult&, const glm::vec3&, const glm::vec3&) {}
-
 void VrDrawTool::RenderUI() {
-    ImGui::Text("VR Draw Tool (Multi-Chunk GPU)");
+    ImGui::Text("VR Draw Tool (Custom GPU Hash Grid)");
     ImGui::Separator();
         
         if (impl_->isDrawing) {
         ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "🎨 Drawing...");
-        if (impl_->activeChunk) {
-            ImGui::Text("Chunk: %d,%d,%d", impl_->activeChunk->chunkCoord.x,
-                        impl_->activeChunk->chunkCoord.y, impl_->activeChunk->chunkCoord.z);
-    }
+    } else {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Ready");
     }
     
     ImGui::Separator();
-    ImGui::SliderFloat("Radius", &impl_->brushRadius, 0.05f, 2.0f);
-    ImGui::SliderFloat("Strength", &impl_->brushStrength, 0.1f, 2.0f);
+    ImGui::SliderFloat("Brush Radius", &impl_->brushRadius, 0.05f, 2.0f);
+    ImGui::SliderFloat("Brush Strength", &impl_->brushStrength, 0.1f, 2.0f);
+    ImGui::SliderFloat("Sample Distance", &impl_->minDrawDistanceFactor, 0.1f, 0.5f);
     
     ImGui::Separator();
     ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ UNLIMITED range");
     ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ Full GPU speed");
-    ImGui::Text("Total chunks: %zu", impl_->chunks.size());
-    ImGui::Text("Strokes: %d", impl_->strokeCount);
+    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ Dynamic allocation");
+
+    ImGui::Text("Total strokes: %d", impl_->strokeCount);
+
     if (impl_->strokeCount > 0) {
         ImGui::Text("Avg GPU time: %.3fms", impl_->totalGpuTime / impl_->strokeCount);
+    }
+
+    if (impl_->hashGrid) {
+        ImGui::Separator();
+        ImGui::Text("Active blocks: %u / %u",
+                    impl_->hashGrid->GetActiveBlockCount(),
+                    impl_->hashGrid->GetMaxBlocks());
+
+        float fillRate = 100.0f * impl_->hashGrid->GetActiveBlockCount() / impl_->hashGrid->GetMaxBlocks();
+        ImGui::ProgressBar(fillRate / 100.0f, ImVec2(-1, 0),
+                          (std::to_string(static_cast<int>(fillRate)) + "%").c_str());
     }
 }
 

@@ -1,13 +1,12 @@
 #pragma once
 
-#include "tools/ITool.h"
+#include "ITool.h"
 #include <memory>
 #include <glm/glm.hpp>
 
-namespace Urbaxio::Engine {
-    class GpuVoxelManager;
-    struct VoxelGrid;
-    class SceneObject;
+// Forward declarations
+namespace Urbaxio::Tools {
+    struct ToolContext;
 }
 
 namespace Urbaxio::Shell {
@@ -17,23 +16,24 @@ public:
     VrDrawTool();
     ~VrDrawTool() override;
 
-    // ITool interface
-    Tools::ToolType GetType() const override { return Tools::ToolType::SculptDraw; }
-    const char* GetName() const override { return "VR Draw"; }
+    Tools::ToolType GetType() const override;
+    const char* GetName() const override;
     void Activate(const Tools::ToolContext& context) override;
     void Deactivate() override;
-    void OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) override;
-    void RenderUI() override;
 
-    // VR-specific trigger events
+    // VR-specific interface
     void OnTriggerPressed(bool isRightHand, const glm::vec3& pos);
     void OnTriggerHeld(bool isRightHand, const glm::vec3& pos);
     void OnTriggerReleased(bool isRightHand);
 
+    // ITool interface
+    void OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin = glm::vec3(0), const glm::vec3& rayDirection = glm::vec3(0)) override;
+    void RenderUI() override;
+
 private:
     bool drawStroke(const glm::vec3& worldPos);
-    void updateMeshRealtime();
-    Engine::SceneObject* createChunk(const glm::ivec3& chunkCoord);
+    void updateMesh();
+    void checkForAsyncUpdate(bool forceSync = false);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

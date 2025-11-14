@@ -16,6 +16,8 @@ set(GPU_SOURCES
     GpuAabbKernels.cu
     MeshManagerGpu.cu
     GpuVoxelConverter.cpp  # CPU-side converter (NOT compiled with nvcc)
+    DynamicGpuHashGrid.cu  # Hash grid implementation
+    HashGridMeshing.cu     # Hash grid marching cubes
 )
 
 # Create static library for GPU code
