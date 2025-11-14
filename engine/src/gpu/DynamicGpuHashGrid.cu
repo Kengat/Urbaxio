@@ -215,20 +215,6 @@ void DynamicGpuHashGrid::initialize() {
     }
     
     std::cout << "[DynamicGpuHashGrid] ✅ Initialized successfully!" << std::endl;
-    
-    // ✅ Only warm sculpt kernel (fast)
-    std::cout << "[DynamicGpuHashGrid] Pre-warming sculpt kernel..." << std::endl;
-    auto t1 = std::chrono::high_resolution_clock::now();
-    
-    ApplySphericalBrush(glm::vec3(0, 0, 0), 0.05f, 0.0f, true, nullptr);
-    cudaDeviceSynchronize();
-    
-    auto t2 = std::chrono::high_resolution_clock::now();
-    float elapsed = std::chrono::duration<float, std::milli>(t2 - t1).count();
-    std::cout << "[DynamicGpuHashGrid] ✅ Kernel compiled in " << elapsed << "ms" << std::endl;
-    
-    // ❌ REMOVE meshing pre-warm (247ms lag)
-    // Let it JIT on first draw - user won't notice during stroke
 }
 
 void DynamicGpuHashGrid::cleanup() {

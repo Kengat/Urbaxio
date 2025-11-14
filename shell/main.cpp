@@ -57,6 +57,7 @@ extern "C" {
 #include <string>
 #include <vector>
 #include <memory>
+#include <chrono>
 #include <algorithm>
 #include <functional>
 #include <set>
@@ -1353,6 +1354,16 @@ int main(int argc, char* argv[]) {
     bool g_showImportOptionsPopup = false;
     std::string g_fileToImportPath;
 
+    // ✅ Pre-allocate GPU resources (one-time, before entering VR)
+    std::cout << "Shell: Pre-allocating GPU resources..." << std::endl;
+    auto t1 = std::chrono::high_resolution_clock::now();
+    
+    Urbaxio::Shell::VrDrawTool::InitializePersistentResources();
+    
+    auto t2 = std::chrono::high_resolution_clock::now();
+    float elapsed = std::chrono::duration<float, std::milli>(t2 - t1).count();
+    std::cout << "Shell: ✅ GPU resources ready (" << elapsed << "ms)" << std::endl;
+    
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
     while (!should_quit) {
         SDL_GetWindowSize(window, &display_w, &display_h);
@@ -2757,5 +2768,9 @@ int main(int argc, char* argv[]) {
         }
     }
     if (scene_ptr) { for (auto* obj : scene_ptr->get_all_objects()) { if (obj) FreeGPUResources(*obj); } }
+    
+    // Cleanup persistent resources
+    Urbaxio::Shell::VrDrawTool::CleanupPersistentResources();
+    
     ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui::DestroyContext(); SDL_GL_DeleteContext(gl_context); SDL_DestroyWindow(window); SDL_Quit(); std::cout << "Shell: Urbaxio Application finished gracefully." << std::endl; return 0;
 }

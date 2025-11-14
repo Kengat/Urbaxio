@@ -12,8 +12,14 @@
 #include <cuda_runtime.h>
 #include <chrono>
 #include <optional>
+#include <thread>
+#include <atomic>
 
 namespace Urbaxio::Shell {
+
+// Static member definitions
+std::unique_ptr<Engine::DynamicGpuHashGrid> VrDrawTool::s_sharedHashGrid = nullptr;
+std::atomic<bool> VrDrawTool::s_resourcesReady{false};
 
 struct VrDrawTool::Impl {
     Tools::ToolContext context;
@@ -25,8 +31,8 @@ struct VrDrawTool::Impl {
     float brushStrength = 1.0f;
     float minDrawDistanceFactor = 0.3f;
     
-    // Our custom GPU hash grid (UNLIMITED range!)
-    std::unique_ptr<Engine::DynamicGpuHashGrid> hashGrid;
+    // ✅ Ссылка на SHARED grid (не владеем!)
+    Engine::DynamicGpuHashGrid* hashGrid = nullptr;
     uint64_t sceneObjectId = 0;
     
     void* cudaStream = nullptr;
@@ -81,41 +87,74 @@ VrDrawTool::~VrDrawTool() {
     }
 }
 
+void VrDrawTool::InitializePersistentResources() {
+    if (s_sharedHashGrid) return; // Already initialized
+    
+    std::cout << "[VrDrawTool] Allocating persistent GPU resources..." << std::endl;
+    
+    // 1. Create hash grid (BIG allocation)
+    Engine::DynamicGpuHashGrid::Config config;
+    config.voxelSize = 0.05f;
+    config.maxBlocks = 2 * 1024 * 1024;
+    config.hashTableSize = 4 * 1024 * 1024;
+    s_sharedHashGrid = std::make_unique<Engine::DynamicGpuHashGrid>(config);
+    
+    // 2. Pre-warm kernels + allocate mesh buffers
+    s_sharedHashGrid->ApplySphericalBrush(glm::vec3(0), 0.1f, 1.0f, true, nullptr);
+    cudaDeviceSynchronize();
+    
+    float* dummy_v = nullptr;
+    float* dummy_n = nullptr;
+    int* dummy_c = nullptr;
+    s_sharedHashGrid->ExtractMesh(0.0f, &dummy_v, &dummy_n, &dummy_c, nullptr);
+    cudaDeviceSynchronize();
+    
+    s_resourcesReady = true;
+    std::cout << "[VrDrawTool] ✅ Persistent resources ready" << std::endl;
+}
+
+void VrDrawTool::CleanupPersistentResources() {
+    s_sharedHashGrid.reset();
+    s_resourcesReady = false;
+}
+
 void VrDrawTool::Activate(const Tools::ToolContext& context) {
     Tools::ITool::Activate(context);
     impl_->context = context;
     impl_->strokeCount = 0;
     impl_->totalGpuTime = 0.0f;
 
-    std::cout << "[VrDrawTool] Activated - ready for UNLIMITED drawing!" << std::endl;
+    // ✅ Just reference the shared grid (instant!)
+    impl_->hashGrid = s_sharedHashGrid.get();
+    
+    std::cout << "[VrDrawTool] ✅ Activated (using pre-allocated resources)" << std::endl;
 }
 
 void VrDrawTool::Deactivate() {
     checkForAsyncUpdate(true);
-    
     Tools::ITool::Deactivate();
+    
+    // ❌ DON'T delete shared grid!
+    impl_->hashGrid = nullptr; // Just detach
     impl_->isDrawing = false;
-    impl_->hashGrid.reset();
     impl_->sceneObjectId = 0;
 }
 
 void VrDrawTool::OnTriggerPressed(bool, const glm::vec3& pos) {
     if (!impl_->context.scene) return;
 
-    // Create hash grid if first time
-    if (!impl_->hashGrid) {
-        Engine::DynamicGpuHashGrid::Config config;
-        config.voxelSize = 0.05f;           // 5cm voxels
-        config.maxBlocks = 2 * 1024 * 1024; // 2M blocks = 1GB = ~800m³ drawing space
-        config.hashTableSize = 4 * 1024 * 1024; // 4M hash entries
+    // ✅ Проверяем готовность ресурсов
+    if (!s_resourcesReady.load()) {
+        std::cout << "[VrDrawTool] ⏳ Resources still initializing, please wait..." << std::endl;
+        return; // Игнорируем нажатие
+    }
 
-        impl_->hashGrid = std::make_unique<Engine::DynamicGpuHashGrid>(config);
+    if (!impl_->hashGrid) return;
 
-        // Create a scene object to hold the mesh
+    // Create a scene object to hold the mesh if needed
+    if (impl_->sceneObjectId == 0) {
         auto* obj = impl_->context.scene->create_object("VR Drawing");
         impl_->sceneObjectId = obj->get_id();
-
-        std::cout << "[VrDrawTool] Created hash grid for unlimited drawing!" << std::endl;
     }
     
     impl_->isDrawing = true;
@@ -322,8 +361,15 @@ void VrDrawTool::checkForAsyncUpdate(bool forceSync) {
 void VrDrawTool::RenderUI() {
     ImGui::Text("VR Draw Tool (Custom GPU Hash Grid)");
     ImGui::Separator();
+    
+    // ✅ Показываем loading indicator
+    if (!s_resourcesReady.load()) {
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "⏳ Initializing GPU (first time)...");
+        ImGui::TextDisabled("This happens once per session");
+        return;
+    }
         
-        if (impl_->isDrawing) {
+    if (impl_->isDrawing) {
         ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "🎨 Drawing...");
     } else {
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Ready");
