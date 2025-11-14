@@ -548,19 +548,9 @@ bool DynamicGpuHashGrid::ExtractMesh(
 {
     InitializeMCTables();
     
-    auto t_total = std::chrono::high_resolution_clock::now();
-    
-    std::cout << "[HashGridMeshing] Starting mesh extraction..." << std::endl;
-    
-    auto t1 = std::chrono::high_resolution_clock::now();
     uint32_t reportedActiveBlocks = GetActiveBlockCount();
-    auto t2 = std::chrono::high_resolution_clock::now();
-    float elapsed1 = std::chrono::duration<float, std::milli>(t2 - t1).count();
-    std::cout << "[HashGridMeshing] GetActiveBlockCount took: " << elapsed1 << "ms" << std::endl;
     
-    std::cout << "  Active blocks (from counter): " << reportedActiveBlocks << std::endl;
     if (reportedActiveBlocks == 0) {
-        std::cout << "[HashGridMeshing] ⚠️ No active blocks to mesh" << std::endl;
         *d_vertices = nullptr;
         *d_normals = nullptr;
         *d_triangleCounter_out = nullptr;
@@ -581,8 +571,6 @@ bool DynamicGpuHashGrid::ExtractMesh(
     dim3 blockSizeCompaction(256);
     dim3 gridSizeCompaction((config_.hashTableSize + blockSizeCompaction.x - 1) / blockSizeCompaction.x);
     
-    auto t3 = std::chrono::high_resolution_clock::now();
-    
     CompactActiveBlocksKernel<<<gridSizeCompaction, blockSizeCompaction, 0, cudaStream>>>(
         d_hashTable_,
         config_.hashTableSize,
@@ -593,18 +581,11 @@ bool DynamicGpuHashGrid::ExtractMesh(
     uint32_t activeCount = 0;
     cudaMemcpyAsync(&activeCount, d_activeCount, sizeof(uint32_t), cudaMemcpyDeviceToHost, cudaStream);
     
-    std::cout << "[HashGridMeshing] Before sync..." << std::endl;
     cudaStreamSynchronize(cudaStream); // Wait for the count to be available
     
-    auto t4 = std::chrono::high_resolution_clock::now();
-    float elapsed2 = std::chrono::duration<float, std::milli>(t4 - t3).count();
-    std::cout << "[HashGridMeshing] Compaction + sync took: " << elapsed2 << "ms" << std::endl;
-    
     cudaFree(d_activeCount);
-    std::cout << "[HashGridMeshing] Found " << activeCount << " active hash entries on GPU" << std::endl;
     
     if (activeCount == 0) {
-        std::cout << "[HashGridMeshing] ⚠️ No active blocks found after compaction" << std::endl;
         *d_vertices = nullptr;
         *d_normals = nullptr;
         *d_triangleCounter_out = nullptr;
@@ -616,12 +597,8 @@ bool DynamicGpuHashGrid::ExtractMesh(
     
     // ✅ Reuse pre-allocated buffers (malloc only once!)
     if (!d_meshVertices_ || allocatedTriangles_ < MAX_TRIANGLES) {
-        std::cout << "[HashGridMeshing] Allocating mesh buffers..." << std::endl;
-        
         if (d_meshVertices_) cudaFree(d_meshVertices_);
         if (d_meshNormals_) cudaFree(d_meshNormals_);
-        
-        auto t1 = std::chrono::high_resolution_clock::now();
         
         cudaError_t err;
         err = cudaMalloc(&d_meshVertices_, MAX_TRIANGLES * 3 * sizeof(float3));
@@ -637,10 +614,6 @@ bool DynamicGpuHashGrid::ExtractMesh(
             cudaFree(d_activeIndices);
             return false;
         }
-        
-        auto t2 = std::chrono::high_resolution_clock::now();
-        float elapsed = std::chrono::duration<float, std::milli>(t2 - t1).count();
-        std::cout << "[HashGridMeshing] cudaMalloc took: " << elapsed << "ms" << std::endl;
         
         allocatedTriangles_ = MAX_TRIANGLES;
     }
@@ -660,7 +633,6 @@ bool DynamicGpuHashGrid::ExtractMesh(
     cudaMemsetAsync(*d_triangleCounter_out, 0, sizeof(int), cudaStream);
     dim3 blockSizeMC(343); // 7*7*7
     dim3 gridSizeMC(activeCount);
-    std::cout << "[HashGridMeshing] Launching kernel for " << activeCount << " blocks" << std::endl;
 
     HashGridMarchingCubesKernel<<<gridSizeMC, blockSizeMC, 0, cudaStream>>>(
         d_hashTable_,
@@ -685,11 +657,8 @@ bool DynamicGpuHashGrid::ExtractMesh(
     }
     
     cudaFree(d_activeIndices);
-    std::cout << "[HashGridMeshing] ✅ Kernel launched. Final count will be ready on stream sync." << std::endl;
     
-    auto t_end = std::chrono::high_resolution_clock::now();
-    float total_elapsed = std::chrono::duration<float, std::milli>(t_end - t_total).count();
-    std::cout << "[HashGridMeshing] TOTAL ExtractMesh: " << total_elapsed << "ms" << std::endl;
+    std::cout << "[HashGridMeshing] ✅ Mesh extracted: " << activeCount << " blocks" << std::endl;
     
     return true;
 }

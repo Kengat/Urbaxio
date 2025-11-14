@@ -42,6 +42,15 @@ struct VrDrawTool::Impl {
     int strokeCount = 0;
     float totalGpuTime = 0.0f;
     
+    std::chrono::steady_clock::time_point lastMeshUpdate;
+    float meshUpdateIntervalMs = 16.0f; // 60 FPS
+    
+    bool shouldUpdateMesh() {
+        auto now = std::chrono::steady_clock::now();
+        float elapsed = std::chrono::duration<float, std::milli>(now - lastMeshUpdate).count();
+        return elapsed >= meshUpdateIntervalMs;
+    }
+    
     float getMinDrawDistance() const {
         return brushRadius * minDrawDistanceFactor;
     }
@@ -111,6 +120,7 @@ void VrDrawTool::OnTriggerPressed(bool, const glm::vec3& pos) {
     
     impl_->isDrawing = true;
     impl_->lastDrawPos = pos;
+    impl_->lastMeshUpdate = std::chrono::steady_clock::now();
     
     // Apply first stroke
     drawStroke(pos);
@@ -126,10 +136,7 @@ void VrDrawTool::OnTriggerHeld(bool, const glm::vec3& pos) {
         drawStroke(pos);
         impl_->lastDrawPos = pos;
         
-        // Real-time meshing every 50 strokes to reduce GPU load
-        if (impl_->strokeCount % 50 == 0) {
-            updateMesh();
-        }
+        // ✅ Meshing handled in OnUpdate (frame-rate)
     }
 }
 
@@ -142,7 +149,8 @@ void VrDrawTool::OnTriggerReleased(bool) {
         impl_->hashGrid->PrintStats();
     }
 
-    // Final high-quality mesh extraction
+    // ✅ Single mesh update at the end (non-blocking)
+    std::cout << "[VrDrawTool] Generating final mesh..." << std::endl;
     updateMesh();
 
     impl_->isDrawing = false;
@@ -226,7 +234,19 @@ bool VrDrawTool::drawStroke(const glm::vec3& worldPos) {
 }
 
 void VrDrawTool::OnUpdate(const SnapResult&, const glm::vec3&, const glm::vec3&) {
+    // ✅ Update cached count (async, no stall)
+    if (impl_->hashGrid) {
+        impl_->hashGrid->UpdateActiveCountAsync(impl_->cudaStream);
+    }
+    
+    // ✅ Check for completed mesh
     checkForAsyncUpdate();
+    
+    // ✅ Start new mesh if needed (every 16ms)
+    if (impl_->isDrawing && impl_->shouldUpdateMesh() && !impl_->pendingUpdate) {
+        updateMesh();
+        impl_->lastMeshUpdate = std::chrono::steady_clock::now();
+    }
 }
 
 void VrDrawTool::checkForAsyncUpdate(bool forceSync) {
@@ -313,6 +333,10 @@ void VrDrawTool::RenderUI() {
     ImGui::SliderFloat("Brush Radius", &impl_->brushRadius, 0.05f, 2.0f);
     ImGui::SliderFloat("Brush Strength", &impl_->brushStrength, 0.1f, 2.0f);
     ImGui::SliderFloat("Sample Distance", &impl_->minDrawDistanceFactor, 0.1f, 0.5f);
+    
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "⚡ Meshless Mode (real-time)");
+    ImGui::TextDisabled("Mesh generated only at stroke end");
     
     ImGui::Separator();
     ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ UNLIMITED range");

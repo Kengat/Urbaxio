@@ -50,6 +50,7 @@ public:
 
     // Stats
     uint32_t GetActiveBlockCount() const;
+    void UpdateActiveCountAsync(void* stream = nullptr);
     uint32_t GetMaxBlocks() const { return config_.maxBlocks; }
     float GetVoxelSize() const { return config_.voxelSize; }
 
@@ -72,6 +73,8 @@ private:
 
     // CPU tracking
     uint32_t activeBlockCount_;
+    mutable uint32_t cachedActiveBlockCount_ = 0;
+    mutable bool needsCountUpdate_ = false;
 
     // Helper functions
     void initialize();

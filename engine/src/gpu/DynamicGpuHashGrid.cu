@@ -211,9 +211,24 @@ void DynamicGpuHashGrid::initialize() {
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         std::cerr << "[DynamicGpuHashGrid] CUDA error: " << cudaGetErrorString(err) << std::endl;
-    } else {
-        std::cout << "[DynamicGpuHashGrid] ✅ Initialized successfully!" << std::endl;
+        return;
     }
+    
+    std::cout << "[DynamicGpuHashGrid] ✅ Initialized successfully!" << std::endl;
+    
+    // ✅ Only warm sculpt kernel (fast)
+    std::cout << "[DynamicGpuHashGrid] Pre-warming sculpt kernel..." << std::endl;
+    auto t1 = std::chrono::high_resolution_clock::now();
+    
+    ApplySphericalBrush(glm::vec3(0, 0, 0), 0.05f, 0.0f, true, nullptr);
+    cudaDeviceSynchronize();
+    
+    auto t2 = std::chrono::high_resolution_clock::now();
+    float elapsed = std::chrono::duration<float, std::milli>(t2 - t1).count();
+    std::cout << "[DynamicGpuHashGrid] ✅ Kernel compiled in " << elapsed << "ms" << std::endl;
+    
+    // ❌ REMOVE meshing pre-warm (247ms lag)
+    // Let it JIT on first draw - user won't notice during stroke
 }
 
 void DynamicGpuHashGrid::cleanup() {
@@ -259,24 +274,28 @@ bool DynamicGpuHashGrid::ApplySphericalBrush(
         std::cerr << "[DynamicGpuHashGrid] Sculpt kernel error: " << cudaGetErrorString(err) << std::endl;
         return false;
     }
+    
+    // ✅ Mark count as dirty (don't fetch yet!)
+    needsCountUpdate_ = true;
 
     return true;
 }
 
 uint32_t DynamicGpuHashGrid::GetActiveBlockCount() const {
-    auto t1 = std::chrono::high_resolution_clock::now();
+    // ✅ Return cached value (update ASYNC in background)
+    return cachedActiveBlockCount_;
+}
+
+void DynamicGpuHashGrid::UpdateActiveCountAsync(void* stream) {
+    if (!needsCountUpdate_) return;
     
-    uint32_t count = 0;
-    cudaMemcpy(&count, d_blockCounter_, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    cudaStream_t cudaStream = stream ? static_cast<cudaStream_t>(stream) : 0;
     
-    auto t2 = std::chrono::high_resolution_clock::now();
-    float elapsed = std::chrono::duration<float, std::milli>(t2 - t1).count();
+    // Non-blocking copy
+    cudaMemcpyAsync(&cachedActiveBlockCount_, d_blockCounter_, 
+                    sizeof(uint32_t), cudaMemcpyDeviceToHost, cudaStream);
     
-    if (elapsed > 1.0f) {
-        std::cout << "[DynamicGpuHashGrid] GetActiveBlockCount D2H copy: " << elapsed << "ms" << std::endl;
-    }
-    
-    return count;
+    needsCountUpdate_ = false;
 }
 
 void DynamicGpuHashGrid::PrintStats() const {
