@@ -2,6 +2,7 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <cmath>
+#include <chrono>
 
 namespace Urbaxio::Engine {
 
@@ -219,6 +220,8 @@ void DynamicGpuHashGrid::cleanup() {
     if (d_hashTable_) cudaFree(d_hashTable_);
     if (d_blockData_) cudaFree(d_blockData_);
     if (d_blockCounter_) cudaFree(d_blockCounter_);
+    if (d_meshVertices_) cudaFree(d_meshVertices_);
+    if (d_meshNormals_) cudaFree(d_meshNormals_);
 }
 
 bool DynamicGpuHashGrid::ApplySphericalBrush(
@@ -261,8 +264,18 @@ bool DynamicGpuHashGrid::ApplySphericalBrush(
 }
 
 uint32_t DynamicGpuHashGrid::GetActiveBlockCount() const {
+    auto t1 = std::chrono::high_resolution_clock::now();
+    
     uint32_t count = 0;
     cudaMemcpy(&count, d_blockCounter_, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    
+    auto t2 = std::chrono::high_resolution_clock::now();
+    float elapsed = std::chrono::duration<float, std::milli>(t2 - t1).count();
+    
+    if (elapsed > 1.0f) {
+        std::cout << "[DynamicGpuHashGrid] GetActiveBlockCount D2H copy: " << elapsed << "ms" << std::endl;
+    }
+    
     return count;
 }
 

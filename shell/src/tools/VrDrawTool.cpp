@@ -159,6 +159,8 @@ void VrDrawTool::updateMesh() {
     auto* obj = impl_->context.scene->get_object_by_id(impl_->sceneObjectId);
     if (!obj) return;
     
+    auto t_start = std::chrono::high_resolution_clock::now();
+    
     std::cout << "[VrDrawTool] Requesting async mesh extraction..." << std::endl;
     
     float* d_vertices = nullptr;
@@ -172,6 +174,10 @@ void VrDrawTool::updateMesh() {
         &d_triangleCounter,
         impl_->cudaStream
     );
+    
+    auto t_end = std::chrono::high_resolution_clock::now();
+    float elapsed = std::chrono::duration<float, std::milli>(t_end - t_start).count();
+    std::cout << "[VrDrawTool] ExtractMesh took: " << elapsed << "ms" << std::endl;
     
     if (!success) {
         std::cout << "[VrDrawTool] Mesh extraction failed to launch." << std::endl;
@@ -226,14 +232,21 @@ void VrDrawTool::OnUpdate(const SnapResult&, const glm::vec3&, const glm::vec3&)
 void VrDrawTool::checkForAsyncUpdate(bool forceSync) {
     if (!impl_->pendingUpdate) return;
     
+    auto t_check = std::chrono::high_resolution_clock::now();
+    
     cudaError_t eventStatus;
     if (forceSync) {
+        std::cout << "[VrDrawTool] Force syncing event..." << std::endl;
         eventStatus = cudaEventSynchronize(static_cast<cudaEvent_t>(impl_->pendingUpdate->cudaEvent));
     } else {
         eventStatus = cudaEventQuery(static_cast<cudaEvent_t>(impl_->pendingUpdate->cudaEvent));
     }
     
+    auto t_after = std::chrono::high_resolution_clock::now();
+    float elapsed = std::chrono::duration<float, std::milli>(t_after - t_check).count();
+    
     if (eventStatus == cudaSuccess) {
+        std::cout << "[VrDrawTool] Event ready (took " << elapsed << "ms)" << std::endl;
         std::cout << "[VrDrawTool] Async mesh is ready, updating VBOs..." << std::endl;
         
         int triangleCount = 0;
@@ -270,17 +283,17 @@ void VrDrawTool::checkForAsyncUpdate(bool forceSync) {
             }
         }
         
-        cudaFree(impl_->pendingUpdate->d_vertices);
-        cudaFree(impl_->pendingUpdate->d_normals);
-        cudaFree(impl_->pendingUpdate->d_triangleCounter);
+        // ❌ Don't free vertices/normals (buffers are now persistent in hashGrid)
+        // cudaFree(impl_->pendingUpdate->d_vertices);
+        // cudaFree(impl_->pendingUpdate->d_normals);
+        cudaFree(impl_->pendingUpdate->d_triangleCounter);  // ✅ Keep only this (small, allocated each time)
         cudaEventDestroy(static_cast<cudaEvent_t>(impl_->pendingUpdate->cudaEvent));
         impl_->pendingUpdate.reset();
         
     } else if (eventStatus != cudaErrorNotReady) {
         std::cerr << "[VrDrawTool] ❌ CUDA event error: " << cudaGetErrorString(eventStatus) << std::endl;
-        cudaFree(impl_->pendingUpdate->d_vertices);
-        cudaFree(impl_->pendingUpdate->d_normals);
-        cudaFree(impl_->pendingUpdate->d_triangleCounter);
+        // ❌ Don't free vertices/normals (buffers are persistent in hashGrid)
+        cudaFree(impl_->pendingUpdate->d_triangleCounter);  // ✅ Only free counter
         cudaEventDestroy(static_cast<cudaEvent_t>(impl_->pendingUpdate->cudaEvent));
         impl_->pendingUpdate.reset();
     }

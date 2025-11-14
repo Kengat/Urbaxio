@@ -65,6 +65,11 @@ private:
     float* d_blockData_;                  // GPU block data (all voxels)
     uint32_t* d_blockCounter_;            // GPU atomic counter for allocation
 
+    // Persistent mesh buffers (memory pool)
+    float* d_meshVertices_ = nullptr;
+    float* d_meshNormals_ = nullptr;
+    size_t allocatedTriangles_ = 0;
+
     // CPU tracking
     uint32_t activeBlockCount_;
 
