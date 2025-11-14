@@ -417,34 +417,41 @@ __global__ void HashGridMarchingCubesKernel(
     int32_t blockY = hashTable[entryIdx].blockY;
     int32_t blockZ = hashTable[entryIdx].blockZ;
     
+    // ✅ ИСПРАВЛЕНО: 8x8x8 вокселов (512), не 7x7x7 (343)!
     int voxelIdx = threadIdx.x;
-    if (voxelIdx >= 7*7*7) return;
+    if (voxelIdx >= 512) return; // 8*8*8
     
-    int localX = voxelIdx % 7;
-    int localY = (voxelIdx / 7) % 7;
-    int localZ = voxelIdx / 49;
+    // ✅ ИСПРАВЛЕНО: 0-7 на каждой оси
+    int localX = voxelIdx % 8;
+    int localY = (voxelIdx / 8) % 8;
+    int localZ = voxelIdx / 64;
     
+    // Global voxel coordinate
     int32_t voxelX = blockX * 8 + localX;
     int32_t voxelY = blockY * 8 + localY;
     int32_t voxelZ = blockZ * 8 + localZ;
     
-    // Sample 8 corners with standard MC vertex order
-    const int vertexOrder[8][3] = {
-        {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0},
-        {0,0,1}, {1,0,1}, {1,1,1}, {0,1,1}
-    };
-    
+    // ✅ КРИТИЧНО: Sample 8 corners (могут быть в соседних листах!)
     float v[8];
-    float3 p[8];
+    v[0] = sampleVoxel(hashTable, tableSize, blockData, voxelX+0, voxelY+0, voxelZ+0);
+    v[1] = sampleVoxel(hashTable, tableSize, blockData, voxelX+1, voxelY+0, voxelZ+0);
+    v[2] = sampleVoxel(hashTable, tableSize, blockData, voxelX+1, voxelY+1, voxelZ+0);
+    v[3] = sampleVoxel(hashTable, tableSize, blockData, voxelX+0, voxelY+1, voxelZ+0);
+    v[4] = sampleVoxel(hashTable, tableSize, blockData, voxelX+0, voxelY+0, voxelZ+1);
+    v[5] = sampleVoxel(hashTable, tableSize, blockData, voxelX+1, voxelY+0, voxelZ+1);
+    v[6] = sampleVoxel(hashTable, tableSize, blockData, voxelX+1, voxelY+1, voxelZ+1);
+    v[7] = sampleVoxel(hashTable, tableSize, blockData, voxelX+0, voxelY+1, voxelZ+1);
     
-    for (int i = 0; i < 8; ++i) {
-        int gx = voxelX + vertexOrder[i][0];
-        int gy = voxelY + vertexOrder[i][1];
-        int gz = voxelZ + vertexOrder[i][2];
-        
-        v[i] = sampleVoxel(hashTable, tableSize, blockData, gx, gy, gz);
-        p[i] = make_float3(gx * voxelSize, gy * voxelSize, gz * voxelSize);
-    }
+    // ✅ Positions тоже нужны для всех 8 вершин
+    float3 p[8];
+    p[0] = make_float3((voxelX+0) * voxelSize, (voxelY+0) * voxelSize, (voxelZ+0) * voxelSize);
+    p[1] = make_float3((voxelX+1) * voxelSize, (voxelY+0) * voxelSize, (voxelZ+0) * voxelSize);
+    p[2] = make_float3((voxelX+1) * voxelSize, (voxelY+1) * voxelSize, (voxelZ+0) * voxelSize);
+    p[3] = make_float3((voxelX+0) * voxelSize, (voxelY+1) * voxelSize, (voxelZ+0) * voxelSize);
+    p[4] = make_float3((voxelX+0) * voxelSize, (voxelY+0) * voxelSize, (voxelZ+1) * voxelSize);
+    p[5] = make_float3((voxelX+1) * voxelSize, (voxelY+0) * voxelSize, (voxelZ+1) * voxelSize);
+    p[6] = make_float3((voxelX+1) * voxelSize, (voxelY+1) * voxelSize, (voxelZ+1) * voxelSize);
+    p[7] = make_float3((voxelX+0) * voxelSize, (voxelY+1) * voxelSize, (voxelZ+1) * voxelSize);
     
     // Cube index
     int cubeindex = 0;
@@ -631,7 +638,7 @@ bool DynamicGpuHashGrid::ExtractMesh(
     }
     
     cudaMemsetAsync(*d_triangleCounter_out, 0, sizeof(int), cudaStream);
-    dim3 blockSizeMC(343); // 7*7*7
+    dim3 blockSizeMC(512); // ✅ БЫЛО 343 (7^3), СТАЛО 512 (8^3)
     dim3 gridSizeMC(activeCount);
 
     HashGridMarchingCubesKernel<<<gridSizeMC, blockSizeMC, 0, cudaStream>>>(
