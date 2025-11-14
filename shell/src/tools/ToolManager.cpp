@@ -9,6 +9,7 @@
 #ifdef URBAXIO_GPU_ENABLED
 #if URBAXIO_GPU_ENABLED
 #include "tools/GpuSculptTool.h"
+#include "tools/VrDrawTool.h"
 #endif
 #endif
 
@@ -24,6 +25,7 @@ ToolManager::ToolManager(const ToolContext& context) : context(context) {
 #ifdef URBAXIO_GPU_ENABLED
 #if URBAXIO_GPU_ENABLED
     tools[ToolType::SculptGpu] = std::make_unique<Shell::GpuSculptTool>();
+    tools[ToolType::SculptDraw] = std::make_unique<Shell::VrDrawTool>();
 #endif
 #endif
 

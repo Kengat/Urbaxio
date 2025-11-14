@@ -28,6 +28,7 @@ extern "C" {
 // <-- NEW
 #include <tools/PaintTool.h>
 #include <tools/SculptTool.h>
+#include <tools/VrDrawTool.h>
 
 #include "camera.h"
 #include "input_handler.h"
@@ -966,7 +967,7 @@ namespace { // Anonymous namespace for helpers
 #endif
 #endif
         
-        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Draw", glm::vec3(0), glm::vec2(buttonSize), sculptDrawIcon, Urbaxio::Tools::ToolType::SculptDraw, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptDraw); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Draw", glm::vec3(0), glm::vec2(buttonSize), sculptDrawIcon, Urbaxio::Tools::ToolType::SculptDraw, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptDraw); }, sculptSelectedColors, sculptInactiveColors));
         scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Pinch", glm::vec3(0), glm::vec2(buttonSize), sculptPinchIcon, Urbaxio::Tools::ToolType::SculptPinch, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptPinch); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
         scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Smooth", glm::vec3(0), glm::vec2(buttonSize), sculptSmoothIcon, Urbaxio::Tools::ToolType::SculptSmooth, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptSmooth); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
         scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Voxelize", glm::vec3(0), glm::vec2(buttonSize), voxelizationIcon, Urbaxio::Tools::ToolType::VoxelizeAction, toolManager, voxelizeCallback, sculptSelectedColors, sculptInactiveColors));
@@ -2364,10 +2365,28 @@ int main(int argc, char* argv[]) {
                     }
                     
                     if (!sphereConsumedClick && !clickConsumed && !isInteractingWithPanelSystem && !isRayBlockedByUI) {
-                        // If not interacting with UI, it's a world action for the current tool
-                        toolManager.OnLeftMouseDown(0, 0, shiftDown, ctrlDown, vrRayOrigin, vrRayDirection);
+                        // Special handling for VR Draw Tool
+                        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::SculptDraw) {
+                            auto* vrDrawTool = static_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetActiveTool());
+                            glm::vec3 controllerPos = glm::vec3(rightControllerUnscaledTransform[3]);
+                            vrDrawTool->OnTriggerPressed(true, controllerPos);
+                        } else {
+                            // Standard tool handling
+                            toolManager.OnLeftMouseDown(0, 0, shiftDown, ctrlDown, vrRayOrigin, vrRayDirection);
+                        }
                     }
                 }
+                
+                if (rightHand.triggerWasPressed && !rightHand.triggerReleased) {
+                    if (!isInteractingWithPanelSystem && !isRayBlockedByUI) {
+                        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::SculptDraw) {
+                            auto* vrDrawTool = static_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetActiveTool());
+                            glm::vec3 controllerPos = glm::vec3(rightControllerUnscaledTransform[3]);
+                            vrDrawTool->OnTriggerHeld(true, controllerPos);
+                        }
+                    }
+                }
+                
                 if (rightAButtonIsClicked) {
                     bool clickConsumed = false;
                     if (!sphereConsumedClick) {
@@ -2376,17 +2395,26 @@ int main(int argc, char* argv[]) {
                     // We don't forward A-button clicks to world tools, only UI.
                 }
                 if (rightHand.triggerReleased) {
-                    // --- ИЗМЕНИ ЭТОТ БЛОК ---
                     if (!isInteractingWithPanelSystem) {
-                        auto* selectTool = (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) 
-                            ? static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool()) 
-                            : nullptr;
-                        if (selectTool && selectTool->IsVrDragging()) {
-                            const auto& vr_views = vrManager->GetViews();
-                            if (!vr_views.empty()) {
-                                selectTool->FinalizeVrDragSelection(vr_views[0].viewMatrix, shiftDown);
+                        // Special handling for VR Draw Tool
+                        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::SculptDraw) {
+                            auto* vrDrawTool = static_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetActiveTool());
+                            vrDrawTool->OnTriggerReleased(true);
+                        } 
+                        // Special handling for SelectTool
+                        else if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) {
+                            auto* selectTool = static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool());
+                            if (selectTool->IsVrDragging()) {
+                                const auto& vr_views = vrManager->GetViews();
+                                if (!vr_views.empty()) {
+                                    selectTool->FinalizeVrDragSelection(vr_views[0].viewMatrix, shiftDown);
+                                }
+                            } else {
+                                toolManager.OnLeftMouseUp(0, 0, shiftDown, ctrlDown);
                             }
-                        } else {
+                        } 
+                        // Standard tool handling
+                        else {
                             toolManager.OnLeftMouseUp(0, 0, shiftDown, ctrlDown);
                         }
                     }

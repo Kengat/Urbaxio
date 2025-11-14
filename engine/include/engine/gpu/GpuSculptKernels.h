@@ -46,6 +46,19 @@ public:
 
 
 
+    // NEW: World-space variant for VR drawing
+    static bool ApplySphericalBrushWorldSpace(
+        void* deviceGridPtr,
+        const glm::vec3& brushWorldPos,
+        float brushWorldRadius,
+        float voxelSize,
+        SculptMode mode,
+        float strength,
+        void* cudaStream = nullptr
+    );
+
+
+
     // Legacy functions (kept for API compatibility, not used in optimized path)
     static bool CreateBrushGrid(
         const glm::vec3& brushCenter,

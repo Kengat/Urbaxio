@@ -49,7 +49,9 @@ set(SHELL_SOURCES
 # Add GPU sculpt tool if GPU is enabled
 if(TARGET urbaxio_gpu)
     list(APPEND SHELL_SOURCES src/tools/GpuSculptTool.cpp)
+    list(APPEND SHELL_SOURCES src/tools/VrDrawTool.cpp)
     message(STATUS "Shell: GPU Sculpt Tool will be compiled")
+    message(STATUS "Shell: VR Draw Tool will be compiled")
 endif()
 
 # Define the executable target

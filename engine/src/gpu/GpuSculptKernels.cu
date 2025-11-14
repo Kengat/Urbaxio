@@ -257,5 +257,39 @@ void GpuSculptKernels::FreeDeviceGrid(void* devicePtr) {
 
 
 
+// NEW: World-space brush for VR drawing
+bool GpuSculptKernels::ApplySphericalBrushWorldSpace(
+    void* deviceGridPtr,
+    const glm::vec3& brushWorldPos,
+    float brushWorldRadius,
+    float voxelSize,
+    SculptMode mode,
+    float strength,
+    void* cudaStream)
+{
+    if (!deviceGridPtr) {
+        std::cerr << "[GpuSculptKernels] Invalid device grid pointer" << std::endl;
+        return false;
+    }
+    
+    std::cout << "[GpuSculptKernels] START - device ptr: " << deviceGridPtr << std::endl;
+    
+    auto* grid = reinterpret_cast<nanovdb::FloatGrid*>(deviceGridPtr);
+    
+    std::cout << "[GpuSculptKernels] Getting tree..." << std::endl;
+    
+    // Get leaf count - this is stored in CPU memory in the GridHandle
+    // We CANNOT access grid methods here as it's in GPU memory!
+    // The caller must pass leafCount
+    
+    std::cerr << "[GpuSculptKernels] ERROR: Cannot access tree on device pointer from CPU!" << std::endl;
+    std::cerr << "[GpuSculptKernels] This function needs to be refactored to accept leafCount as parameter" << std::endl;
+    
+        return false;
+}
+
+
+
 } // namespace Urbaxio::Engine
+
 
