@@ -134,27 +134,31 @@ __global__ void SculptSphericalKernel(
     float dz = voxelWorld.z - brushCenter.z;
     float dist = sqrtf(dx*dx + dy*dy + dz*dz);
 
-    // SIMPLE: Direct SDF, no smoothing
     float brushSDF = dist - brushRadius;
 
     float* block = blockData + dataIdx * 512;
     float currentVal = block[voxelIdx];
 
-    // SIMPLE: Direct min (CSG union)
-    float newVal = fminf(currentVal, brushSDF);
+    // SMOOTH MIN for organic shapes
+    // Larger k = smoother blend (try 3-5 voxels)
+    const float k = voxelSize * 4.0f; // 4 voxels of smoothing
+    
+    float h = fmaxf(k - fabsf(currentVal - brushSDF), 0.0f) / k;
+    float newVal = fminf(currentVal, brushSDF) - h * h * k * 0.25f;
 
-    // WIDER influence, SIMPLER falloff
-    float maxDist = brushRadius * 4.0f; // 4x radius instead of 8x
-    if (dist > maxDist) return; // Skip far voxels for performance
+    // WIDE influence for smooth transitions
+    float maxDist = brushRadius + voxelSize * 10.0f; // 10 voxels beyond brush
+    if (dist > maxDist) return;
 
+    // SMOOTH cubic falloff (not linear!)
     float t = dist / maxDist;
     t = fmaxf(0.0f, fminf(1.0f, t));
+    float falloff = 1.0f - t * t * (3.0f - 2.0f * t); // smoothstep
     
-    // Simple linear falloff
-    float falloff = 1.0f - t;
-    
-    // Apply with strength
     float blended = currentVal + (newVal - currentVal) * strength * falloff;
+
+    // Clamp to reasonable range to prevent extreme values
+    blended = fmaxf(-brushRadius * 2.0f, fminf(brushRadius * 2.0f, blended));
 
     block[voxelIdx] = blended;
 }
@@ -288,6 +292,9 @@ bool DynamicGpuHashGrid::ApplySphericalBrush(
 {
     // Calculate affected blocks
     int blockRadius = static_cast<int>(ceilf(worldRadius / (config_.voxelSize * BLOCK_SIZE))) + 1;
+
+    // Add extra padding to ensure neighbor blocks exist
+    blockRadius += 1; // +1 block padding
 
     dim3 gridSize(blockRadius * 2 + 1, blockRadius * 2 + 1, blockRadius * 2 + 1);
     dim3 blockSize(VOXELS_PER_BLOCK);

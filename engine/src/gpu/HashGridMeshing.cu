@@ -366,6 +366,13 @@ __device__ float sampleVoxel(
     if (localY < 0) { localY += 8; blockY--; }
     if (localZ < 0) { localZ += 8; blockZ--; }
     
+    // CRITICAL: Ensure local coords are in [0,7]
+    if (localX < 0 || localX >= 8 ||
+        localY < 0 || localY >= 8 ||
+        localZ < 0 || localZ >= 8) {
+        return 1.0f; // Background
+    }
+    
     uint32_t h = blockX * 73856093u ^ blockY * 19349663u ^ blockZ * 83492791u;
     uint32_t slot = h & (tableSize - 1);
     
@@ -388,10 +395,26 @@ __device__ float sampleVoxel(
 }
 
 __device__ float3 HashGridVertexInterp(float iso, float3 p1, float v1, float3 p2, float v2) {
-    if (fabsf(iso - v1) < 0.00001f) return p1;
-    if (fabsf(iso - v2) < 0.00001f) return p2;
-    if (fabsf(v1 - v2) < 0.00001f) return p1;
-    float mu = (iso - v1) / (v2 - v1);
+    // More robust epsilon checks
+    const float EPSILON = 1e-6f;
+    
+    float diff = v2 - v1;
+    
+    // If values are identical, return midpoint (safer than p1)
+    if (fabsf(diff) < EPSILON) {
+        return make_float3(
+            (p1.x + p2.x) * 0.5f,
+            (p1.y + p2.y) * 0.5f,
+            (p1.z + p2.z) * 0.5f
+        );
+    }
+    
+    // Calculate interpolation factor
+    float mu = (iso - v1) / diff;
+    
+    // Clamp mu to [0,1] to prevent extrapolation artifacts
+    mu = fmaxf(0.0f, fminf(1.0f, mu));
+    
     return make_float3(
         p1.x + mu * (p2.x - p1.x),
         p1.y + mu * (p2.y - p1.y),
@@ -432,8 +455,6 @@ __global__ void HashGridMarchingCubesKernel(
     int32_t voxelX = blockX * 8 + localX;
     int32_t voxelY = blockY * 8 + localY;
     int32_t voxelZ = blockZ * 8 + localZ;
-    
-    uint64_t globalCellIdx = static_cast<uint64_t>(idx) * 512 + voxelIdx;
     
     // Standard Marching Cubes vertex order
     const int vertexOrder[8][3] = {
@@ -501,7 +522,7 @@ __global__ void HashGridMarchingCubesKernel(
             int32_t cy = __float2int_rn(vertices[j].y / voxelSize);
             int32_t cz = __float2int_rn(vertices[j].z / voxelSize);
             
-            const int h = 2;
+            const int h = 3;
             float dx = sampleVoxel(hashTable, tableSize, blockData, cx+h, cy, cz) -
                        sampleVoxel(hashTable, tableSize, blockData, cx-h, cy, cz);
             float dy = sampleVoxel(hashTable, tableSize, blockData, cx, cy+h, cz) -
