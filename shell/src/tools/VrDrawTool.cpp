@@ -92,11 +92,11 @@ void VrDrawTool::InitializePersistentResources() {
     
     std::cout << "[VrDrawTool] Allocating persistent GPU resources..." << std::endl;
     
-    // 1. Create hash grid (BIG allocation)
+    // 1. Create hash grid (reduced allocation for better performance)
     Engine::DynamicGpuHashGrid::Config config;
     config.voxelSize = 0.05f;
-    config.maxBlocks = 2 * 1024 * 1024;
-    config.hashTableSize = 4 * 1024 * 1024;
+    config.maxBlocks = 200 * 1024;
+    config.hashTableSize = 512 * 1024;
     s_sharedHashGrid = std::make_unique<Engine::DynamicGpuHashGrid>(config);
     
     // 2. Pre-warm kernels + allocate mesh buffers
@@ -110,7 +110,7 @@ void VrDrawTool::InitializePersistentResources() {
     cudaDeviceSynchronize();
     
     s_resourcesReady = true;
-    std::cout << "[VrDrawTool] ✅ Persistent resources ready" << std::endl;
+    std::cout << "[VrDrawTool] ✅ Persistent resources ready (~450 MB)" << std::endl;
 }
 
 void VrDrawTool::CleanupPersistentResources() {
@@ -369,7 +369,7 @@ void VrDrawTool::RenderUI() {
         return;
     }
         
-    if (impl_->isDrawing) {
+        if (impl_->isDrawing) {
         ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "🎨 Drawing...");
     } else {
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Ready");

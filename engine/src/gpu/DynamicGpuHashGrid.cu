@@ -99,9 +99,14 @@ __global__ void SculptSphericalKernel(
     float voxelSize)
 {
     // Each block processes one potential block coordinate
-    int32_t blockX = blockIdx.x + static_cast<int32_t>(brushCenter.x / (voxelSize * DynamicGpuHashGrid::BLOCK_SIZE)) - gridDim.x / 2;
-    int32_t blockY = blockIdx.y + static_cast<int32_t>(brushCenter.y / (voxelSize * DynamicGpuHashGrid::BLOCK_SIZE)) - gridDim.y / 2;
-    int32_t blockZ = blockIdx.z + static_cast<int32_t>(brushCenter.z / (voxelSize * DynamicGpuHashGrid::BLOCK_SIZE)) - gridDim.z / 2;
+    // Use floorf for consistent coordinate system with meshing
+    int32_t centerBlockX = static_cast<int32_t>(floorf(brushCenter.x / (voxelSize * DynamicGpuHashGrid::BLOCK_SIZE)));
+    int32_t centerBlockY = static_cast<int32_t>(floorf(brushCenter.y / (voxelSize * DynamicGpuHashGrid::BLOCK_SIZE)));
+    int32_t centerBlockZ = static_cast<int32_t>(floorf(brushCenter.z / (voxelSize * DynamicGpuHashGrid::BLOCK_SIZE)));
+    
+    int32_t blockX = centerBlockX + blockIdx.x - gridDim.x / 2;
+    int32_t blockY = centerBlockY + blockIdx.y - gridDim.y / 2;
+    int32_t blockZ = centerBlockZ + blockIdx.z - gridDim.z / 2;
 
     // Find or allocate this block
     uint32_t dataIdx = findOrAllocateBlock(
@@ -179,6 +184,20 @@ DynamicGpuHashGrid::~DynamicGpuHashGrid() {
 
 void DynamicGpuHashGrid::initialize() {
     std::cout << "[DynamicGpuHashGrid] Initializing..." << std::endl;
+    
+    size_t freeMemory, totalMemory;
+    cudaMemGetInfo(&freeMemory, &totalMemory);
+    float freeGB = freeMemory / (1024.0f * 1024.0f * 1024.0f);
+    
+    std::cout << "  Available GPU memory: " << freeGB << " GB" << std::endl;
+    
+    if (freeGB < 2.0f) {
+        std::cout << "[DynamicGpuHashGrid] ⚠️ Low GPU memory (" << freeGB 
+                  << " GB), reducing allocation..." << std::endl;
+        config_.maxBlocks = std::min(config_.maxBlocks, 100u * 1024u);
+        config_.hashTableSize = std::min(config_.hashTableSize, 256u * 1024u);
+    }
+    
     std::cout << "  Max blocks: " << config_.maxBlocks << std::endl;
     std::cout << "  Hash table size: " << config_.hashTableSize << std::endl;
     std::cout << "  Voxel size: " << config_.voxelSize << "m" << std::endl;

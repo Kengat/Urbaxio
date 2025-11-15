@@ -1363,7 +1363,7 @@ int main(int argc, char* argv[]) {
     auto t2 = std::chrono::high_resolution_clock::now();
     float elapsed = std::chrono::duration<float, std::milli>(t2 - t1).count();
     std::cout << "Shell: ✅ GPU resources ready (" << elapsed << "ms)" << std::endl;
-    
+
     bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
     while (!should_quit) {
         SDL_GetWindowSize(window, &display_w, &display_h);

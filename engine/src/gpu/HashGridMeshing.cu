@@ -353,13 +353,18 @@ __device__ float sampleVoxel(
     const float* blockData,
     int32_t voxelX, int32_t voxelY, int32_t voxelZ)
 {
-    int32_t blockX = voxelX >> 3;
-    int32_t blockY = voxelY >> 3;
-    int32_t blockZ = voxelZ >> 3;
+    // Use floor division for correct negative handling
+    int32_t blockX = static_cast<int32_t>(floorf(static_cast<float>(voxelX) / 8.0f));
+    int32_t blockY = static_cast<int32_t>(floorf(static_cast<float>(voxelY) / 8.0f));
+    int32_t blockZ = static_cast<int32_t>(floorf(static_cast<float>(voxelZ) / 8.0f));
     
-    int localX = voxelX & 7;
-    int localY = voxelY & 7;
-    int localZ = voxelZ & 7;
+    int localX = voxelX - blockX * 8;
+    int localY = voxelY - blockY * 8;
+    int localZ = voxelZ - blockZ * 8;
+    
+    if (localX < 0) { localX += 8; blockX--; }
+    if (localY < 0) { localY += 8; blockY--; }
+    if (localZ < 0) { localZ += 8; blockZ--; }
     
     uint32_t h = blockX * 73856093u ^ blockY * 19349663u ^ blockZ * 83492791u;
     uint32_t slot = h & (tableSize - 1);
@@ -417,43 +422,36 @@ __global__ void HashGridMarchingCubesKernel(
     int32_t blockY = hashTable[entryIdx].blockY;
     int32_t blockZ = hashTable[entryIdx].blockZ;
     
-    // ✅ ИСПРАВЛЕНО: 8x8x8 вокселов (512), не 7x7x7 (343)!
-    int voxelIdx = threadIdx.x;
-    if (voxelIdx >= 512) return; // 8*8*8
+    int cellIdx = threadIdx.x;
+    if (cellIdx >= 343) return;
     
-    // ✅ ИСПРАВЛЕНО: 0-7 на каждой оси
-    int localX = voxelIdx % 8;
-    int localY = (voxelIdx / 8) % 8;
-    int localZ = voxelIdx / 64;
+    int localX = cellIdx % 7;
+    int localY = (cellIdx / 7) % 7;
+    int localZ = cellIdx / 49;
     
-    // Global voxel coordinate
     int32_t voxelX = blockX * 8 + localX;
     int32_t voxelY = blockY * 8 + localY;
     int32_t voxelZ = blockZ * 8 + localZ;
     
-    // ✅ КРИТИЧНО: Sample 8 corners (могут быть в соседних листах!)
+    // Standard Marching Cubes vertex order
+    const int vertexOrder[8][3] = {
+        {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0},
+        {0,0,1}, {1,0,1}, {1,1,1}, {0,1,1}
+    };
+    
     float v[8];
-    v[0] = sampleVoxel(hashTable, tableSize, blockData, voxelX+0, voxelY+0, voxelZ+0);
-    v[1] = sampleVoxel(hashTable, tableSize, blockData, voxelX+1, voxelY+0, voxelZ+0);
-    v[2] = sampleVoxel(hashTable, tableSize, blockData, voxelX+1, voxelY+1, voxelZ+0);
-    v[3] = sampleVoxel(hashTable, tableSize, blockData, voxelX+0, voxelY+1, voxelZ+0);
-    v[4] = sampleVoxel(hashTable, tableSize, blockData, voxelX+0, voxelY+0, voxelZ+1);
-    v[5] = sampleVoxel(hashTable, tableSize, blockData, voxelX+1, voxelY+0, voxelZ+1);
-    v[6] = sampleVoxel(hashTable, tableSize, blockData, voxelX+1, voxelY+1, voxelZ+1);
-    v[7] = sampleVoxel(hashTable, tableSize, blockData, voxelX+0, voxelY+1, voxelZ+1);
-    
-    // ✅ Positions тоже нужны для всех 8 вершин
     float3 p[8];
-    p[0] = make_float3((voxelX+0) * voxelSize, (voxelY+0) * voxelSize, (voxelZ+0) * voxelSize);
-    p[1] = make_float3((voxelX+1) * voxelSize, (voxelY+0) * voxelSize, (voxelZ+0) * voxelSize);
-    p[2] = make_float3((voxelX+1) * voxelSize, (voxelY+1) * voxelSize, (voxelZ+0) * voxelSize);
-    p[3] = make_float3((voxelX+0) * voxelSize, (voxelY+1) * voxelSize, (voxelZ+0) * voxelSize);
-    p[4] = make_float3((voxelX+0) * voxelSize, (voxelY+0) * voxelSize, (voxelZ+1) * voxelSize);
-    p[5] = make_float3((voxelX+1) * voxelSize, (voxelY+0) * voxelSize, (voxelZ+1) * voxelSize);
-    p[6] = make_float3((voxelX+1) * voxelSize, (voxelY+1) * voxelSize, (voxelZ+1) * voxelSize);
-    p[7] = make_float3((voxelX+0) * voxelSize, (voxelY+1) * voxelSize, (voxelZ+1) * voxelSize);
     
-    // Cube index
+    for (int i = 0; i < 8; ++i) {
+        int32_t gx = voxelX + vertexOrder[i][0];
+        int32_t gy = voxelY + vertexOrder[i][1];
+        int32_t gz = voxelZ + vertexOrder[i][2];
+        
+        v[i] = sampleVoxel(hashTable, tableSize, blockData, gx, gy, gz);
+        p[i] = make_float3(gx * voxelSize, gy * voxelSize, gz * voxelSize);
+    }
+    
+    // SDF convention: < means inside
     int cubeindex = 0;
     if (v[0] < isovalue) cubeindex |= 1;
     if (v[1] < isovalue) cubeindex |= 2;
@@ -490,12 +488,10 @@ __global__ void HashGridMarchingCubesKernel(
         float3 v1 = vertlist[d_triTable[cubeindex][i+1]];
         float3 v2 = vertlist[d_triTable[cubeindex][i+2]];
         
-        // Write vertices (swap v1/v2 for SDF winding)
         outputVertices[triIdx * 3 + 0] = v0;
         outputVertices[triIdx * 3 + 1] = v2;
         outputVertices[triIdx * 3 + 2] = v1;
         
-        // Calculate normals via gradient
         float3 vertices[3] = {v0, v2, v1};
         
         for (int j = 0; j < 3; ++j) {
@@ -600,7 +596,7 @@ bool DynamicGpuHashGrid::ExtractMesh(
         return false;
     }
     // --- END NEW ---
-    const int MAX_TRIANGLES = 10000000; // 10M triangles max
+    const int MAX_TRIANGLES = 1000000; // 1M triangles max
     
     // ✅ Reuse pre-allocated buffers (malloc only once!)
     if (!d_meshVertices_ || allocatedTriangles_ < MAX_TRIANGLES) {
@@ -638,7 +634,7 @@ bool DynamicGpuHashGrid::ExtractMesh(
     }
     
     cudaMemsetAsync(*d_triangleCounter_out, 0, sizeof(int), cudaStream);
-    dim3 blockSizeMC(512); // ✅ БЫЛО 343 (7^3), СТАЛО 512 (8^3)
+    dim3 blockSizeMC(343);
     dim3 gridSizeMC(activeCount);
 
     HashGridMarchingCubesKernel<<<gridSizeMC, blockSizeMC, 0, cudaStream>>>(
