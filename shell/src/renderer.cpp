@@ -593,7 +593,7 @@ namespace Urbaxio {
         if (objectShaderProgram != 0 && scene && scene->getMaterialManager()) {
             
             // --- Step 1: Compile static scene if needed ---
-            if (!isStaticBatchValid_) {
+            if (scene->IsStaticGeometryDirty() || !isStaticBatchValid_) {
                 CompileStaticScene(scene);
             }
             
@@ -1528,6 +1528,11 @@ namespace Urbaxio {
     // --- NEW: Implementation of the Scene Compiler ---
     void Renderer::CompileStaticScene(Urbaxio::Engine::Scene* scene) {
         if (!scene) return;
+
+        if (!scene->IsStaticGeometryDirty() && isStaticBatchValid_) {
+            return;
+        }
+
         std::cout << "Renderer: Compiling static scene geometry..." << std::endl;
         
         // 1. Clear old data
@@ -1539,6 +1544,20 @@ namespace Urbaxio {
         int currentBaseVertex = 0;
         size_t currentIndexOffset = 0;
         auto* matManager = scene->getMaterialManager();
+        
+        size_t estimatedVertices = 0;
+        size_t estimatedIndices = 0;
+        for (const auto* obj : scene->get_all_objects()) {
+            if (obj && obj->isExportable() && !obj->isGpuManaged()) {
+                estimatedVertices += obj->getMeshBuffers().vertices.size();
+                estimatedIndices += obj->getMeshBuffers().indices.size();
+            }
+        }
+
+        allVertices.reserve(estimatedVertices);
+        allNormals.reserve(estimatedVertices);
+        allUVs.reserve(estimatedVertices * 2 / 3);
+        allIndices.reserve(estimatedIndices);
         
         // 2. Gather data and create commands
         for (const auto* obj : scene->get_all_objects()) {
@@ -1620,6 +1639,7 @@ namespace Urbaxio {
         glBindVertexArray(0);
         
         isStaticBatchValid_ = true;
+        scene->ClearStaticGeometryDirtyFlag();
         std::cout << "Renderer: Static scene compiled. Vertices: " << currentBaseVertex 
                   << ", Indices: " << currentIndexOffset 
                   << ", Batches: " << staticBatchQueue.size() << std::endl;

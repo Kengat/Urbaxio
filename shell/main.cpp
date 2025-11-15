@@ -2477,14 +2477,27 @@ int main(int argc, char* argv[]) {
                     
                     const auto& multiviewFbo = vrManager->GetMultiviewFbo();
                     
-                    // Correctly blit from multiview FBO to swapchain FBO for this eye
-                    glBindFramebuffer(GL_READ_FRAMEBUFFER, renderer.GetBlitFBO());
-                    glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, multiviewFbo.colorTexture, 0, i);
-                    glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, multiviewFbo.depthTexture, 0, i);
+                    GLuint readFBO, drawFBO;
+                    glGenFramebuffers(1, &readFBO);
+                    glGenFramebuffers(1, &drawFBO);
+                    
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, readFBO);
+                    glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, 
+                                              multiviewFbo.colorTexture, 0, i);
+                    glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, 
+                                              multiviewFbo.depthTexture, 0, i);
+                    
                     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, swapchain.fbos[imageIndex]);
-                    glBlitFramebuffer(0, 0, multiviewFbo.width, multiviewFbo.height,
-                                      0, 0, swapchain.width, swapchain.height,
-                                      GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+                    
+                    glBlitFramebuffer(
+                        0, 0, multiviewFbo.width, multiviewFbo.height,
+                        0, 0, swapchain.width, swapchain.height,
+                        GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, 
+                        GL_NEAREST
+                    );
+                    
+                    glDeleteFramebuffers(1, &readFBO);
+                    glDeleteFramebuffers(1, &drawFBO);
                     
                     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
                     // Now bind the swapchain FBO for further drawing of UI elements
