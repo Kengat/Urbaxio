@@ -57,6 +57,9 @@ public:
     // Debug
     void PrintStats() const;
 
+    // Reset grid to empty state
+    void Reset();
+
 private:
     Config config_;
 

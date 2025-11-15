@@ -88,7 +88,12 @@ VrDrawTool::~VrDrawTool() {
 }
 
 void VrDrawTool::InitializePersistentResources() {
-    if (s_sharedHashGrid) return; // Already initialized
+    if (s_sharedHashGrid) {
+        // Reset if already exists
+        s_sharedHashGrid->Reset();
+        s_resourcesReady = true;
+        return;
+    }
     
     std::cout << "[VrDrawTool] Allocating persistent GPU resources..." << std::endl;
     
@@ -100,8 +105,11 @@ void VrDrawTool::InitializePersistentResources() {
     s_sharedHashGrid = std::make_unique<Engine::DynamicGpuHashGrid>(config);
     
     // 2. Pre-warm kernels + allocate mesh buffers
+    std::cout << "[VrDrawTool] Pre-warming GPU with dummy brush..." << std::endl;
     s_sharedHashGrid->ApplySphericalBrush(glm::vec3(0), 0.1f, 1.0f, true, nullptr);
     cudaDeviceSynchronize();
+    std::cout << "[VrDrawTool] Pre-warm complete, active blocks: " 
+              << s_sharedHashGrid->GetActiveBlockCount() << std::endl;
     
     float* dummy_v = nullptr;
     float* dummy_n = nullptr;

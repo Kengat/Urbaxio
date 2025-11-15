@@ -422,16 +422,18 @@ __global__ void HashGridMarchingCubesKernel(
     int32_t blockY = hashTable[entryIdx].blockY;
     int32_t blockZ = hashTable[entryIdx].blockZ;
     
-    int cellIdx = threadIdx.x;
-    if (cellIdx >= 343) return;
+    int voxelIdx = threadIdx.x;
+    if (voxelIdx >= 512) return;
     
-    int localX = cellIdx % 7;
-    int localY = (cellIdx / 7) % 7;
-    int localZ = cellIdx / 49;
+    int localX = voxelIdx % 8;
+    int localY = (voxelIdx / 8) % 8;
+    int localZ = voxelIdx / 64;
     
     int32_t voxelX = blockX * 8 + localX;
     int32_t voxelY = blockY * 8 + localY;
     int32_t voxelZ = blockZ * 8 + localZ;
+    
+    uint64_t globalCellIdx = static_cast<uint64_t>(idx) * 512 + voxelIdx;
     
     // Standard Marching Cubes vertex order
     const int vertexOrder[8][3] = {
@@ -634,7 +636,7 @@ bool DynamicGpuHashGrid::ExtractMesh(
     }
     
     cudaMemsetAsync(*d_triangleCounter_out, 0, sizeof(int), cudaStream);
-    dim3 blockSizeMC(343);
+    dim3 blockSizeMC(512);
     dim3 gridSizeMC(activeCount);
 
     HashGridMarchingCubesKernel<<<gridSizeMC, blockSizeMC, 0, cudaStream>>>(

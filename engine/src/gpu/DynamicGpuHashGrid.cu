@@ -48,7 +48,6 @@ __device__ uint32_t findOrAllocateBlock(
         int32_t oldX = atomicCAS(&hashTable[currentSlot].blockX, INT32_MAX, blockX);
 
         if (oldX == INT32_MAX) {
-            // We claimed an empty slot! Initialize it
             hashTable[currentSlot].blockY = blockY;
             hashTable[currentSlot].blockZ = blockZ;
 
@@ -56,16 +55,15 @@ __device__ uint32_t findOrAllocateBlock(
             uint32_t dataIdx = atomicAdd(blockCounter, 1);
 
             if (dataIdx >= maxBlocks) {
-                // Out of memory! Mark slot as failed
                 hashTable[currentSlot].blockX = INT32_MAX;
                 return UINT32_MAX;
             }
 
             hashTable[currentSlot].dataIndex = dataIdx;
 
-            // Initialize block with background value (outside = 1.0)
-            float* block = blockData + dataIdx * DynamicGpuHashGrid::VOXELS_PER_BLOCK;
-            for (int i = threadIdx.x; i < DynamicGpuHashGrid::VOXELS_PER_BLOCK; i += blockDim.x) {
+            // Initialize block to 1.0f (background)
+            float* block = blockData + dataIdx * 512;
+            for (int i = threadIdx.x; i < 512; i += blockDim.x) {
                 block[i] = 1.0f;
             }
             __syncthreads();
@@ -117,50 +115,47 @@ __global__ void SculptSphericalKernel(
 
     if (dataIdx == UINT32_MAX) return; // Allocation failed
 
-    // Each thread processes one voxel in the block
+    // Process ALL voxels in block
     int voxelIdx = threadIdx.x;
     if (voxelIdx >= DynamicGpuHashGrid::VOXELS_PER_BLOCK) return;
 
-    // Decode voxel coordinates within block
-    int localX = voxelIdx % DynamicGpuHashGrid::BLOCK_SIZE;
-    int localY = (voxelIdx / DynamicGpuHashGrid::BLOCK_SIZE) % DynamicGpuHashGrid::BLOCK_SIZE;
-    int localZ = voxelIdx / (DynamicGpuHashGrid::BLOCK_SIZE * DynamicGpuHashGrid::BLOCK_SIZE);
+    int localX = voxelIdx % 8;
+    int localY = (voxelIdx / 8) % 8;
+    int localZ = voxelIdx / 64;
 
-    // World position of this voxel
     float3 voxelWorld = make_float3(
-        (blockX * DynamicGpuHashGrid::BLOCK_SIZE + localX) * voxelSize,
-        (blockY * DynamicGpuHashGrid::BLOCK_SIZE + localY) * voxelSize,
-        (blockZ * DynamicGpuHashGrid::BLOCK_SIZE + localZ) * voxelSize
+        (blockX * 8 + localX) * voxelSize,
+        (blockY * 8 + localY) * voxelSize,
+        (blockZ * 8 + localZ) * voxelSize
     );
 
-    // Distance from brush center
     float dx = voxelWorld.x - brushCenter.x;
     float dy = voxelWorld.y - brushCenter.y;
     float dz = voxelWorld.z - brushCenter.z;
     float dist = sqrtf(dx*dx + dy*dy + dz*dz);
 
-    if (dist > brushRadius + voxelSize * 2.0f) return; // Outside brush influence
-
-    // Brush SDF
+    // SIMPLE: Direct SDF, no smoothing
     float brushSDF = dist - brushRadius;
 
-    // Get current value
-    float* block = blockData + dataIdx * DynamicGpuHashGrid::VOXELS_PER_BLOCK;
+    float* block = blockData + dataIdx * 512;
     float currentVal = block[voxelIdx];
 
-    // CSG union (smooth min)
-    const float smoothing = 0.5f;
-    float h = fmaxf(smoothing - fabsf(currentVal - brushSDF), 0.0f) / smoothing;
-    float newVal = fminf(currentVal, brushSDF) - h * h * smoothing * 0.25f;
+    // SIMPLE: Direct min (CSG union)
+    float newVal = fminf(currentVal, brushSDF);
 
-    // Falloff
-    float falloff = 1.0f - (dist / (brushRadius + voxelSize * 2.0f));
-    falloff = fmaxf(0.0f, fminf(1.0f, falloff));
-    falloff = falloff * falloff;
+    // WIDER influence, SIMPLER falloff
+    float maxDist = brushRadius * 4.0f; // 4x radius instead of 8x
+    if (dist > maxDist) return; // Skip far voxels for performance
 
+    float t = dist / maxDist;
+    t = fmaxf(0.0f, fminf(1.0f, t));
+    
+    // Simple linear falloff
+    float falloff = 1.0f - t;
+    
+    // Apply with strength
     float blended = currentVal + (newVal - currentVal) * strength * falloff;
 
-    // Write back
     block[voxelIdx] = blended;
 }
 
@@ -222,10 +217,16 @@ void DynamicGpuHashGrid::initialize() {
 
     // Allocate block data
     cudaMalloc(&d_blockData_, blockDataBytes);
+    
+    // FIX: ZERO entire memory!
+    cudaMemset(d_blockData_, 0, blockDataBytes);
 
     // Allocate block counter
     cudaMalloc(&d_blockCounter_, sizeof(uint32_t));
     cudaMemset(d_blockCounter_, 0, sizeof(uint32_t));
+    
+    std::cout << "[DynamicGpuHashGrid] Memory zeroed: " 
+              << (blockDataBytes / 1024.0 / 1024.0) << " MB" << std::endl;
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -242,6 +243,40 @@ void DynamicGpuHashGrid::cleanup() {
     if (d_blockCounter_) cudaFree(d_blockCounter_);
     if (d_meshVertices_) cudaFree(d_meshVertices_);
     if (d_meshNormals_) cudaFree(d_meshNormals_);
+}
+
+void DynamicGpuHashGrid::Reset() {
+    // Reset hash table
+    std::vector<HashEntry> emptyTable(config_.hashTableSize);
+    for (auto& entry : emptyTable) {
+        entry.blockX = INT32_MAX;
+        entry.blockY = 0;
+        entry.blockZ = 0;
+        entry.dataIndex = 0;
+    }
+    cudaMemcpy(d_hashTable_, emptyTable.data(), 
+               config_.hashTableSize * sizeof(HashEntry), 
+               cudaMemcpyHostToDevice);
+    
+    // Zero block data
+    cudaMemset(d_blockData_, 0, config_.maxBlocks * 512 * sizeof(float));
+    
+    // Reset counter
+    cudaMemset(d_blockCounter_, 0, sizeof(uint32_t));
+    
+    // Reset mesh buffers
+    if (d_meshVertices_ && allocatedTriangles_ > 0) {
+        cudaMemset(d_meshVertices_, 0, allocatedTriangles_ * 9 * sizeof(float3));
+    }
+    if (d_meshNormals_ && allocatedTriangles_ > 0) {
+        cudaMemset(d_meshNormals_, 0, allocatedTriangles_ * 9 * sizeof(float3));
+    }
+    
+    activeBlockCount_ = 0;
+    cachedActiveBlockCount_ = 0;
+    needsCountUpdate_ = false;
+    
+    std::cout << "[DynamicGpuHashGrid] ✅ Reset complete" << std::endl;
 }
 
 bool DynamicGpuHashGrid::ApplySphericalBrush(
