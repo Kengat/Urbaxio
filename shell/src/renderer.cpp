@@ -671,6 +671,29 @@ namespace Urbaxio {
                 // Skip objects without transform override, UNLESS they are GPU-managed
                 if (transformIt == transformOverrides.end() && !isGpuManaged) continue; // ✅ FIXED!
                 
+                // --- NEW: Frustum culling using cached AABB ---
+                if (obj->aabbValid) {
+                    // Transform AABB to world space
+                    glm::vec3 worldMin = glm::vec3(modelMatrix * glm::vec4(obj->aabbMin, 1.0f));
+                    glm::vec3 worldMax = glm::vec3(modelMatrix * glm::vec4(obj->aabbMax, 1.0f));
+                    
+                    // Handle negative scale
+                    glm::vec3 finalMin = glm::min(worldMin, worldMax);
+                    glm::vec3 finalMax = glm::max(worldMin, worldMax);
+                    
+                    // Additional check: cull if center is behind camera
+                    glm::vec3 center = (finalMin + finalMax) * 0.5f;
+                    glm::vec4 viewSpaceCenter = view * glm::vec4(center, 1.0f);
+                    if (viewSpaceCenter.z > 0.0f) { // Positive Z in view space = behind camera
+                        continue;
+                    }
+                    
+                    if (!frustum.IsBoxInFrustum(finalMin, finalMax)) {
+                        continue;
+                    }
+                }
+                // --- END FRUSTUM CULLING ---
+                
                 for (const auto& group : obj->meshGroups) {
                     if (group.indexCount == 0) continue;
                     
@@ -1164,6 +1187,32 @@ namespace Urbaxio {
                 
                 // Skip objects without transform override, UNLESS they are GPU-managed
                 if (transformIt == transformOverrides.end() && !isGpuManaged) continue;
+                
+                // --- NEW: Frustum culling for VR (check both eyes) ---
+                if (obj->aabbValid) {
+                    // Transform AABB to world space
+                    glm::vec3 worldMin = glm::vec3(modelMatrix * glm::vec4(obj->aabbMin, 1.0f));
+                    glm::vec3 worldMax = glm::vec3(modelMatrix * glm::vec4(obj->aabbMax, 1.0f));
+                    
+                    // Handle negative scale
+                    glm::vec3 finalMin = glm::min(worldMin, worldMax);
+                    glm::vec3 finalMax = glm::max(worldMin, worldMax);
+                    
+                    // Additional check: cull if behind BOTH eyes
+                    glm::vec3 center = (finalMin + finalMax) * 0.5f;
+                    glm::vec4 viewSpaceCenterLeft = viewMatrices[0] * glm::vec4(center, 1.0f);
+                    glm::vec4 viewSpaceCenterRight = viewMatrices[1] * glm::vec4(center, 1.0f);
+                    if (viewSpaceCenterLeft.z > 0.0f && viewSpaceCenterRight.z > 0.0f) {
+                        continue; // Behind both eyes
+                    }
+                    
+                    bool visibleLeft = frustumLeft.IsBoxInFrustum(finalMin, finalMax);
+                    bool visibleRight = frustumRight.IsBoxInFrustum(finalMin, finalMax);
+                    if (!visibleLeft && !visibleRight) {
+                        continue;
+                    }
+                }
+                // --- END FRUSTUM CULLING ---
                 
                 for (const auto& group : obj->meshGroups) {
                     if (group.indexCount == 0) continue;

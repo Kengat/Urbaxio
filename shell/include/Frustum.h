@@ -31,6 +31,28 @@ struct Frustum {
         }
     }
 
+    bool IsBoxInFrustum(const glm::vec3& minPoint, const glm::vec3& maxPoint) const {
+        // Check if AABB is outside any of the 6 frustum planes
+        for (int i = 0; i < 6; ++i) {
+            // Test both p-vertex (furthest) and n-vertex (nearest) for better accuracy
+            glm::vec3 positiveVertex, negativeVertex;
+            
+            positiveVertex.x = (planes[i].x >= 0.0f) ? maxPoint.x : minPoint.x;
+            positiveVertex.y = (planes[i].y >= 0.0f) ? maxPoint.y : minPoint.y;
+            positiveVertex.z = (planes[i].z >= 0.0f) ? maxPoint.z : minPoint.z;
+            
+            negativeVertex.x = (planes[i].x >= 0.0f) ? minPoint.x : maxPoint.x;
+            negativeVertex.y = (planes[i].y >= 0.0f) ? minPoint.y : maxPoint.y;
+            negativeVertex.z = (planes[i].z >= 0.0f) ? minPoint.z : maxPoint.z;
+            
+            // If positive vertex (furthest) is outside, entire box is outside
+            if (glm::dot(glm::vec3(planes[i]), positiveVertex) + planes[i].w < 0.0f) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Test a world-space AABB against the frustum
     bool isAABBVisible_WorldSpace(const glm::vec3& aabbMin, const glm::vec3& aabbMax) const {
         for (int i = 0; i < 6; ++i) {
