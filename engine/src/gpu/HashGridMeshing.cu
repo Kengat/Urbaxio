@@ -522,7 +522,7 @@ __global__ void HashGridMarchingCubesKernel(
             int32_t cy = __float2int_rn(vertices[j].y / voxelSize);
             int32_t cz = __float2int_rn(vertices[j].z / voxelSize);
             
-            const int h = 3;
+            const int h = 5;
             float dx = sampleVoxel(hashTable, tableSize, blockData, cx+h, cy, cz) -
                        sampleVoxel(hashTable, tableSize, blockData, cx-h, cy, cz);
             float dy = sampleVoxel(hashTable, tableSize, blockData, cx, cy+h, cz) -
@@ -535,18 +535,49 @@ __global__ void HashGridMarchingCubesKernel(
             dz /= (2.0f * h);
             
             float len = sqrtf(dx*dx + dy*dy + dz*dz);
-            if (len > 0.0001f) {
-                dx /= len; dy /= len; dz /= len;
-            } else {
-                // Fallback to face normal
+            
+            if (len > 0.00001f) {
+                dx /= len;
+                dy /= len;
+                dz /= len;
+                
                 float3 e1 = make_float3(v2.x - v0.x, v2.y - v0.y, v2.z - v0.z);
                 float3 e2 = make_float3(v1.x - v0.x, v1.y - v0.y, v1.z - v0.z);
+                
+                float fnx = e1.y * e2.z - e1.z * e2.y;
+                float fny = e1.z * e2.x - e1.x * e2.z;
+                float fnz = e1.x * e2.y - e1.y * e2.x;
+                
+                float flen = sqrtf(fnx*fnx + fny*fny + fnz*fnz);
+                
+                if (flen > 0.0001f) {
+                    fnx /= flen;
+                    fny /= flen;
+                    fnz /= flen;
+                    
+                    float dot = dx * fnx + dy * fny + dz * fnz;
+                    
+                    if (dot < 0.0f) {
+                        dx = -dx;
+                        dy = -dy;
+                        dz = -dz;
+                    }
+                }
+            } else {
+                float3 e1 = make_float3(v2.x - v0.x, v2.y - v0.y, v2.z - v0.z);
+                float3 e2 = make_float3(v1.x - v0.x, v1.y - v0.y, v1.z - v0.z);
+                
                 dx = e1.y * e2.z - e1.z * e2.y;
                 dy = e1.z * e2.x - e1.x * e2.z;
                 dz = e1.x * e2.y - e1.y * e2.x;
-                len = sqrtf(dx*dx + dy*dy + dz*dz);
-                if (len > 0.0001f) {
-                    dx /= len; dy /= len; dz /= len;
+                
+                float flen = sqrtf(dx*dx + dy*dy + dz*dz);
+                if (flen > 0.0001f) {
+                    dx /= flen;
+                    dy /= flen;
+                    dz /= flen;
+                } else {
+                    dx = 0.0f; dy = 1.0f; dz = 0.0f;
                 }
             }
             

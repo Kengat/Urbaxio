@@ -139,12 +139,23 @@ __global__ void SculptSphericalKernel(
     float* block = blockData + dataIdx * 512;
     float currentVal = block[voxelIdx];
 
-    // SMOOTH MIN for organic shapes
-    // Larger k = smoother blend (try 3-5 voxels)
-    const float k = voxelSize * 4.0f; // 4 voxels of smoothing
+    float diff = fabsf(currentVal - brushSDF);
+    const float smoothThreshold = voxelSize * 3.0f;
     
-    float h = fmaxf(k - fabsf(currentVal - brushSDF), 0.0f) / k;
-    float newVal = fminf(currentVal, brushSDF) - h * h * k * 0.25f;
+    float newVal;
+    if (diff < smoothThreshold) {
+        const float k = voxelSize * 2.0f;
+        float h = fmaxf(k - diff, 0.0f) / k;
+        newVal = fminf(currentVal, brushSDF) - h * h * k * 0.25f;
+    } else {
+        newVal = fminf(currentVal, brushSDF);
+    }
+    
+    float distToSurface = fabsf(newVal);
+    if (distToSurface < voxelSize * 2.0f) {
+        float factor = 1.0f + (1.0f - distToSurface / (voxelSize * 2.0f)) * 0.5f;
+        newVal *= factor;
+    }
 
     // WIDE influence for smooth transitions
     float maxDist = brushRadius + voxelSize * 10.0f; // 10 voxels beyond brush
