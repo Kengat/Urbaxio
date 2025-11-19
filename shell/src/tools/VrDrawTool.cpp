@@ -7,6 +7,7 @@
 #include "engine/MeshManager.h"
 #include "LoadingManager.h"
 #include "imgui.h"
+#include "renderer.h"
 
 #include <iostream>
 #include <cuda_runtime.h>
@@ -30,6 +31,11 @@ struct VrDrawTool::Impl {
     float brushRadius = 0.15f;
     float brushStrength = 1.0f;
     float minDrawDistanceFactor = 0.3f;
+    
+    // Adjustable brush origin
+    float brushOffsetDistance = 0.1f; // Default 10cm
+    glm::vec3 lastRayDirection{0.0f, 0.0f, -1.0f};
+    glm::vec3 lastRayOrigin{0.0f};
     
     // ✅ Ссылка на SHARED grid (не владеем!)
     Engine::DynamicGpuHashGrid* hashGrid = nullptr;
@@ -169,19 +175,33 @@ void VrDrawTool::OnTriggerPressed(bool, const glm::vec3& pos) {
     impl_->lastDrawPos = pos;
     impl_->lastMeshUpdate = std::chrono::steady_clock::now();
     
-    // Apply first stroke
-    drawStroke(pos);
+    impl_->lastMeshUpdate = std::chrono::steady_clock::now();
     
-    std::cout << "[VrDrawTool] 🎨 Started drawing at (" << pos.x << ", " << pos.y << ", " << pos.z << ")" << std::endl;
+    // Apply offset with scale
+    float worldScale = impl_->context.worldTransform ? glm::length(glm::vec3((*impl_->context.worldTransform)[0])) : 1.0f;
+    glm::vec3 actualPos = pos + impl_->lastRayDirection * (impl_->brushOffsetDistance * worldScale);
+    impl_->lastDrawPos = actualPos;
+
+    // Apply first stroke
+    drawStroke(actualPos);
+    
+    std::cout << "[VrDrawTool] 🎨 Started drawing at (" << actualPos.x << ", " << actualPos.y << ", " << actualPos.z << ")" << std::endl;
 }
 
 void VrDrawTool::OnTriggerHeld(bool, const glm::vec3& pos) {
     if (!impl_->isDrawing || !impl_->hashGrid) return;
     
     float minDist = impl_->getMinDrawDistance();
-    if (glm::distance(pos, impl_->lastDrawPos) >= minDist) {
-        drawStroke(pos);
-        impl_->lastDrawPos = pos;
+    
+
+    
+    // Apply offset with scale
+    float worldScale = impl_->context.worldTransform ? glm::length(glm::vec3((*impl_->context.worldTransform)[0])) : 1.0f;
+    glm::vec3 actualPos = pos + impl_->lastRayDirection * (impl_->brushOffsetDistance * worldScale);
+    
+    if (glm::distance(actualPos, impl_->lastDrawPos) >= minDist) {
+        drawStroke(actualPos);
+        impl_->lastDrawPos = actualPos;
         
         // ✅ Meshing handled in OnUpdate (frame-rate)
     }
@@ -280,7 +300,27 @@ bool VrDrawTool::drawStroke(const glm::vec3& worldPos) {
     return success;
 }
 
-void VrDrawTool::OnUpdate(const SnapResult&, const glm::vec3&, const glm::vec3&) {
+void VrDrawTool::OnUpdate(const SnapResult&, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
+    // Cache ray state
+    impl_->lastRayOrigin = rayOrigin;
+    impl_->lastRayDirection = rayDirection;
+
+    // Joystick logic for offset
+    float joyY = impl_->context.rightThumbstickY ? *impl_->context.rightThumbstickY : 0.0f;
+    if (std::abs(joyY) > 0.1f) {
+        const float BASE_JOYSTICK_SPEED = 0.01f;
+        const float ACCELERATION_FACTOR = 0.05f;
+        const float MAX_DISTANCE = 100.0f;
+        const float MIN_DISTANCE = 0.01f; // 1cm minimum
+
+        // Non-linear acceleration: faster when further away
+        float dynamicSpeed = BASE_JOYSTICK_SPEED + std::abs(impl_->brushOffsetDistance) * ACCELERATION_FACTOR;
+        
+        impl_->brushOffsetDistance += joyY * dynamicSpeed;
+        
+        // Clamp to positive range (prevent going behind controller)
+        impl_->brushOffsetDistance = std::clamp(impl_->brushOffsetDistance, MIN_DISTANCE, MAX_DISTANCE);
+    }
     // ✅ Update cached count (async, no stall)
     if (impl_->hashGrid) {
         impl_->hashGrid->UpdateActiveCountAsync(impl_->cudaStream);
@@ -413,6 +453,21 @@ void VrDrawTool::RenderUI() {
         ImGui::ProgressBar(fillRate / 100.0f, ImVec2(-1, 0),
                           (std::to_string(static_cast<int>(fillRate)) + "%").c_str());
     }
+}
+
+void VrDrawTool::RenderPreview(Renderer& renderer, const SnapResult& snap) {
+    if (!impl_->hashGrid) return;
+
+    // Calculate preview position with scale
+    float worldScale = impl_->context.worldTransform ? glm::length(glm::vec3((*impl_->context.worldTransform)[0])) : 1.0f;
+    glm::vec3 previewPos = impl_->lastRayOrigin + impl_->lastRayDirection * (impl_->brushOffsetDistance * worldScale);
+    
+    // Show a simple point/cursor at the drawing location
+    // Using UpdateDragStartPoint as a temporary cursor visual
+    renderer.UpdateDragStartPoint(previewPos, true);
+    
+    // Optionally, we could render a wireframe sphere if the renderer supports it, 
+    // but for now a point is sufficient to show the offset.
 }
 
 } // namespace Urbaxio::Shell

@@ -34,6 +34,7 @@ public:
     // ITool interface
     void OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin = glm::vec3(0), const glm::vec3& rayDirection = glm::vec3(0)) override;
     void RenderUI() override;
+    void RenderPreview(Renderer& renderer, const SnapResult& snap) override;
 
     // ✅ Static initialization (called once at app startup)
     static void InitializePersistentResources();
