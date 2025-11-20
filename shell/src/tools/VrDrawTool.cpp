@@ -28,8 +28,17 @@ struct VrDrawTool::Impl {
     bool isDrawing = false;
     glm::vec3 lastDrawPos{0.0f};
     
-    float brushRadius = 0.15f;
+    // --- MODIFIED: Brush Settings ---
+    bool usePressure = true;
+    float minRadius = 0.01f;
+    float maxRadius = 0.15f;
     float brushStrength = 1.0f;
+    bool isAdditive = true;
+    // --- NEW: Flag ---
+    bool isScaleDependent = false;
+    // -----------------
+    // --------------------------------
+    
     float minDrawDistanceFactor = 0.3f;
     
     // Adjustable brush origin
@@ -64,7 +73,31 @@ struct VrDrawTool::Impl {
     }
     
     float getMinDrawDistance() const {
-        return brushRadius * minDrawDistanceFactor;
+        // Use maxRadius for spacing calculation to avoid gaps when pressure is high
+        return maxRadius * minDrawDistanceFactor; 
+    }
+    
+    // --- MODIFIED: Calculate radius with optional scale dependency ---
+    float getCurrentRadius(float worldScale) const {
+        float baseRadius;
+        
+        if (!usePressure) {
+            baseRadius = maxRadius;
+        } else {
+            float pressure = 1.0f;
+            // Assuming context.rightTriggerValue is valid
+            if (context.rightTriggerValue) {
+                pressure = *context.rightTriggerValue;
+            }
+            baseRadius = glm::mix(minRadius, maxRadius, pressure);
+        }
+        
+        // If scale dependent, multiply by world scale (size relative to user)
+        // If not, use raw meters (absolute size in world)
+        if (isScaleDependent) {
+            return baseRadius * worldScale;
+        }
+        return baseRadius;
     }
 };
 
@@ -186,8 +219,8 @@ void VrDrawTool::OnTriggerPressed(bool, const glm::vec3& pos) {
     glm::vec3 actualPos = pos + impl_->lastRayDirection * (impl_->brushOffsetDistance * worldScale);
     impl_->lastDrawPos = actualPos;
 
-    // Apply first stroke
-    drawStroke(actualPos);
+    // Apply first stroke (Pass worldScale)
+    drawStroke(actualPos, worldScale);
     
     std::cout << "[VrDrawTool] 🎨 Started drawing at (" << actualPos.x << ", " << actualPos.y << ", " << actualPos.z << ")" << std::endl;
 }
@@ -197,14 +230,19 @@ void VrDrawTool::OnTriggerHeld(bool, const glm::vec3& pos) {
     
     float minDist = impl_->getMinDrawDistance();
     
-
-    
     // Apply offset with scale
     float worldScale = impl_->context.worldTransform ? glm::length(glm::vec3((*impl_->context.worldTransform)[0])) : 1.0f;
+    
+    // If scale dependent, scale the minimum distance check too to avoid dense clumping when huge
+    if (impl_->isScaleDependent) {
+        minDist *= worldScale;
+    }
+
     glm::vec3 actualPos = pos + impl_->lastRayDirection * (impl_->brushOffsetDistance * worldScale);
     
     if (glm::distance(actualPos, impl_->lastDrawPos) >= minDist) {
-        drawStroke(actualPos);
+        // Pass worldScale
+        drawStroke(actualPos, worldScale);
         impl_->lastDrawPos = actualPos;
         
         // ✅ Meshing handled in OnUpdate (frame-rate)
@@ -275,16 +313,20 @@ void VrDrawTool::updateMesh() {
     );
 }
 
-bool VrDrawTool::drawStroke(const glm::vec3& worldPos) {
+// --- MODIFIED: Pass worldScale to drawStroke ---
+bool VrDrawTool::drawStroke(const glm::vec3& worldPos, float worldScale) {
     if (!impl_->hashGrid) return false;
 
     auto t_start = std::chrono::high_resolution_clock::now();
 
+    // Pass worldScale to calculation
+    float currentRadius = impl_->getCurrentRadius(worldScale);
+
     bool success = impl_->hashGrid->ApplySphericalBrush(
         worldPos,
-        impl_->brushRadius,
+        currentRadius,
         impl_->brushStrength,
-        true, // addMode
+        impl_->isAdditive, // use field
         impl_->cudaStream
     );
 
@@ -428,7 +470,9 @@ void VrDrawTool::RenderUI() {
     }
     
     ImGui::Separator();
-    ImGui::SliderFloat("Brush Radius", &impl_->brushRadius, 0.05f, 2.0f);
+    // --- FIX: Use maxRadius for the slider ---
+    ImGui::SliderFloat("Brush Radius", &impl_->maxRadius, 0.05f, 2.0f);
+    // -----------------------------------------
     ImGui::SliderFloat("Brush Strength", &impl_->brushStrength, 0.1f, 2.0f);
     ImGui::SliderFloat("Sample Distance", &impl_->minDrawDistanceFactor, 0.1f, 0.5f);
     
@@ -468,12 +512,23 @@ void VrDrawTool::RenderPreview(Renderer& renderer, const SnapResult& snap) {
     
     renderer.UpdateBrushPreview(
         previewPos,
-        impl_->brushRadius,
+        impl_->getCurrentRadius(worldScale),
         glm::vec3(0.2f, 0.8f, 1.0f),
         true
     );
     renderer.UpdateDragStartPoint(previewPos, false);
 }
+
+// --- NEW: Setter Implementations ---
+void VrDrawTool::SetPressureSensitivity(bool enabled) { impl_->usePressure = enabled; }
+void VrDrawTool::SetBrushRadius(float radius) { impl_->maxRadius = radius; } // For static mode
+void VrDrawTool::SetMinBrushRadius(float radius) { impl_->minRadius = radius; }
+void VrDrawTool::SetMaxBrushRadius(float radius) { impl_->maxRadius = radius; }
+void VrDrawTool::SetBrushStrength(float strength) { impl_->brushStrength = strength; }
+void VrDrawTool::SetAdditive(bool additive) { impl_->isAdditive = additive; }
+// --- NEW: Setter Implementation ---
+void VrDrawTool::SetScaleDependent(bool enabled) { impl_->isScaleDependent = enabled; }
+// -----------------------------------
 
 } // namespace Urbaxio::Shell
 

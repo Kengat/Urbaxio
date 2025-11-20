@@ -49,8 +49,14 @@ public:
     virtual void SetSize(const glm::vec2& size) {}
     virtual glm::vec2 GetSize() const = 0;
 
+    // --- NEW: Visibility control ---
+    virtual void SetVisible(bool visible) { isVisible_ = visible; }
+    virtual bool IsVisible() const { return isVisible_; }
+    // -----------------------------
+
 protected:
     bool isHovered_ = false;
+    bool isVisible_ = true; // Default true
 };
 
 }

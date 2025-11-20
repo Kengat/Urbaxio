@@ -36,12 +36,26 @@ public:
     void RenderUI() override;
     void RenderPreview(Renderer& renderer, const SnapResult& snap) override;
 
+    // --- NEW: Settings Accessors ---
+    void SetPressureSensitivity(bool enabled);
+    void SetBrushRadius(float radius); // Sets fixed/max radius
+    void SetMinBrushRadius(float radius);
+    void SetMaxBrushRadius(float radius);
+    void SetBrushStrength(float strength);
+    void SetAdditive(bool additive);
+    // --- NEW: Scale Dependency Toggle ---
+    void SetScaleDependent(bool enabled);
+    // ------------------------------------
+    // -------------------------------
+
     // ✅ Static initialization (called once at app startup)
     static void InitializePersistentResources();
     static void CleanupPersistentResources();
 
 private:
-    bool drawStroke(const glm::vec3& worldPos);
+    // --- MODIFIED: Added worldScale parameter ---
+    bool drawStroke(const glm::vec3& worldPos, float worldScale);
+    // --------------------------------------------
     void updateMesh();
     void checkForAsyncUpdate(bool forceSync = false);
 

@@ -61,6 +61,10 @@ struct ToolContext {
     bool* ctrlDown = nullptr;
     bool* isNumpadActive = nullptr;
     float* rightThumbstickY = nullptr;
+    
+    // --- NEW: Trigger value for pressure sensitivity ---
+    float* rightTriggerValue = nullptr;
+    // --------------------------------------------------
 
     // NEW: VR world transform for scale-aware calculations
     const glm::mat4* worldTransform = nullptr;

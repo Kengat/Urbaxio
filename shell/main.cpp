@@ -981,67 +981,128 @@ namespace { // Anonymous namespace for helpers
         
         sculptMenu.AddWidget(std::move(scrollWidget));
 
-        // --- NEW: Create Sub-Panel for Draw Tool Settings ---
+        // --- NEW: Create Sub-Panel for Draw Tool Settings with Tuned Values ---
         {
-            glm::mat4 subOffset = glm::translate(glm::mat4(1.0f), glm::vec3(panelWidth + 0.02f, 0.0f, 0.0f));
+            // Values from user tuning
+            glm::vec3 translation(0.134f, -0.008f, 0.003f);
+            // User provided degrees: -1.058, -1.856, -0.238. Convert to radians.
+            glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-1.058f, -1.856f, -0.238f));
+            glm::vec3 scale(0.864f);
+            glm::vec2 size(0.178f, 0.316f);
+            float cornerRadius = 0.020f;
+
+            // Initial offset relative to the PARENT (SculptMenu)
+            glm::mat4 subOffset = glm::translate(glm::mat4(1.0f), translation) *
+                                  glm::mat4_cast(glm::quat(eulerAnglesRad)) *
+                                  glm::scale(glm::mat4(1.0f), scale);
             
-            float subWidth = 0.15f;
-            float subHeight = 0.20f;
-            
-            auto& drawSettings = vruiManager.AddPanel("DrawToolSettings", "Draw Settings", glm::vec2(subWidth, subHeight), subOffset, 0.02f, dragIcon, pinIcon, closeIcon, minimizeIcon);
+            auto& drawSettings = vruiManager.AddPanel("DrawToolSettings", "Draw Settings", size, subOffset, cornerRadius, dragIcon, pinIcon, closeIcon, minimizeIcon);
             
             drawSettings.SetParent(&sculptMenu);
             drawSettings.showInPanelManager = false;
             drawSettings.SetVisible(false);
             drawSettings.SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
             
-            // --- START OF MODIFICATION: Add Slider and Toggle ---
+            // --- MODIFIED: Dynamic Slider Logic ---
             
-            // Radius Slider (0.01 to 0.5 meters, smooth)
-            static float brushRadius = 0.05f; // Shared static for demo
-            // Note: Real implementation should bind to VrDrawTool's actual property
-            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
-                "Radius", 
-                glm::vec3(0), 
-                glm::vec2(subWidth - 0.02f, 0.03f), 
-                0.01f, 0.2f, 0.0f, brushRadius, 
-                [](float val) { 
-                    brushRadius = val; 
-                    // TODO: Propagate to tool
-                    std::cout << "Brush Radius set to: " << val << std::endl;
-                }
-            ));
-
-            // Strength Slider (Discrete steps for demo: 1 to 5)
-            static float brushStrength = 1.0f;
-            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
-                "Strength", 
-                glm::vec3(0), 
-                glm::vec2(subWidth - 0.02f, 0.03f), 
-                1.0f, 5.0f, 1.0f, brushStrength, 
-                [](float val) { 
-                    brushStrength = val;
-                    std::cout << "Brush Strength set to: " << val << std::endl;
-                }
-            ));
-
-            // Add Mode Toggle
+            // Get pointer to the tool to verify we are editing the right one
+            auto* drawTool = dynamic_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetTool(Urbaxio::Tools::ToolType::SculptDraw));
+            
+            // Define static variables for the UI to bind to (mocking tool state reflection)
+            static bool pressureEnabled = true;
+            static float staticSize = 0.05f;
+            static float minSize = 0.01f;
+            static float maxSize = 0.10f;
+            static float strength = 1.0f;
             static bool isAdditive = true;
-            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>(
-                "Additive",
-                glm::vec3(0),
-                glm::vec2(subWidth - 0.02f, 0.03f),
-                isAdditive,
-                [](bool val) {
-                    isAdditive = val;
-                    std::cout << "Brush Additive Mode: " << (val ? "ON" : "OFF") << std::endl;
+
+            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>("Pressure", glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), pressureEnabled, [&drawSettings, drawTool](bool val) {
+                pressureEnabled = val;
+                if (drawTool) drawTool->SetPressureSensitivity(val);
+                if (auto* w = drawSettings.GetWidget(1)) w->SetVisible(!val);
+                if (auto* w = drawSettings.GetWidget(2)) w->SetVisible(val);
+                if (auto* w = drawSettings.GetWidget(3)) w->SetVisible(val);
+                drawSettings.RecalculateLayout();
+            }));
+
+            // 2. Static Size Slider (Hidden if Pressure ON)
+            // --- MODIFIED: Increased max range to 0.5f ---
+            auto* wStatic = drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
+                "Size", 
+                glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 
+                0.005f, 0.5f, 0.0f, staticSize, 
+                [drawTool](float val) { 
+                    staticSize = val;
+                    if (drawTool) drawTool->SetBrushRadius(val);
                 }
             ));
+            // ---------------------------------------------
+            wStatic->SetVisible(!pressureEnabled);
+
+            // 3. Min Size Slider (Visible if Pressure ON)
+            // --- MODIFIED: Increased max range to 0.5f ---
+            auto* wMin = drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
+                "Min Size", 
+                glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 
+                0.005f, 0.5f, 0.0f, minSize, 
+                [drawTool](float val) { 
+                    minSize = val;
+                    if (minSize > maxSize) minSize = maxSize; 
+                    if (drawTool) drawTool->SetMinBrushRadius(minSize);
+                }
+            ));
+            // ---------------------------------------------
+            wMin->SetVisible(pressureEnabled);
+
+            // 4. Max Size Slider (Visible if Pressure ON)
+            // --- MODIFIED: Increased max range to 0.5f ---
+            auto* wMax = drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
+                "Max Size", 
+                glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 
+                0.005f, 0.5f, 0.0f, maxSize, 
+                [drawTool](float val) { 
+                    maxSize = val;
+                    if (maxSize < minSize) maxSize = minSize;
+                    if (drawTool) drawTool->SetMaxBrushRadius(maxSize);
+                }
+            ));
+            // ---------------------------------------------
+            wMax->SetVisible(pressureEnabled);
+
+            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>("Strength", glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 0.1f, 2.0f, 0.0f, strength, [drawTool](float val) { strength = val; if (drawTool) drawTool->SetBrushStrength(val); }));
+
+            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>("Additive", glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), isAdditive, [drawTool](bool val) { isAdditive = val; if (drawTool) drawTool->SetAdditive(val); }));
+            
+            // --- NEW: Scale Dependency Toggle ---
+            static bool isRelativeSize = false;
+            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>(
+                "Relative Size", 
+                glm::vec3(0), 
+                glm::vec2(size.x - 0.02f, 0.03f), 
+                isRelativeSize, 
+                [drawTool](bool val) { 
+                    isRelativeSize = val; 
+                    if (drawTool) drawTool->SetScaleDependent(val); 
+                }
+            ));
+            // ------------------------------------
             
             // --- END OF MODIFICATION ---
             
             drawSettings.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f));
             drawSettings.RecalculateLayout();
+            
+            // Initial sync with tool
+            if (drawTool) {
+                drawTool->SetPressureSensitivity(pressureEnabled);
+                drawTool->SetMinBrushRadius(minSize);
+                drawTool->SetMaxBrushRadius(maxSize);
+                drawTool->SetBrushRadius(staticSize);
+                drawTool->SetBrushStrength(strength);
+                drawTool->SetAdditive(isAdditive);
+                // --- NEW: Sync ---
+                drawTool->SetScaleDependent(isRelativeSize);
+            }
         }
     }
 
@@ -1318,6 +1379,9 @@ int main(int argc, char* argv[]) {
     if (vrManager) {
         toolContext.worldTransform = &vrManager->GetWorldTransform();
         toolContext.rightThumbstickY = &vrManager->rightThumbstickY;
+        // --- NEW: Pass trigger value pointer ---
+        toolContext.rightTriggerValue = &vrManager->rightTriggerValue;
+        // ---------------------------------------
     }
     
     Urbaxio::Tools::ToolManager toolManager(toolContext);
@@ -2432,32 +2496,56 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 
+                // --- MODIFIED: Analog Input Logic for Draw Tool ---
+                
+                bool isSculptDraw = toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::SculptDraw;
+                // Track drawing state locally to detect press/release edges on analog value
+                static bool wasDrawingAnalog = false;
+                const float DRAW_THRESHOLD = 0.05f; // Start drawing at 5% pressure
+                bool isAnalogPressed = vrManager->rightTriggerValue > DRAW_THRESHOLD;
+
                 if (rightHand.triggerClicked) {
                     bool clickConsumed = false;
                     if (!sphereConsumedClick) {
                         clickConsumed = vruiManager.HandleClick();
                     }
                     
+                    // UI interaction always takes priority and requires a full click
                     if (!sphereConsumedClick && !clickConsumed && !isInteractingWithPanelSystem && !isRayBlockedByUI) {
-                        // Special handling for VR Draw Tool
-                        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::SculptDraw) {
-                            auto* vrDrawTool = static_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetActiveTool());
-                            glm::vec3 controllerPos = glm::vec3(rightControllerUnscaledTransform[3]);
-                            vrDrawTool->OnTriggerPressed(true, controllerPos);
-                        } else {
-                            // Standard tool handling
+                        // If NOT Draw Tool, standard behavior
+                        if (!isSculptDraw) {
                             toolManager.OnLeftMouseDown(0, 0, shiftDown, ctrlDown, vrRayOrigin, vrRayDirection);
                         }
                     }
                 }
                 
-                if (rightHand.triggerWasPressed && !rightHand.triggerReleased) {
+                // Specialized logic for Draw Tool (Analog)
+                if (!isInteractingWithPanelSystem && !isRayBlockedByUI && isSculptDraw) {
+                    if (isAnalogPressed && !wasDrawingAnalog) {
+                        // Start
+                        auto* vrDrawTool = static_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetActiveTool());
+                        glm::vec3 controllerPos = glm::vec3(rightControllerUnscaledTransform[3]);
+                        vrDrawTool->OnTriggerPressed(true, controllerPos);
+                    } 
+                    else if (isAnalogPressed && wasDrawingAnalog) {
+                        // Hold
+                        auto* vrDrawTool = static_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetActiveTool());
+                        glm::vec3 controllerPos = glm::vec3(rightControllerUnscaledTransform[3]);
+                        vrDrawTool->OnTriggerHeld(true, controllerPos);
+                    }
+                    else if (!isAnalogPressed && wasDrawingAnalog) {
+                        // Release
+                        auto* vrDrawTool = static_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetActiveTool());
+                        vrDrawTool->OnTriggerReleased(true);
+                    }
+                }
+                wasDrawingAnalog = isAnalogPressed;
+                
+                // Logic for Standard Tools (Digital Hold)
+                if (rightHand.triggerWasPressed && !rightHand.triggerReleased && !isSculptDraw) {
                     if (!isInteractingWithPanelSystem && !isRayBlockedByUI) {
-                        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::SculptDraw) {
-                            auto* vrDrawTool = static_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetActiveTool());
-                            glm::vec3 controllerPos = glm::vec3(rightControllerUnscaledTransform[3]);
-                            vrDrawTool->OnTriggerHeld(true, controllerPos);
-                        }
+                        // Standard tool handling for non-Draw tools
+                        toolManager.GetActiveTool()->OnUpdate(vrSnap, vrRayOrigin, vrRayDirection);
                     }
                 }
                 
@@ -2468,15 +2556,12 @@ int main(int argc, char* argv[]) {
                     }
                     // We don't forward A-button clicks to world tools, only UI.
                 }
-                if (rightHand.triggerReleased) {
+                
+                // Logic for Standard Tools (Release)
+                if (rightHand.triggerReleased && !isSculptDraw) {
                     if (!isInteractingWithPanelSystem) {
-                        // Special handling for VR Draw Tool
-                        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::SculptDraw) {
-                            auto* vrDrawTool = static_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetActiveTool());
-                            vrDrawTool->OnTriggerReleased(true);
-                        } 
                         // Special handling for SelectTool
-                        else if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) {
+                        if (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::Select) {
                             auto* selectTool = static_cast<Urbaxio::Tools::SelectTool*>(toolManager.GetActiveTool());
                             if (selectTool->IsVrDragging()) {
                                 const auto& vr_views = vrManager->GetViews();
@@ -2486,9 +2571,7 @@ int main(int argc, char* argv[]) {
                             } else {
                                 toolManager.OnLeftMouseUp(0, 0, shiftDown, ctrlDown);
                             }
-                        } 
-                        // Standard tool handling
-                        else {
+                        } else {
                             toolManager.OnLeftMouseUp(0, 0, shiftDown, ctrlDown);
                         }
                     }

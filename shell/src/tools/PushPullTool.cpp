@@ -185,7 +185,9 @@ void PushPullTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl
             
             float hitDist;
             glm::vec3 facePoint = glm::vec3(mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+1], mesh.vertices[mesh.indices[pushPull_faceIndices[0]]*3+2]);
-            glm::intersectRayPlane(currentRayOrigin, currentRayDir, facePoint, pushPull_faceNormal, hitDist);
+            // --- FIX: Cast to void to suppress nodiscard warning ---
+            (void)glm::intersectRayPlane(currentRayOrigin, currentRayDir, facePoint, pushPull_faceNormal, hitDist);
+            // -------------------------------------------------------
             pushPull_startPoint = currentRayOrigin + currentRayDir * hitDist;
             
             pushPullCurrentLength = 0.0f;

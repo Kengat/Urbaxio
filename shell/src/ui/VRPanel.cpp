@@ -67,9 +67,13 @@ void VRPanel::SetParent(VRPanel* parent) {
 }
 // -------------------------------------
 
-void VRPanel::AddWidget(std::unique_ptr<IVRWidget> widget) {
+// --- MODIFIED: AddWidget implementation ---
+IVRWidget* VRPanel::AddWidget(std::unique_ptr<IVRWidget> widget) {
+    IVRWidget* ptr = widget.get();
     widgets_.push_back(std::move(widget));
+    return ptr;
 }
+// ------------------------------------------
 
 void VRPanel::SetLayout(std::unique_ptr<ILayout> layout) {
     layout_ = std::move(layout);
@@ -314,6 +318,9 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
         IVRWidget* newHoveredWidget = nullptr;
         float closestHitDist = std::numeric_limits<float>::max();
         for (auto& widget : widgets_) {
+            // --- NEW: Skip invisible widgets ---
+            if (!widget->IsVisible()) continue;
+            // -----------------------------------
             HitResult hit = widget->CheckIntersection(localRay);
             if (hit.didHit && hit.distance < closestHitDist) {
                 closestHitDist = hit.distance;
@@ -450,6 +457,10 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     // --- 6. Рендерим все виджеты в отсортированном порядке ---
     textRenderer.SetPanelModelMatrix(transform);
     for (const auto& [viewZ, widget] : order) {
+        // --- NEW: Skip invisible widgets ---
+        if (!widget->IsVisible()) continue;
+        // -----------------------------------
+
         // Determine alpha for widget
         float currentWidgetAlpha = alpha;
         
@@ -524,6 +535,29 @@ HitResult VRPanel::CheckIntersection(const Ray& worldRay, const glm::mat4& paren
         if (glm::abs(localHitPoint.x) <= size_.x * 0.5f && glm::abs(localHitPoint.y) <= size_.y * 0.5f) {
             result.didHit = true;
             result.distance = t;
+            
+            // Check children (widgets)
+            // IMPORTANT: Since we returned "didHit = true" for the panel background,
+            // we need to see if we hit a specific widget inside.
+            Ray localRay;
+            localRay.origin = invFinalTransform * glm::vec4(worldRay.origin, 1.0f);
+            localRay.direction = glm::normalize(glm::vec3(invFinalTransform * glm::vec4(worldRay.direction, 0.0f)));
+            
+            float closestWidgetDist = std::numeric_limits<float>::max();
+            for (auto& widget : widgets_) {
+                // --- NEW: Skip invisible widgets ---
+                if (!widget->IsVisible()) continue;
+                // -----------------------------------
+                
+                HitResult widgetHit = widget->CheckIntersection(localRay);
+                if (widgetHit.didHit && widgetHit.distance < closestWidgetDist) {
+                    closestWidgetDist = widgetHit.distance;
+                    // We might want to return the widget-specific distance, 
+                    // but usually the panel distance is fine for sorting.
+                    // Store the widget pointer if you need specific widget interaction
+                    // Note: IVRWidget::CheckIntersection usually sets hitWidget=this
+                }
+            }
         }
     }
     }

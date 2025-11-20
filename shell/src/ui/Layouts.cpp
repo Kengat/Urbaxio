@@ -11,13 +11,21 @@ namespace Urbaxio::UI {
 void VerticalLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets, const glm::vec2& panelSize) {
     if (widgets.empty()) return;
 
+    // --- NEW: Filter visible widgets ---
+    std::vector<IVRWidget*> visibleWidgets;
+    for (auto& w : widgets) {
+        if (w->IsVisible()) visibleWidgets.push_back(w.get());
+    }
+    if (visibleWidgets.empty()) return;
+    // -----------------------------------
+
     if (stretch_) {
-        float totalSpacing = (widgets.size() - 1) * spacing_;
+        float totalSpacing = (visibleWidgets.size() - 1) * spacing_;
         float availableHeight = panelSize.y - totalSpacing;
-        float widgetHeight = (widgets.size() > 0) ? (availableHeight / widgets.size()) : 0.0f;
+        float widgetHeight = (visibleWidgets.size() > 0) ? (availableHeight / visibleWidgets.size()) : 0.0f;
 
         float currentY = panelSize.y / 2.0f;
-        for (auto& widget : widgets) {
+        for (auto* widget : visibleWidgets) {
             currentY -= widgetHeight / 2.0f;
             widget->SetLocalPosition({0.0f, currentY, 0.01f});
             widget->SetSize({panelSize.x, widgetHeight});
@@ -25,13 +33,13 @@ void VerticalLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets, con
         }
     } else {
         float totalHeight = 0;
-        for (const auto& widget : widgets) {
+        for (const auto* widget : visibleWidgets) {
             totalHeight += widget->GetSize().y;
         }
-        totalHeight += (widgets.size() - 1) * spacing_;
+        totalHeight += (visibleWidgets.size() - 1) * spacing_;
 
         float currentY = totalHeight / 2.0f;
-        for (auto& widget : widgets) {
+        for (auto* widget : visibleWidgets) {
             const auto& widgetSize = widget->GetSize();
             currentY -= widgetSize.y / 2.0f;
             widget->SetLocalPosition({0.0f, currentY, 0.01f}); // Center horizontally
@@ -78,7 +86,13 @@ void AdaptiveGridLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets,
 
     if (widgets.empty()) return;
 
-    
+    // --- NEW: Filter visible widgets ---
+    std::vector<IVRWidget*> visibleWidgets;
+    for (auto& w : widgets) {
+        if (w->IsVisible()) visibleWidgets.push_back(w.get());
+    }
+    if (visibleWidgets.empty()) return;
+    // -----------------------------------
 
     bool isHorizontal = (panelSize.x > panelSize.y);
 
@@ -104,7 +118,7 @@ void AdaptiveGridLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets,
 
             // SINGLE-ROW MODE: all widgets in one horizontal line
 
-            columns = widgets.size();
+            columns = visibleWidgets.size();
 
             rows = 1;
 
@@ -122,7 +136,7 @@ void AdaptiveGridLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets,
 
             columns = maxColumns;
 
-            rows = (widgets.size() + columns - 1) / columns;
+            rows = (visibleWidgets.size() + columns - 1) / columns;
 
         }
 
@@ -140,7 +154,7 @@ void AdaptiveGridLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets,
 
         columns = maxColumns;
 
-        rows = (widgets.size() + columns - 1) / columns;
+        rows = (visibleWidgets.size() + columns - 1) / columns;
 
     }
 
@@ -170,7 +184,7 @@ void AdaptiveGridLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets,
 
     
 
-    for (size_t i = 0; i < widgets.size(); ++i) {
+    for (size_t i = 0; i < visibleWidgets.size(); ++i) {
 
         int row = i / columns;
 
@@ -184,7 +198,7 @@ void AdaptiveGridLayout::Apply(std::vector<std::unique_ptr<IVRWidget>>& widgets,
 
         
 
-        widgets[i]->SetLocalPosition({x, y, 0.01f});
+        visibleWidgets[i]->SetLocalPosition({x, y, 0.01f});
 
     }
 

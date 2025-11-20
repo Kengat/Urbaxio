@@ -27,7 +27,9 @@ class VRPanel {
 public:
     VRPanel(const std::string& name, const std::string& displayName, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius, unsigned int grabIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon);
 
-    void AddWidget(std::unique_ptr<IVRWidget> widget);
+    // --- MODIFIED: Return pointer to the added widget ---
+    IVRWidget* AddWidget(std::unique_ptr<IVRWidget> widget);
+    // ---------------------------------------------------
 
     // --- NEW: Hierarchy and Manager Visibility ---
     void SetParent(VRPanel* parent);
