@@ -2,7 +2,11 @@
 
 // Platform-specific defines for OpenXR
 #if defined(_WIN32)
+// --- MODIFIED: Check before defining NOMINMAX to avoid warnings ---
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
+// -----------------------------------------------------------------
 #define XR_USE_PLATFORM_WIN32
 #define XR_USE_GRAPHICS_API_OPENGL
 #include <windows.h>

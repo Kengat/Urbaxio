@@ -83,6 +83,8 @@ extern "C" {
 #include "ui/Layouts.h"
 // ДОБАВЬТЕ ЭТУ СТРОКУ:
 #include "ui/VRScrollWidget.h"
+#include "ui/VRSliderWidget.h"
+#include "ui/VRToggleWidget.h"
 // --- VR menu interaction helpers ---
 #include <glm/gtx/intersect.hpp>
 
@@ -993,9 +995,52 @@ namespace { // Anonymous namespace for helpers
             drawSettings.SetVisible(false);
             drawSettings.SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
             
-            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>("Brush Size", glm::vec3(0), glm::vec2(0.12f, 0.03f), [](){}));
+            // --- START OF MODIFICATION: Add Slider and Toggle ---
             
-            drawSettings.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.01f));
+            // Radius Slider (0.01 to 0.5 meters, smooth)
+            static float brushRadius = 0.05f; // Shared static for demo
+            // Note: Real implementation should bind to VrDrawTool's actual property
+            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
+                "Radius", 
+                glm::vec3(0), 
+                glm::vec2(subWidth - 0.02f, 0.03f), 
+                0.01f, 0.2f, 0.0f, brushRadius, 
+                [](float val) { 
+                    brushRadius = val; 
+                    // TODO: Propagate to tool
+                    std::cout << "Brush Radius set to: " << val << std::endl;
+                }
+            ));
+
+            // Strength Slider (Discrete steps for demo: 1 to 5)
+            static float brushStrength = 1.0f;
+            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
+                "Strength", 
+                glm::vec3(0), 
+                glm::vec2(subWidth - 0.02f, 0.03f), 
+                1.0f, 5.0f, 1.0f, brushStrength, 
+                [](float val) { 
+                    brushStrength = val;
+                    std::cout << "Brush Strength set to: " << val << std::endl;
+                }
+            ));
+
+            // Add Mode Toggle
+            static bool isAdditive = true;
+            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>(
+                "Additive",
+                glm::vec3(0),
+                glm::vec2(subWidth - 0.02f, 0.03f),
+                isAdditive,
+                [](bool val) {
+                    isAdditive = val;
+                    std::cout << "Brush Additive Mode: " << (val ? "ON" : "OFF") << std::endl;
+                }
+            ));
+            
+            // --- END OF MODIFICATION ---
+            
+            drawSettings.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f));
             drawSettings.RecalculateLayout();
         }
     }

@@ -39,6 +39,8 @@ set(SHELL_SOURCES
     src/ui/VRToolButtonWidget.cpp
     src/ui/VRDisplayWidget.cpp
     src/ui/VRScrollWidget.cpp
+    src/ui/VRSliderWidget.cpp
+    src/ui/VRToggleWidget.cpp
     # Add ImGui backend implementation files directly to the compilation
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_sdl2.cpp"
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_opengl3.cpp"
