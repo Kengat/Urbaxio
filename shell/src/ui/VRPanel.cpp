@@ -662,11 +662,28 @@ void VRPanel::OnSizeChanged() {
     for (auto& widget : widgets_) {
         // Check if this is a VRScrollWidget (it implements SetSize in a meaningful way)
         if (auto* scrollWidget = dynamic_cast<VRScrollWidget*>(widget.get())) {
-            // Give scroll widget most of the panel space, with some padding
-            const float padding = 0.02f;
-            glm::vec2 scrollSize(size_.x - padding, size_.y - padding);
+            // --- MODIFIED: Preserve header margin during resize ---
+            const float padding = 0.01f;
+            const float headerMargin = 0.035f; // Consistent with main.cpp setup
+            const float bottomMargin = 0.025f; // Consistent with main.cpp setup
+            
+            // Calculate new dimensions fitting within the margins
+            float newWidth = std::max(0.05f, size_.x - padding);
+            float newHeight = std::max(0.05f, size_.y - padding - headerMargin - bottomMargin);
+            glm::vec2 scrollSize(newWidth, newHeight);
+            
             scrollWidget->SetSize(scrollSize);
+            
+            // Re-calculate position to stay anchored below the header
+            // Center Y = (Top Y - Margin) - (Height / 2)
+            float newY = (size_.y * 0.5f - headerMargin) - (newHeight * 0.5f);
+            
+            // Keep Z depth, center X (0.0)
+            glm::vec3 oldPos = scrollWidget->GetLocalPosition();
+            scrollWidget->SetLocalPosition(glm::vec3(0.0f, newY, oldPos.z));
+            
             scrollWidget->RecalculateContentLayout();
+            // -----------------------------------------------------
         }
     }
 }

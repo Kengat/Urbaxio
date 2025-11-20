@@ -916,7 +916,12 @@ void VRManager::PollActions() {
     
     rightHandVisual_.triggerClicked = false;
     rightHandVisual_.triggerReleased = false;
-    bool isTriggerPressed = (rightTriggerValue > 0.8f);
+    
+    // --- MODIFIED: Lower threshold for UI clicks (was 0.8f) ---
+    // 0.3f allows clicking buttons without "squeezing" the trigger fully
+    bool isTriggerPressed = (rightTriggerValue > 0.3f);
+    // ----------------------------------------------------------
+    
     if (isTriggerPressed && !rightHandVisual_.triggerWasPressed) {
         rightHandVisual_.triggerClicked = true;
     }

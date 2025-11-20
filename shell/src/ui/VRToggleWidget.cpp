@@ -60,9 +60,9 @@ void VRToggleWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& 
     glm::vec3 onColor(0.1f, 0.4f, 0.15f); // Dark green
     glm::vec3 trackColor = glm::mix(offColor, onColor, animT_);
     
-    // --- MODIFIED: Use 0.5f for full capsule rounding ---
-    renderer.RenderVRPanel(view, projection, trackModel, trackColor, 0.5f, alpha); 
-    // ----------------------------------------------------
+    // --- MODIFIED: Pass 'mask' to RenderVRPanel ---
+    renderer.RenderVRPanel(view, projection, trackModel, trackColor, 0.5f, alpha, mask); 
+    // ----------------------------------------------
 
     // 3. Render Knob (Sphere)
     float travelDist = toggleWidth - toggleHeight; // Distance knob moves

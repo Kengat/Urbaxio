@@ -268,6 +268,10 @@ void VRScrollWidget::Render(Renderer& renderer, TextRenderer& textRenderer, cons
     
     std::vector<ChildWithDepth> sortedChildren;
     for (auto& child : children_) {
+        // --- NEW: Skip invisible children during render ---
+        if (!child->IsVisible()) continue;
+        // --------------------------------------------------
+
         glm::vec3 childWorldPos = contentTransform * glm::vec4(child->GetLocalPosition(), 1.0f);
         float distance = glm::distance(cameraPos, childWorldPos);
         sortedChildren.push_back({child.get(), distance});
@@ -306,6 +310,10 @@ HitResult VRScrollWidget::CheckIntersection(const Ray& localRay) {
 
             float closestChildHit = std::numeric_limits<float>::max();
             for (auto& child : children_) {
+                // --- NEW: Skip invisible children during hit test ---
+                if (!child->IsVisible()) continue;
+                // ----------------------------------------------------
+
                 HitResult childHit = child->CheckIntersection(contentRay);
                 if (childHit.didHit && childHit.distance < closestChildHit) {
                     closestChildHit = childHit.distance;

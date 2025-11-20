@@ -130,11 +130,14 @@ namespace Urbaxio {
             const std::optional<UI::MaskData>& mask = std::nullopt
         );
 
+        // --- MODIFIED: Added mask support ---
         void RenderVRPanel(
             const glm::mat4& view, const glm::mat4& projection,
             const glm::mat4& model,
-            const glm::vec3& color, float cornerRadius, float alpha
+            const glm::vec3& color, float cornerRadius, float alpha,
+            const std::optional<UI::MaskData>& mask = std::nullopt
         );
+        // ------------------------------------
 
         // --- NEW: Ghost Mesh methods ---
         void UpdateGhostMesh(const CadKernel::MeshBuffers& mesh, const std::vector<unsigned int>& wireframeIndices);

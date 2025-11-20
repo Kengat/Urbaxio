@@ -2227,7 +2227,8 @@ namespace Urbaxio {
     void Renderer::RenderVRPanel(
         const glm::mat4& view, const glm::mat4& projection,
         const glm::mat4& model,
-        const glm::vec3& color, float cornerRadius, float alpha
+        const glm::vec3& color, float cornerRadius, float alpha,
+        const std::optional<UI::MaskData>& mask
     ) {
         if (alpha < 0.01f) return;
 
@@ -2239,8 +2240,16 @@ namespace Urbaxio {
             glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
             glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
             
-            // FIX: DISABLE MASK FOR PANEL BACKGROUND!
-            glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_enableMask"), 0);
+            // --- START OF MODIFICATION: Apply Mask ---
+            if (mask.has_value()) {
+                glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_enableMask"), 1);
+                glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_maskTransform"), 1, GL_FALSE, glm::value_ptr(mask->transform));
+                glUniform2fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_maskSize"), 1, glm::value_ptr(mask->size));
+                glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_maskCornerRadius"), mask->cornerRadius);
+            } else {
+                glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_enableMask"), 0);
+            }
+            // --- END OF MODIFICATION ---
             
             glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 1);
             glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1, glm::value_ptr(color));

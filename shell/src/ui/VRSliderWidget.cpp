@@ -87,9 +87,9 @@ void VRSliderWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& 
                            glm::scale(glm::mat4(1.0f), glm::vec3(size_.x, size_.y * 0.3f, 1.0f)); // Thinner track
     
     glm::vec3 trackColor = glm::vec3(0.2f, 0.2f, 0.25f);
-    // --- MODIFIED: Use 0.5f for full capsule rounding ---
-    renderer.RenderVRPanel(view, projection, trackModel, trackColor, 0.5f, alpha);
-    // ----------------------------------------------------
+    // --- MODIFIED: Pass 'mask' to RenderVRPanel ---
+    renderer.RenderVRPanel(view, projection, trackModel, trackColor, 0.5f, alpha, mask);
+    // ----------------------------------------------
 
     // 2. Render Handle (Sphere)
     float handleDiameter = size_.y * 0.8f;

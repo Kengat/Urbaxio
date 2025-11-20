@@ -1012,8 +1012,22 @@ namespace { // Anonymous namespace for helpers
             drawSettings.SetVisible(false);
             drawSettings.SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
             
-            // --- MODIFIED: Dynamic Slider Logic ---
+            // --- MODIFIED: Adjusted Scroll Widget Size/Pos to clear header ---
+            const float padding = 0.01f;
+            const float headerMargin = 0.035f; // Reduced margin for top buttons
+            const float bottomMargin = 0.025f; // Increased margin for bottom
             
+            // Reduce height to fit within panel minus header and bottom margins
+            glm::vec2 scrollSize(size.x - padding, size.y - padding - headerMargin - bottomMargin);
+            
+            // Calculate Y position to place the scroll area's top edge right below the header margin
+            // Panel top is at size.y/2. Scroll Top = size.y/2 - headerMargin.
+            // Scroll Center = Scroll Top - scrollSize.y/2
+            float scrollY = (size.y * 0.5f - headerMargin) - (scrollSize.y * 0.5f);
+            
+            auto scrollWidget = std::make_unique<Urbaxio::UI::VRScrollWidget>(glm::vec3(0, scrollY, 0.01f), scrollSize);
+            // ----------------------------------------------------------------
+
             // Get pointer to the tool to verify we are editing the right one
             auto* drawTool = dynamic_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetTool(Urbaxio::Tools::ToolType::SculptDraw));
             
@@ -1024,67 +1038,64 @@ namespace { // Anonymous namespace for helpers
             static float maxSize = 0.10f;
             static float strength = 1.0f;
             static bool isAdditive = true;
+            static bool isRelativeSize = false;
+            
+            // --- MODIFIED: Dynamic Slider Logic (Crash Fix) ---
+            
+            // We need pointers to the widgets to toggle their visibility.
+            // Since we move unique_ptrs into the scroll widget, we must capture the raw pointers first.
+            Urbaxio::UI::IVRWidget* wStaticPtr = nullptr;
+            Urbaxio::UI::IVRWidget* wMinPtr = nullptr;
+            Urbaxio::UI::IVRWidget* wMaxPtr = nullptr;
+            Urbaxio::UI::VRScrollWidget* scrollWidgetPtr = scrollWidget.get();
 
-            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>("Pressure", glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), pressureEnabled, [&drawSettings, drawTool](bool val) {
-                pressureEnabled = val;
-                if (drawTool) drawTool->SetPressureSensitivity(val);
-                if (auto* w = drawSettings.GetWidget(1)) w->SetVisible(!val);
-                if (auto* w = drawSettings.GetWidget(2)) w->SetVisible(val);
-                if (auto* w = drawSettings.GetWidget(3)) w->SetVisible(val);
-                drawSettings.RecalculateLayout();
-            }));
+            // Strategy: Create the conditional widgets FIRST, then the toggle that controls them.
 
-            // 2. Static Size Slider (Hidden if Pressure ON)
-            // --- MODIFIED: Increased max range to 0.5f ---
-            auto* wStatic = drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
-                "Size", 
-                glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 
-                0.005f, 0.5f, 0.0f, staticSize, 
-                [drawTool](float val) { 
-                    staticSize = val;
-                    if (drawTool) drawTool->SetBrushRadius(val);
-                }
-            ));
-            // ---------------------------------------------
-            wStatic->SetVisible(!pressureEnabled);
+            // 2. Static Size
+            auto wStatic = std::make_unique<Urbaxio::UI::VRSliderWidget>("Size", glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 0.005f, 0.5f, 0.0f, staticSize, [drawTool](float val) { staticSize = val; if (drawTool) drawTool->SetBrushRadius(val); });
+            wStaticPtr = wStatic.get(); // Capture raw pointer
+            wStatic->SetVisible(!pressureEnabled); // Set initial state
 
-            // 3. Min Size Slider (Visible if Pressure ON)
-            // --- MODIFIED: Increased max range to 0.5f ---
-            auto* wMin = drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
-                "Min Size", 
-                glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 
-                0.005f, 0.5f, 0.0f, minSize, 
-                [drawTool](float val) { 
-                    minSize = val;
-                    if (minSize > maxSize) minSize = maxSize; 
-                    if (drawTool) drawTool->SetMinBrushRadius(minSize);
-                }
-            ));
-            // ---------------------------------------------
+            // 3. Min Size
+            auto wMin = std::make_unique<Urbaxio::UI::VRSliderWidget>("Min Size", glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 0.005f, 0.5f, 0.0f, minSize, [drawTool](float val) { minSize = val; if (minSize > maxSize) minSize = maxSize; if (drawTool) drawTool->SetMinBrushRadius(minSize); });
+            wMinPtr = wMin.get();
             wMin->SetVisible(pressureEnabled);
 
-            // 4. Max Size Slider (Visible if Pressure ON)
-            // --- MODIFIED: Increased max range to 0.5f ---
-            auto* wMax = drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
-                "Max Size", 
-                glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 
-                0.005f, 0.5f, 0.0f, maxSize, 
-                [drawTool](float val) { 
-                    maxSize = val;
-                    if (maxSize < minSize) maxSize = minSize;
-                    if (drawTool) drawTool->SetMaxBrushRadius(maxSize);
-                }
-            ));
-            // ---------------------------------------------
+            // 4. Max Size
+            auto wMax = std::make_unique<Urbaxio::UI::VRSliderWidget>("Max Size", glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 0.005f, 0.5f, 0.0f, maxSize, [drawTool](float val) { maxSize = val; if (maxSize < minSize) maxSize = minSize; if (drawTool) drawTool->SetMaxBrushRadius(maxSize); });
+            wMaxPtr = wMax.get();
             wMax->SetVisible(pressureEnabled);
 
-            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>("Strength", glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 0.1f, 2.0f, 0.0f, strength, [drawTool](float val) { strength = val; if (drawTool) drawTool->SetBrushStrength(val); }));
+            // Now define the toggle callback using the captured pointers
+            auto onPressureToggle = [drawTool, wStaticPtr, wMinPtr, wMaxPtr, scrollWidgetPtr](bool val) {
+                pressureEnabled = val;
+                if (drawTool) drawTool->SetPressureSensitivity(val);
+                
+                // Toggle visibility (VerticalLayout will filter them out)
+                if (wStaticPtr) wStaticPtr->SetVisible(!val);
+                if (wMinPtr) wMinPtr->SetVisible(val);
+                if (wMaxPtr) wMaxPtr->SetVisible(val);
+                
+                // Trigger layout update
+                if (scrollWidgetPtr) scrollWidgetPtr->RecalculateContentLayout();
+            };
 
-            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>("Additive", glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), isAdditive, [drawTool](bool val) { isAdditive = val; if (drawTool) drawTool->SetAdditive(val); }));
+            // Create the toggle with the callback
+            scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>(
+                "Pressure", glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), pressureEnabled, onPressureToggle
+            ));
+
+            // Add the rest of the widgets in order
+            scrollWidget->AddWidget(std::move(wStatic));
+            scrollWidget->AddWidget(std::move(wMin));
+            scrollWidget->AddWidget(std::move(wMax));
+
+            scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>("Strength", glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 0.1f, 2.0f, 0.0f, strength, [drawTool](float val) { strength = val; if (drawTool) drawTool->SetBrushStrength(val); }));
+
+            scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>("Additive", glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), isAdditive, [drawTool](bool val) { isAdditive = val; if (drawTool) drawTool->SetAdditive(val); }));
             
             // --- NEW: Scale Dependency Toggle ---
-            static bool isRelativeSize = false;
-            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>(
+            scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>(
                 "Relative Size", 
                 glm::vec3(0), 
                 glm::vec2(size.x - 0.02f, 0.03f), 
@@ -1095,11 +1106,14 @@ namespace { // Anonymous namespace for helpers
                 }
             ));
             // ------------------------------------
+
+            // Set layout for the SCROLL WIDGET, not the panel
+            scrollWidget->SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f));
+            scrollWidget->RecalculateContentLayout();
             
-            // --- END OF MODIFICATION ---
-            
-            drawSettings.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f));
-            drawSettings.RecalculateLayout();
+            // Add the scroll widget to the panel (no layout needed on the panel itself, it just holds the scroll widget)
+            drawSettings.AddWidget(std::move(scrollWidget));
+            // ---------------------------------------------------
             
             // Initial sync with tool
             if (drawTool) {
@@ -1135,13 +1149,23 @@ namespace { // Anonymous namespace for helpers
             sculptSettings.SetVisible(false);
             sculptSettings.SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
             
+            // --- MODIFIED: Adjusted Scroll Widget Size/Pos to clear header ---
+            const float paddingS = 0.01f;
+            const float headerMarginS = 0.035f; // Reduced margin for top buttons
+            const float bottomMarginS = 0.025f; // Increased margin for bottom
+            glm::vec2 scrollSizeS(size.x - paddingS, size.y - paddingS - headerMarginS - bottomMarginS);
+            float scrollYS = (size.y * 0.5f - headerMarginS) - (scrollSizeS.y * 0.5f);
+            
+            auto scrollWidget = std::make_unique<Urbaxio::UI::VRScrollWidget>(glm::vec3(0, scrollYS, 0.01f), scrollSizeS);
+            // ----------------------------------------------------------------
+            
             // Shared state variables
             static float sculptRadius = 0.2f;
             static float sculptStrength = 0.5f;
             static bool cpuMode = false;
 
-            // 1. CPU Mode Toggle
-            sculptSettings.AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>(
+            // Add widgets to SCROLL widget
+            scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>(
                 "CPU Mode",
                 glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f),
                 cpuMode,
@@ -1160,8 +1184,7 @@ namespace { // Anonymous namespace for helpers
                 }
             ));
 
-            // 2. Radius Slider
-            sculptSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
+            scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
                 "Radius", 
                 glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 
                 0.05f, 2.0f, 0.0f, sculptRadius, 
@@ -1181,8 +1204,7 @@ namespace { // Anonymous namespace for helpers
                 }
             ));
 
-            // 3. Strength Slider
-            sculptSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
+            scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
                 "Strength", 
                 glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 
                 0.01f, 1.0f, 0.0f, sculptStrength, 
@@ -1202,8 +1224,11 @@ namespace { // Anonymous namespace for helpers
                 }
             ));
 
-            sculptSettings.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f));
-            sculptSettings.RecalculateLayout();
+            scrollWidget->SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f));
+            scrollWidget->RecalculateContentLayout();
+            
+            // Add scroll to panel
+            sculptSettings.AddWidget(std::move(scrollWidget));
         }
     }
 
