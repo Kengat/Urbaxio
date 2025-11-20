@@ -42,6 +42,7 @@ enum class ToolType {
 struct ToolContext {
     Engine::Scene* scene = nullptr;
     Camera* camera = nullptr;
+    Renderer* renderer = nullptr;
     SDL_Window* window = nullptr;
     int* display_w = nullptr;
     int* display_h = nullptr;

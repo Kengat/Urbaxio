@@ -1232,6 +1232,7 @@ int main(int argc, char* argv[]) {
     Urbaxio::Tools::ToolContext toolContext;
     toolContext.scene = scene_ptr;
     toolContext.camera = &camera;
+    toolContext.renderer = &renderer;
     toolContext.window = window;
     toolContext.display_w = &display_w;
     toolContext.display_h = &display_h;

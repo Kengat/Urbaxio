@@ -76,6 +76,33 @@ namespace { // Anonymous namespace for utility functions
     std::vector<float> GenerateQuadVertices(float size) { float half = size / 2.0f; std::vector<float> vertices = { -half,-half,0.0f, 0.0f,0.0f, half,-half,0.0f, 1.0f,0.0f, half, half,0.0f, 1.0f,1.0f, -half, half,0.0f, 0.0f,1.0f }; return vertices; }
     std::vector<float> GenerateCircleVertices(int segments) { std::vector<float> vertices; vertices.push_back(0.0f); vertices.push_back(0.0f); float angleStep = 2.0f * glm::pi<float>() / static_cast<float>(segments); for (int i = 0; i <= segments; ++i) { float angle = static_cast<float>(i) * angleStep; vertices.push_back(cos(angle) * 0.5f); vertices.push_back(sin(angle) * 0.5f); } return vertices; }
     std::vector<float> GenerateDiamondVertices() { std::vector<float> vertices = { 0.0f,  0.5f, 0.5f,  0.0f, 0.0f, -0.5f, -0.5f,  0.0f }; vertices.push_back(0.0f); vertices.push_back(0.5f); return vertices; }
+    void GenerateSphereResources(float radius, int rings, int sectors, std::vector<float>& vertices, std::vector<unsigned int>& indices) {
+        float const R = 1.0f / (float)(rings - 1);
+        float const S = 1.0f / (float)(sectors - 1);
+        for(int r = 0; r < rings; ++r) {
+            for(int s = 0; s < sectors; ++s) {
+                float const y = sin(-glm::half_pi<float>() + glm::pi<float>() * r * R);
+                float const x = cos(2*glm::pi<float>() * s * S) * sin(glm::pi<float>() * r * R);
+                float const z = sin(2*glm::pi<float>() * s * S) * sin(glm::pi<float>() * r * R);
+                vertices.push_back(x * radius);
+                vertices.push_back(y * radius);
+                vertices.push_back(z * radius);
+                vertices.push_back(x);
+                vertices.push_back(y);
+                vertices.push_back(z);
+            }
+        }
+        for(int r = 0; r < rings - 1; ++r) {
+            for(int s = 0; s < sectors - 1; ++s) {
+                indices.push_back(r * sectors + s);
+                indices.push_back(r * sectors + (s + 1));
+                indices.push_back((r + 1) * sectors + (s + 1));
+                indices.push_back(r * sectors + s);
+                indices.push_back((r + 1) * sectors + (s + 1));
+                indices.push_back((r + 1) * sectors + s);
+            }
+        }
+    }
 }
 
 namespace Urbaxio {
@@ -376,6 +403,51 @@ namespace Urbaxio {
             "void main() {\n"
             "    FragColor = u_Color;\n"
             "}\n";
+
+        bubbleVertexShaderSource =
+            "#version 330 core\n"
+            "layout (location = 0) in vec3 aPos;\n"
+            "layout (location = 1) in vec3 aNormal;\n"
+            "uniform mat4 model;\n"
+            "uniform mat4 view;\n"
+            "uniform mat4 projection;\n"
+            "out vec3 Normal;\n"
+            "out vec3 Position;\n"
+            "void main() {\n"
+            "    Normal = mat3(transpose(inverse(model))) * aNormal;\n"
+            "    Position = vec3(model * vec4(aPos, 1.0));\n"
+            "    gl_Position = projection * view * vec4(Position, 1.0);\n"
+            "}\n";
+
+        bubbleFragmentShaderSource =
+            "#version 330 core\n"
+            "out vec4 FragColor;\n"
+            "in vec3 Normal;\n"
+            "in vec3 Position;\n"
+            "uniform vec3 u_Color;\n"
+            "uniform vec3 u_ViewPos;\n"
+            "\n"
+            "void main() {\n"
+            "    vec3 viewDir = normalize(u_ViewPos - Position);\n"
+            "    vec3 norm = normalize(Normal);\n"
+            "    float NdotV = max(dot(norm, viewDir), 0.0);\n"
+            "\n"
+            "    float fresnel = pow(1.0 - NdotV, 3.0);\n"
+            "\n"
+            "    vec3 iridColor = vec3(0.5) + 0.5 * cos(6.28318 * (vec3(0.0, 0.33, 0.67) + fresnel * 1.5));\n"
+            "\n"
+            "    vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));\n"
+            "    vec3 halfVec = normalize(lightDir + viewDir);\n"
+            "    float spec = pow(max(dot(norm, halfVec), 0.0), 128.0);\n"
+            "\n"
+            "    vec3 edgeColor = mix(u_Color, iridColor, 0.6);\n"
+            "    vec3 finalColor = mix(u_Color * 0.5, edgeColor, fresnel);\n"
+            "    finalColor += vec3(1.0) * spec;\n"
+            "\n"
+            "    float alpha = clamp(fresnel * 0.6 + 0.05 + spec, 0.0, 0.9);\n"
+            "\n"
+            "    FragColor = vec4(finalColor, alpha);\n"
+            "}\n";
             
         vrMenuWidgetVertexShaderSource =
             "#version 330 core\n"
@@ -543,7 +615,7 @@ namespace Urbaxio {
         "}\n";
     // -- END OF MODIFICATION --
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateMultiviewShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreatePreviewBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateSplatResources()) return false; if (!CreateGhostMeshResources()) return false; if (!CreatePanelOutlineResources()) return false; glGenFramebuffers(1, &blitFBO_); glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateMultiviewShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreatePreviewBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateSplatResources()) return false; if (!CreateGhostMeshResources()) return false; if (!CreatePanelOutlineResources()) return false; if (!CreateBubbleResources()) return false; glGenFramebuffers(1, &blitFBO_); glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
     
     // --- NEW: Method to invalidate the static batch, forcing a re-compile ---
@@ -1070,6 +1142,25 @@ namespace Urbaxio {
             DrawSnapMarker(currentSnap, view, projection, viewportWidth, viewportHeight);
             glEnable(GL_DEPTH_TEST);
         }
+        // --- NEW: Draw Soap Bubble Brush ---
+        if (brushPreviewEnabled_ && bubbleShaderProgram != 0 && sphereVAO != 0) {
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+            glUseProgram(bubbleShaderProgram);
+            glm::mat4 model = glm::translate(glm::mat4(1.0f), brushPreviewPos_);
+            model = glm::scale(model, glm::vec3(brushPreviewRadius_));
+            glUniformMatrix4fv(bubbleShaderLocs.model, 1, GL_FALSE, glm::value_ptr(model));
+            glUniformMatrix4fv(bubbleShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(bubbleShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
+            glUniform3fv(bubbleShaderLocs.color, 1, glm::value_ptr(brushPreviewColor_));
+            glm::vec3 camPos = glm::vec3(glm::inverse(view)[3]);
+            glUniform3fv(bubbleShaderLocs.viewPos, 1, glm::value_ptr(camPos));
+            glBindVertexArray(sphereVAO);
+            glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0);
+            glBindVertexArray(0);
+            glDisable(GL_CULL_FACE);
+        }
+
         // --- NEW: Draw yellow drag start point marker ---
         if (dragStartPointEnabled) {
             glDisable(GL_DEPTH_TEST);
@@ -1346,6 +1437,7 @@ namespace Urbaxio {
         // Selection Box Shader
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, selectionBoxVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, selectionBoxFragmentShaderSource); if (vs != 0 && fs != 0) selectionBoxShaderProgram = LinkShaderProgram(vs, fs); if (selectionBoxShaderProgram == 0) return false; std::cout << "Renderer: Selection Box shader program created." << std::endl; }
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, vrMenuWidgetVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, vrMenuWidgetFragmentShaderSource); if (vs != 0 && fs != 0) vrMenuWidgetShaderProgram = LinkShaderProgram(vs, fs); if (vrMenuWidgetShaderProgram == 0) return false; std::cout << "Renderer: VR Menu Widget shader program created." << std::endl; }
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, bubbleVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, bubbleFragmentShaderSource); if (vs != 0 && fs != 0) bubbleShaderProgram = LinkShaderProgram(vs, fs); if (bubbleShaderProgram == 0) return false; bubbleShaderLocs.model = glGetUniformLocation(bubbleShaderProgram, "model"); bubbleShaderLocs.view = glGetUniformLocation(bubbleShaderProgram, "view"); bubbleShaderLocs.projection = glGetUniformLocation(bubbleShaderProgram, "projection"); bubbleShaderLocs.color = glGetUniformLocation(bubbleShaderProgram, "u_Color"); bubbleShaderLocs.viewPos = glGetUniformLocation(bubbleShaderProgram, "u_ViewPos"); std::cout << "Renderer: Bubble shader created." << std::endl; }
         return true;
     }
     // -- START OF MODIFICATION --
@@ -1711,6 +1803,9 @@ namespace Urbaxio {
         if (ghostMeshEBO_lines != 0) { glDeleteBuffers(1, &ghostMeshEBO_lines); ghostMeshEBO_lines = 0; }
         if (panelOutlineVAO_ != 0) glDeleteVertexArrays(1, &panelOutlineVAO_); panelOutlineVAO_ = 0;
         if (panelOutlineVBO_ != 0) glDeleteBuffers(1, &panelOutlineVBO_); panelOutlineVBO_ = 0;
+        if (sphereVAO != 0) glDeleteVertexArrays(1, &sphereVAO); sphereVAO = 0;
+        if (sphereVBO != 0) glDeleteBuffers(1, &sphereVBO); sphereVBO = 0;
+        if (sphereEBO != 0) glDeleteBuffers(1, &sphereEBO); sphereEBO = 0;
         for (auto const& [shape, vao] : markerVAOs) { if (vao != 0) glDeleteVertexArrays(1, &vao); } markerVAOs.clear();
         for (auto const& [shape, vbo] : markerVBOs) { if (vbo != 0) glDeleteBuffers(1, &vbo); } markerVBOs.clear();
         markerVertexCounts.clear();
@@ -1729,6 +1824,7 @@ namespace Urbaxio {
         if (dashedLineShaderProgram != 0) glDeleteProgram(dashedLineShaderProgram); dashedLineShaderProgram = 0;
         if (selectionBoxShaderProgram != 0) glDeleteProgram(selectionBoxShaderProgram); selectionBoxShaderProgram = 0;
         if (vrMenuWidgetShaderProgram != 0) glDeleteProgram(vrMenuWidgetShaderProgram); vrMenuWidgetShaderProgram = 0;
+        if (bubbleShaderProgram != 0) glDeleteProgram(bubbleShaderProgram); bubbleShaderProgram = 0;
         if (selectionBoxVAO != 0) glDeleteVertexArrays(1, &selectionBoxVAO); selectionBoxVAO = 0; if (selectionBoxVBO != 0) glDeleteBuffers(1, &selectionBoxVBO); selectionBoxVBO = 0;
         if (previewBoxVAO != 0) glDeleteVertexArrays(1, &previewBoxVAO); previewBoxVAO = 0;
         if (previewBoxVBO != 0) glDeleteBuffers(1, &previewBoxVBO); previewBoxVBO = 0;
@@ -2072,6 +2168,13 @@ namespace Urbaxio {
         dragStartPointEnabled = enabled;
     }
 
+    void Renderer::UpdateBrushPreview(const glm::vec3& position, float radius, const glm::vec3& color, bool enabled) {
+        brushPreviewPos_ = position;
+        brushPreviewRadius_ = radius;
+        brushPreviewColor_ = color;
+        brushPreviewEnabled_ = enabled;
+    }
+
     void Renderer::RenderVRMenuWidget(
         const glm::mat4& view, const glm::mat4& projection,
         const glm::mat4& model,
@@ -2293,6 +2396,27 @@ namespace Urbaxio {
         glBindVertexArray(0);
         std::cout << "Renderer: Panel Outline VAO/VBO created." << std::endl;
         return panelOutlineVAO_ != 0 && panelOutlineVBO_ != 0;
+    }
+
+    bool Renderer::CreateBubbleResources() {
+        std::vector<float> vertices;
+        std::vector<unsigned int> indices;
+        GenerateSphereResources(1.0f, 24, 24, vertices, indices);
+        sphereIndexCount = static_cast<GLsizei>(indices.size());
+        glGenVertexArrays(1, &sphereVAO);
+        glGenBuffers(1, &sphereVBO);
+        glGenBuffers(1, &sphereEBO);
+        glBindVertexArray(sphereVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, sphereVBO);
+        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sphereEBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glBindVertexArray(0);
+        return sphereVAO != 0;
     }
 
     void Renderer::ClearGhostMesh() {

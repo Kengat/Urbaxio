@@ -147,6 +147,10 @@ void VrDrawTool::Activate(const Tools::ToolContext& context) {
 void VrDrawTool::Deactivate() {
     checkForAsyncUpdate(true);
     Tools::ITool::Deactivate();
+
+    if (impl_->context.renderer) {
+        impl_->context.renderer->UpdateBrushPreview(glm::vec3(0), 0, glm::vec3(0), false);
+    }
     
     // ❌ DON'T delete shared grid!
     impl_->hashGrid = nullptr; // Just detach
@@ -462,12 +466,13 @@ void VrDrawTool::RenderPreview(Renderer& renderer, const SnapResult& snap) {
     float worldScale = impl_->context.worldTransform ? glm::length(glm::vec3((*impl_->context.worldTransform)[0])) : 1.0f;
     glm::vec3 previewPos = impl_->lastRayOrigin + impl_->lastRayDirection * (impl_->brushOffsetDistance * worldScale);
     
-    // Show a simple point/cursor at the drawing location
-    // Using UpdateDragStartPoint as a temporary cursor visual
-    renderer.UpdateDragStartPoint(previewPos, true);
-    
-    // Optionally, we could render a wireframe sphere if the renderer supports it, 
-    // but for now a point is sufficient to show the offset.
+    renderer.UpdateBrushPreview(
+        previewPos,
+        impl_->brushRadius,
+        glm::vec3(0.2f, 0.8f, 1.0f),
+        true
+    );
+    renderer.UpdateDragStartPoint(previewPos, false);
 }
 
 } // namespace Urbaxio::Shell

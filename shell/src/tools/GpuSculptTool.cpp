@@ -31,6 +31,7 @@
 #include "engine/MeshManager.h"
 #include "LoadingManager.h"
 #include "snapping.h"
+#include "renderer.h"
 #include "camera.h"
 #include "imgui.h"
 #include <glm/glm.hpp>
@@ -170,6 +171,10 @@ void GpuSculptTool::Deactivate() {
     
     impl_->isSculpting = false;
     impl_->activeObjectId = 0;
+    
+    if (impl_->context.renderer) {
+        impl_->context.renderer->UpdateBrushPreview(glm::vec3(0), 0, glm::vec3(0), false);
+    }
     
     if (impl_->strokeCount > 0) {
         float avgTime = impl_->totalGpuTime / impl_->strokeCount;
@@ -518,23 +523,44 @@ void GpuSculptTool::OnUpdate(
         0.0f
     );
     
-    if (!raycastResult.hit) return;  // No surface hit
-    
-    glm::vec3 hitPosition = raycastResult.hitPoint;
-    impl_->lastHitPoint = hitPosition;
-    
-    // Проверка дистанции для применения brush
-    float minDist = impl_->getMinBrushDistance();
-    if (glm::distance(hitPosition, impl_->lastBrushApplyPos) >= minDist) {
-        impl_->pendingBrushStrokes.push_back(hitPosition);
+    if (raycastResult.hit) {
+        glm::vec3 hitPosition = raycastResult.hitPoint;
         
-        if (impl_->pendingBrushStrokes.size() >= impl_->MAX_BATCH_SIZE) {
-            applyBrushBatchGPU();
+        if (impl_->context.renderer) {
+            glm::vec3 brushColor = (impl_->brushMode == 0) 
+                ? glm::vec3(0.2f, 0.8f, 1.0f)
+                : glm::vec3(1.0f, 0.4f, 0.0f);
+            impl_->context.renderer->UpdateBrushPreview(
+                hitPosition,
+                impl_->brushRadius,
+                brushColor,
+                true
+            );
         }
         
-        // TEMPORARY: Disabled async meshing due to deadlock
-        // TODO: Fix GenerateTrianglesKernel with proper per-cell scan
-        /*
+        impl_->lastHitPoint = hitPosition;
+        
+        // Проверка дистанции для применения brush
+        float minDist = impl_->getMinBrushDistance();
+        if (glm::distance(hitPosition, impl_->lastBrushApplyPos) >= minDist) {
+            impl_->pendingBrushStrokes.push_back(hitPosition);
+            
+            if (impl_->pendingBrushStrokes.size() >= impl_->MAX_BATCH_SIZE) {
+                applyBrushBatchGPU();
+            }
+            
+            impl_->lastBrushApplyPos = hitPosition;
+        }
+    } else {
+        if (impl_->context.renderer) {
+            impl_->context.renderer->UpdateBrushPreview(glm::vec3(0), 0, glm::vec3(0), false);
+        }
+        return;  // No surface hit
+    }
+    
+    // TEMPORARY: Disabled async meshing due to deadlock
+    // TODO: Fix GenerateTrianglesKernel with proper per-cell scan
+    /*
         static int meshUpdateCounter = 0;
         if (++meshUpdateCounter >= 5) { // Update mesh every 5 brush strokes
             meshUpdateCounter = 0;
@@ -574,9 +600,6 @@ void GpuSculptTool::OnUpdate(
             }
         }
         */
-        
-        impl_->lastBrushApplyPos = hitPosition;
-    }
 #endif
 #endif
 }

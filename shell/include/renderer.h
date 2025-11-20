@@ -119,6 +119,7 @@ namespace Urbaxio {
         // NEW: Preview Box for 3D selection
         void UpdatePreviewBox(const glm::vec3& p1, const glm::vec3& p2, bool enabled);
         void UpdateDragStartPoint(const glm::vec3& point, bool enabled);
+        void UpdateBrushPreview(const glm::vec3& position, float radius, const glm::vec3& color, bool enabled);
         
         void RenderVRMenuWidget(
             const glm::mat4& view, const glm::mat4& projection,
@@ -209,6 +210,10 @@ namespace Urbaxio {
         struct DashedLineShaderLocations {
             GLuint model, view, projection, color, dashSize, gapSize;
         } dashedLineShaderLocs;
+        struct BubbleShaderLocations {
+            GLuint model, view, projection;
+            GLuint color, viewPos;
+        } bubbleShaderLocs;
 
         GLuint objectShaderProgram = 0;
         // --- NEW SHADERS ---
@@ -224,6 +229,7 @@ namespace Urbaxio {
         GLuint unlitShaderProgram = 0; // <-- NEW SHADER for unlit objects
         GLuint dashedLineShaderProgram = 0; // <-- NEW SHADER for dashed lines
         GLuint selectionBoxShaderProgram = 0; // <-- NEW
+        GLuint bubbleShaderProgram = 0;
         
         GLuint splatShaderProgram = 0;
         GLuint markerShaderProgram = 0;
@@ -277,6 +283,12 @@ namespace Urbaxio {
         GLuint ghostMeshEBO_lines = 0;     // <-- ДОБАВИТЬ
         GLsizei ghostMeshTriangleIndexCount = 0; // <-- ПЕРЕИМЕНОВАТЬ
         GLsizei ghostMeshLineIndexCount = 0;     // <-- ДОБАВИТЬ
+        GLuint sphereVAO = 0, sphereVBO = 0, sphereEBO = 0;
+        GLsizei sphereIndexCount = 0;
+        glm::vec3 brushPreviewPos_{0,0,0};
+        float brushPreviewRadius_ = 1.0f;
+        glm::vec3 brushPreviewColor_{0.2f, 0.8f, 1.0f};
+        bool brushPreviewEnabled_ = false;
 
         std::map<MarkerShape, GLuint> markerVAOs;
         std::map<MarkerShape, GLuint> markerVBOs;
@@ -325,6 +337,7 @@ namespace Urbaxio {
         bool CreateVRPointerResources(); // <-- NEW
         bool CreateGhostMeshResources(); // <-- NEW
         bool CreatePanelOutlineResources(); // <-- NEW
+        bool CreateBubbleResources();
         void Cleanup();
         void DrawSnapMarker(const SnapResult& snap, const glm::mat4& view, const glm::mat4& proj, int viewportWidth, int viewportHeight);
         
@@ -350,6 +363,7 @@ namespace Urbaxio {
         const char* dashedLineVertexShaderSource; const char* dashedLineFragmentShaderSource;
         const char* selectionBoxVertexShaderSource; const char* selectionBoxFragmentShaderSource;
         const char* vrMenuWidgetVertexShaderSource; const char* vrMenuWidgetFragmentShaderSource;
+        const char* bubbleVertexShaderSource; const char* bubbleFragmentShaderSource;
 
         // -- START OF MODIFICATION --
         GLuint blitFBO_ = 0; // Temporary FBO for multiview blitting
