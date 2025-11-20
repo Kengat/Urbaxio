@@ -24,6 +24,11 @@ public:
     void RenderUI() override;
     void RenderPreview(Renderer& renderer, const SnapResult& snap) override;
 
+    // --- NEW: Setters for UI ---
+    void SetBrushRadius(float radius);
+    void SetBrushStrength(float strength);
+    // ---------------------------
+
 private:
     bool applyBrush(const glm::vec3& brushWorldPos);
     void updateBrushCursor(const glm::vec3& position, bool visible);

@@ -28,6 +28,11 @@ extern "C" {
 // <-- NEW
 #include <tools/PaintTool.h>
 #include <tools/SculptTool.h>
+#ifdef URBAXIO_GPU_ENABLED
+#if URBAXIO_GPU_ENABLED
+#include <tools/GpuSculptTool.h>
+#endif
+#endif
 #include <tools/VrDrawTool.h>
 
 #include "camera.h"
@@ -952,11 +957,12 @@ namespace { // Anonymous namespace for helpers
         };
 
         // Add buttons to the scroll widget, passing the new color themes
-        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Sculpt", glm::vec3(0), glm::vec2(buttonSize), sculptIcon, Urbaxio::Tools::ToolType::Sculpt, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Sculpt); }, sculptSelectedColors, sculptInactiveColors));
+        // --- MODIFIED: Removed CPU Sculpt button, renamed GPU Sculpt to "Sculpt" ---
+        // Removed: scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Sculpt", ... ToolType::Sculpt ...));
         
 #ifdef URBAXIO_GPU_ENABLED
 #if URBAXIO_GPU_ENABLED
-        // GPU-accelerated sculpt tool (cyan colors to distinguish from CPU version)
+        // GPU-accelerated sculpt tool is now the primary "Sculpt" button
         const Urbaxio::UI::ToolButtonColors gpuInactiveColors = { 
             {0.03f, 0.89f, 0.89f}, // base (cyan)
             {0.47f, 0.68f, 0.99f}, // aberration1
@@ -967,9 +973,12 @@ namespace { // Anonymous namespace for helpers
             {0.29f, 0.99f, 0.66f}, // aberration1
             {0.46f, 0.99f, 0.99f}  // aberration2
         };
-        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("GPU Sculpt", glm::vec3(0), glm::vec2(buttonSize), sculptIcon, Urbaxio::Tools::ToolType::SculptGpu, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptGpu); }, gpuSelectedColors, gpuInactiveColors));
+        
+        // NOTE: This button sets ToolType::SculptGpu, but user sees "Sculpt"
+        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Sculpt", glm::vec3(0), glm::vec2(buttonSize), sculptIcon, Urbaxio::Tools::ToolType::SculptGpu, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptGpu); }, gpuSelectedColors, gpuInactiveColors));
 #endif
 #endif
+        // ------------------------------------------------------------------------
         
         scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Draw", glm::vec3(0), glm::vec2(buttonSize), sculptDrawIcon, Urbaxio::Tools::ToolType::SculptDraw, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptDraw); }, sculptSelectedColors, sculptInactiveColors));
         scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Pinch", glm::vec3(0), glm::vec2(buttonSize), sculptPinchIcon, Urbaxio::Tools::ToolType::SculptPinch, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::SculptPinch); std::cout << "VR UI: This sculpt tool is not yet implemented." << std::endl; }, sculptSelectedColors, sculptInactiveColors));
@@ -1103,6 +1112,98 @@ namespace { // Anonymous namespace for helpers
                 // --- NEW: Sync ---
                 drawTool->SetScaleDependent(isRelativeSize);
             }
+        }
+
+        // --- NEW: Create Sub-Panel for Sculpt Tool Settings ---
+        {
+            // Place it to the right of the Draw Settings (or just to the right of main menu)
+            // Using similar offsets to DrawToolSettings but slightly adjusted if needed
+            glm::vec3 translation(0.134f, -0.008f, 0.003f);
+            glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-1.058f, -1.856f, -0.238f));
+            glm::vec3 scale(0.864f);
+            glm::vec2 size(0.178f, 0.25f); // Slightly shorter than draw settings
+            float cornerRadius = 0.020f;
+
+            glm::mat4 subOffset = glm::translate(glm::mat4(1.0f), translation) *
+                                  glm::mat4_cast(glm::quat(eulerAnglesRad)) *
+                                  glm::scale(glm::mat4(1.0f), scale);
+            
+            auto& sculptSettings = vruiManager.AddPanel("SculptToolSettings", "Sculpt Settings", size, subOffset, cornerRadius, dragIcon, pinIcon, closeIcon, minimizeIcon);
+            
+            sculptSettings.SetParent(&sculptMenu);
+            sculptSettings.showInPanelManager = false;
+            sculptSettings.SetVisible(false);
+            sculptSettings.SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
+            
+            // Shared state variables
+            static float sculptRadius = 0.2f;
+            static float sculptStrength = 0.5f;
+            static bool cpuMode = false;
+
+            // 1. CPU Mode Toggle
+            sculptSettings.AddWidget(std::make_unique<Urbaxio::UI::VRToggleWidget>(
+                "CPU Mode",
+                glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f),
+                cpuMode,
+                [&toolManager](bool val) {
+                    cpuMode = val;
+                    // Switch tool based on toggle
+                    if (val) {
+                        toolManager.SetTool(Urbaxio::Tools::ToolType::Sculpt);
+                    } else {
+                        #ifdef URBAXIO_GPU_ENABLED
+                        #if URBAXIO_GPU_ENABLED
+                        toolManager.SetTool(Urbaxio::Tools::ToolType::SculptGpu);
+                        #endif
+                        #endif
+                    }
+                }
+            ));
+
+            // 2. Radius Slider
+            sculptSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
+                "Radius", 
+                glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 
+                0.05f, 2.0f, 0.0f, sculptRadius, 
+                [&toolManager](float val) { 
+                    sculptRadius = val;
+                    // Apply to whichever tool is active
+                    auto currentType = toolManager.GetActiveToolType();
+                    if (currentType == Urbaxio::Tools::ToolType::SculptGpu) {
+                        #ifdef URBAXIO_GPU_ENABLED
+                        #if URBAXIO_GPU_ENABLED
+                        if (auto* t = dynamic_cast<Urbaxio::Shell::GpuSculptTool*>(toolManager.GetActiveTool())) t->SetBrushRadius(val);
+                        #endif
+                        #endif
+                    } else if (currentType == Urbaxio::Tools::ToolType::Sculpt) {
+                        if (auto* t = dynamic_cast<Urbaxio::Tools::SculptTool*>(toolManager.GetActiveTool())) t->SetBrushRadius(val);
+                    }
+                }
+            ));
+
+            // 3. Strength Slider
+            sculptSettings.AddWidget(std::make_unique<Urbaxio::UI::VRSliderWidget>(
+                "Strength", 
+                glm::vec3(0), glm::vec2(size.x - 0.02f, 0.03f), 
+                0.01f, 1.0f, 0.0f, sculptStrength, 
+                [&toolManager](float val) { 
+                    sculptStrength = val;
+                    // Apply to whichever tool is active
+                    auto currentType = toolManager.GetActiveToolType();
+                    if (currentType == Urbaxio::Tools::ToolType::SculptGpu) {
+                        #ifdef URBAXIO_GPU_ENABLED
+                        #if URBAXIO_GPU_ENABLED
+                        if (auto* t = dynamic_cast<Urbaxio::Shell::GpuSculptTool*>(toolManager.GetActiveTool())) t->SetBrushStrength(val);
+                        #endif
+                        #endif
+                    } else if (currentType == Urbaxio::Tools::ToolType::Sculpt) {
+                        if (auto* t = dynamic_cast<Urbaxio::Tools::SculptTool*>(toolManager.GetActiveTool())) t->SetBrushStrength(val);
+                    }
+                }
+            ));
+
+            sculptSettings.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.015f));
+            sculptSettings.RecalculateLayout();
         }
     }
 
@@ -1677,10 +1778,22 @@ int main(int argc, char* argv[]) {
 
         // --- NEW: Sub-Panel Visibility Logic ---
         if (vr_mode && vrManager) {
+            Urbaxio::Tools::ToolType activeType = toolManager.GetActiveToolType();
+
+            // Draw Tool Settings Visibility
             if (auto* drawSettings = vruiManager.GetPanel("DrawToolSettings")) {
-                bool shouldShow = (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::SculptDraw);
+                bool shouldShow = (activeType == Urbaxio::Tools::ToolType::SculptDraw);
                 drawSettings->SetVisible(shouldShow);
             }
+
+            // --- NEW: Sculpt Tool Settings Visibility ---
+            if (auto* sculptSettings = vruiManager.GetPanel("SculptToolSettings")) {
+                // Show if EITHER GPU Sculpt OR CPU Sculpt is active
+                bool shouldShow = (activeType == Urbaxio::Tools::ToolType::SculptGpu || 
+                                   activeType == Urbaxio::Tools::ToolType::Sculpt);
+                sculptSettings->SetVisible(shouldShow);
+            }
+            // --------------------------------------------
         }
         
         // --- GPU Upload for new/modified objects ---
@@ -2412,8 +2525,8 @@ int main(int argc, char* argv[]) {
                                 parentMatrix = panel.GetParent()->transform;
                             } else if (panel.IsPinned()) {
                                 parentMatrix = headTransformInWorldSpace;
-                            }
-                            
+                        }
+
                             panel.GetOffsetTransform() = glm::inverse(parentMatrix) * panel.transform;
                         }
                     }
@@ -2503,7 +2616,7 @@ int main(int argc, char* argv[]) {
                 static bool wasDrawingAnalog = false;
                 const float DRAW_THRESHOLD = 0.05f; // Start drawing at 5% pressure
                 bool isAnalogPressed = vrManager->rightTriggerValue > DRAW_THRESHOLD;
-
+                
                 if (rightHand.triggerClicked) {
                     bool clickConsumed = false;
                     if (!sphereConsumedClick) {
@@ -2529,10 +2642,10 @@ int main(int argc, char* argv[]) {
                     } 
                     else if (isAnalogPressed && wasDrawingAnalog) {
                         // Hold
-                        auto* vrDrawTool = static_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetActiveTool());
-                        glm::vec3 controllerPos = glm::vec3(rightControllerUnscaledTransform[3]);
-                        vrDrawTool->OnTriggerHeld(true, controllerPos);
-                    }
+                            auto* vrDrawTool = static_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetActiveTool());
+                            glm::vec3 controllerPos = glm::vec3(rightControllerUnscaledTransform[3]);
+                            vrDrawTool->OnTriggerHeld(true, controllerPos);
+                        }
                     else if (!isAnalogPressed && wasDrawingAnalog) {
                         // Release
                         auto* vrDrawTool = static_cast<Urbaxio::Shell::VrDrawTool*>(toolManager.GetActiveTool());

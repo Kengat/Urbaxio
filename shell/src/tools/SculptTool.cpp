@@ -349,6 +349,16 @@ void SculptTool::updateBrushCursor(const glm::vec3& position, bool visible) {
     }
 }
 
+// --- NEW: Setter Implementations ---
+void SculptTool::SetBrushRadius(float radius) { 
+    brushRadius_ = radius; 
+}
+
+void SculptTool::SetBrushStrength(float strength) { 
+    brushStrength_ = strength; 
+}
+// -----------------------------------
+
 void SculptTool::RenderUI() {
     ImGui::Separator();
     ImGui::Text("Sculpt Settings");

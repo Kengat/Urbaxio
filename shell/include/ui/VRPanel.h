@@ -114,7 +114,7 @@ private:
     
     // --- NEW: Parent Pointer ---
     VRPanel* parentPanel_ = nullptr;
-
+    
     IVRWidget* hoveredWidget_ = nullptr;
     std::vector<std::unique_ptr<IVRWidget>> widgets_;
 };

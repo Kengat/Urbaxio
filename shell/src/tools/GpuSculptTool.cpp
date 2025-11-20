@@ -183,7 +183,15 @@ void GpuSculptTool::Deactivate() {
     }
 }
 
+// --- NEW: Setter Implementations ---
+void GpuSculptTool::SetBrushRadius(float radius) { 
+    impl_->brushRadius = radius; 
+}
 
+void GpuSculptTool::SetBrushStrength(float strength) { 
+    impl_->brushStrength = strength; 
+}
+// -----------------------------------
 
 void GpuSculptTool::OnLeftMouseDown(
     int mouseX, int mouseY, 

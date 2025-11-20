@@ -16,7 +16,7 @@ public:
     ~GpuSculptTool() override;
 
     // ITool interface
-    Tools::ToolType GetType() const override { return Tools::ToolType::Sculpt; }
+    Tools::ToolType GetType() const override { return Tools::ToolType::SculptGpu; }
     const char* GetName() const override { return "GPU Sculpt"; }
     void Activate(const Tools::ToolContext& context) override;
     void Deactivate() override;
@@ -25,6 +25,11 @@ public:
     void OnMouseMove(int mouseX, int mouseY) override;
     void OnUpdate(const SnapResult& snap, const glm::vec3& rayOrigin = {}, const glm::vec3& rayDirection = {}) override;
     void RenderUI() override;
+
+    // --- NEW: Setters for UI ---
+    void SetBrushRadius(float radius);
+    void SetBrushStrength(float strength);
+    // ---------------------------
 
 private:
     bool applyBrushGPU(const glm::vec3& brushWorldPos);
