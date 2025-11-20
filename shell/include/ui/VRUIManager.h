@@ -20,6 +20,7 @@ public:
     VRPanel* GetPanel(const std::string& name);
     VRPanel* GetHoveredPanel();
 
+    std::map<std::string, VRPanel>& GetPanels();
     const std::map<std::string, VRPanel>& GetPanels() const;
 
     void Update(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& rightControllerTransform, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, bool aButtonHeld, bool bButtonIsPressed, float leftStickY, bool isLeftTriggerPressed);

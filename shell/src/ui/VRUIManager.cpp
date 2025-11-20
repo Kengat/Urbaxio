@@ -3,10 +3,47 @@
 #include "renderer.h"
 #include "TextRenderer.h"
 #include <limits>
+#include <vector>
+#include <algorithm>
+#include <set>
 
 namespace Urbaxio::UI {
 
 VRUIManager::VRUIManager() {}
+
+std::vector<VRPanel*> GetSortedPanels(std::map<std::string, VRPanel>& panels) {
+    std::vector<VRPanel*> sorted;
+    sorted.reserve(panels.size());
+    std::set<VRPanel*> processed;
+
+    for (auto& [name, panel] : panels) {
+        if (!panel.GetParent()) {
+            sorted.push_back(&panel);
+            processed.insert(&panel);
+        }
+    }
+
+    bool added = true;
+    while (added) {
+        added = false;
+        for (auto& [name, panel] : panels) {
+            if (processed.count(&panel)) continue;
+            if (processed.count(panel.GetParent())) {
+                sorted.push_back(&panel);
+                processed.insert(&panel);
+                added = true;
+            }
+        }
+    }
+
+    for (auto& [name, panel] : panels) {
+        if (!processed.count(&panel)) {
+            sorted.push_back(&panel);
+        }
+    }
+
+    return sorted;
+}
 
 VRPanel& VRUIManager::AddPanel(const std::string& name, const std::string& displayName, const glm::vec2& size, const glm::mat4& offsetTransform, float cornerRadius, unsigned int grabIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
     auto [it, success] = panels_.try_emplace(name, name, displayName, size, offsetTransform, cornerRadius, grabIcon, pinIcon, closeIcon, minimizeIcon);
@@ -28,8 +65,11 @@ VRPanel* VRUIManager::GetHoveredPanel() {
     return nullptr;
 }
 
+std::map<std::string, VRPanel>& VRUIManager::GetPanels() {
+    return panels_;
+}
+
 void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& rightControllerTransform, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, bool aButtonHeld, bool bButtonIsPressed, float leftStickY, bool isLeftTriggerPressed) {
-    const glm::mat4& parentTransform = leftControllerTransform;
     const glm::mat4& interactionTransform = rightControllerTransform;
 
     lastLeftControllerTransform_ = leftControllerTransform;
@@ -40,21 +80,25 @@ void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTra
     std::string newActivePanel;
     float closestHitDist = std::numeric_limits<float>::max();
 
-    for (auto& [name, panel] : panels_) {
-        // Проверяем пересечение, даже если альфа 0, чтобы панель могла "поймать" ховер и начать появляться
+    std::vector<VRPanel*> sortedPanels = GetSortedPanels(panels_);
+
+    for (VRPanel* panelPtr : sortedPanels) {
+        VRPanel& panel = *panelPtr;
         if (panel.IsVisible()) {
+            glm::mat4 parentTransform = panel.GetParent() ? panel.GetParent()->transform : leftControllerTransform;
             HitResult hit = panel.CheckIntersection(worldRay, parentTransform);
             if (hit.didHit && hit.distance < closestHitDist) {
                 closestHitDist = hit.distance;
-                newActivePanel = name;
+                newActivePanel = panel.GetName();
             }
         }
     }
     activeInteractionPanel_ = newActivePanel;
     
-    for (auto& [name, panel] : panels_) {
-        // Обновляем все панели, передавая им состояние курка
-        float stickForPanel = (name == activeInteractionPanel_) ? leftStickY : 0.0f;
+    for (VRPanel* panelPtr : sortedPanels) {
+        VRPanel& panel = *panelPtr;
+        glm::mat4 parentTransform = panel.GetParent() ? panel.GetParent()->transform : leftControllerTransform;
+        float stickForPanel = (panel.GetName() == activeInteractionPanel_) ? leftStickY : 0.0f;
         panel.Update(worldRay, parentTransform, interactionTransform, triggerPressed, triggerReleased, triggerHeld, aButtonPressed, aButtonHeld, bButtonIsPressed, stickForPanel, isLeftTriggerPressed);
     }
 }
@@ -89,22 +133,26 @@ const std::map<std::string, VRPanel>& VRUIManager::GetPanels() const {
 }
 
 bool VRUIManager::IsRayBlockedByPanel(const Ray& worldRay, const glm::mat4& parentTransform) const {
-    // Check all panels that are currently visible (even partially fading in/out)
     for (const auto& [name, panel] : panels_) {
         if (panel.alpha > 0.01f && panel.IsVisible()) {
-            const glm::mat4* transformToUse = nullptr;
-            if (panel.IsPinned()) {
-                if (hasLastHeadTransform_) {
-                    transformToUse = &lastHeadTransform_;
-                }
+            glm::mat4 effectiveParent;
+            if (panel.GetParent()) {
+                effectiveParent = panel.GetParent()->transform;
             } else {
-                if (hasLastLeftTransform_) {
-                    transformToUse = &lastLeftControllerTransform_;
+                const glm::mat4* transformToUse = nullptr;
+                if (panel.IsPinned()) {
+                    if (hasLastHeadTransform_) {
+                        transformToUse = &lastHeadTransform_;
+                    }
+                } else {
+                    if (hasLastLeftTransform_) {
+                        transformToUse = &lastLeftControllerTransform_;
+                    }
                 }
+                effectiveParent = transformToUse ? *transformToUse : parentTransform;
             }
 
-            const glm::mat4& chosenParent = transformToUse ? *transformToUse : parentTransform;
-            HitResult hit = panel.CheckIntersection(worldRay, chosenParent);
+            HitResult hit = panel.CheckIntersection(worldRay, effectiveParent);
             if (hit.didHit) {
                 return true;
             }
@@ -124,26 +172,40 @@ void VRUIManager::UpdateWithHeadTransform(const Ray& worldRay, const glm::mat4& 
     std::string newActivePanel;
     float closestHitDist = std::numeric_limits<float>::max();
 
-    for (auto& [name, panel] : panels_) {
+    std::vector<VRPanel*> sortedPanels = GetSortedPanels(panels_);
+
+    for (VRPanel* panelPtr : sortedPanels) {
+        VRPanel& panel = *panelPtr;
         if (panel.IsVisible()) {
-            const glm::mat4& parentTransform = panel.IsPinned() ? headTransform : leftControllerTransform;
+            glm::mat4 parentTransform;
+            if (panel.GetParent()) {
+                parentTransform = panel.GetParent()->transform;
+            } else {
+                parentTransform = panel.IsPinned() ? headTransform : leftControllerTransform;
+            }
 
             HitResult hit = panel.CheckIntersection(worldRay, parentTransform);
             if (hit.didHit && hit.distance < closestHitDist) {
                 closestHitDist = hit.distance;
-                newActivePanel = name;
+                newActivePanel = panel.GetName();
             }
         }
     }
     activeInteractionPanel_ = newActivePanel;
     
-    for (auto& [name, panel] : panels_) {
-        const glm::mat4& parentTransform = panel.IsPinned() ? headTransform : leftControllerTransform;
+    for (VRPanel* panelPtr : sortedPanels) {
+        VRPanel& panel = *panelPtr;
 
-        float stickForPanel = (name == activeInteractionPanel_) ? leftStickY : 0.0f;
+        glm::mat4 parentTransform;
+        if (panel.GetParent()) {
+            parentTransform = panel.GetParent()->transform;
+        } else {
+            parentTransform = panel.IsPinned() ? headTransform : leftControllerTransform;
+        }
+
+        float stickForPanel = (panel.GetName() == activeInteractionPanel_) ? leftStickY : 0.0f;
         panel.Update(worldRay, parentTransform, interactionTransform, triggerPressed, triggerReleased, triggerHeld, aButtonPressed, aButtonHeld, bButtonIsPressed, stickForPanel, isLeftTriggerPressed);
         
-        // Check if pin button was clicked and handle transform switching
         if (panel.WasPinButtonClicked()) {
             bool newPinnedState = !panel.IsPinned();
             const glm::mat4& currentParent = panel.IsPinned() ? headTransform : leftControllerTransform;

@@ -297,6 +297,7 @@ namespace { // Anonymous namespace for helpers
             
             for (const auto& [name, panel] : manager_.GetPanels()) {
                 if (name == "PanelManager") continue;
+                if (!panel.showInPanelManager) continue;
                 scrollWidget_->AddWidget(std::make_unique<VRPanelRowWidget>(name, manager_, rowSize, backIcon_, minIcon_, closeIcon_));
             }
             lastPanelCount_ = manager_.GetPanels().size();
@@ -977,6 +978,26 @@ namespace { // Anonymous namespace for helpers
         scrollWidget->RecalculateContentLayout();
         
         sculptMenu.AddWidget(std::move(scrollWidget));
+
+        // --- NEW: Create Sub-Panel for Draw Tool Settings ---
+        {
+            glm::mat4 subOffset = glm::translate(glm::mat4(1.0f), glm::vec3(panelWidth + 0.02f, 0.0f, 0.0f));
+            
+            float subWidth = 0.15f;
+            float subHeight = 0.20f;
+            
+            auto& drawSettings = vruiManager.AddPanel("DrawToolSettings", "Draw Settings", glm::vec2(subWidth, subHeight), subOffset, 0.02f, dragIcon, pinIcon, closeIcon, minimizeIcon);
+            
+            drawSettings.SetParent(&sculptMenu);
+            drawSettings.showInPanelManager = false;
+            drawSettings.SetVisible(false);
+            drawSettings.SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
+            
+            drawSettings.AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>("Brush Size", glm::vec3(0), glm::vec2(0.12f, 0.03f), [](){}));
+            
+            drawSettings.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.01f));
+            drawSettings.RecalculateLayout();
+        }
     }
 
     void SetupFileMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon, SDL_Window* window, std::atomic<bool>& isFileDialogActive, std::atomic<bool>& fileDialogResultReady, std::string& filePathFromDialog, std::mutex& filePathMutex, bool& isImportDialog) {
@@ -1544,6 +1565,14 @@ int main(int argc, char* argv[]) {
 
         // --- Update Active Tool ---
         toolManager.OnUpdate(currentSnap);
+
+        // --- NEW: Sub-Panel Visibility Logic ---
+        if (vr_mode && vrManager) {
+            if (auto* drawSettings = vruiManager.GetPanel("DrawToolSettings")) {
+                bool shouldShow = (toolManager.GetActiveToolType() == Urbaxio::Tools::ToolType::SculptDraw);
+                drawSettings->SetVisible(shouldShow);
+            }
+        }
         
         // --- GPU Upload for new/modified objects ---
         if (scene_ptr) {
@@ -2255,40 +2284,28 @@ int main(int argc, char* argv[]) {
                     bool isInteractingWithPanelSystem = vruiManager.IsInteracting();
 
                     // --- Handle grabbing for panels (grab initialization is now done in VRPanel::Update) ---
-                    static bool toolMenuGrabbedLastFrame = false;
-                    static bool numpadGrabbedLastFrame = false;
+                    static std::map<std::string, bool> panelGrabbedLastFrame;
                     
-                    if (auto* toolMenuPanel = vruiManager.GetPanel("ToolMenu")) {
-                        if (!toolMenuGrabbedLastFrame && toolMenuPanel->isGrabbing && rightHand.isValid) {
-                            toolMenuPanel->grabbedControllerInitialTransform = rightControllerUnscaledTransform;
-                        }
-                        toolMenuGrabbedLastFrame = toolMenuPanel->isGrabbing;
+                    for (auto& [name, panel] : vruiManager.GetPanels()) {
+                        bool wasGrabbed = panelGrabbedLastFrame[name];
                         
-                        if (rightHand.triggerReleased && toolMenuPanel->isGrabbing) {
-                            toolMenuPanel->isGrabbing = false;
-                            toolMenuPanel->GetOffsetTransform() = glm::inverse(leftControllerUnscaledTransform) * toolMenuPanel->transform;
+                        if (!wasGrabbed && panel.isGrabbing && rightHand.isValid) {
+                            panel.grabbedControllerInitialTransform = rightControllerUnscaledTransform;
                         }
-
-                        if(toolMenuPanel->isGrabbing && rightHand.isValid) {
-                            glm::mat4 deltaTransform = rightControllerUnscaledTransform * glm::inverse(toolMenuPanel->grabbedControllerInitialTransform);
-                            toolMenuPanel->transform = deltaTransform * toolMenuPanel->grabbedInitialTransform;
-                        }
-                    }
-
-                    if (auto* numpadPanel = vruiManager.GetPanel("NewNumpad")) {
-                        if (!numpadGrabbedLastFrame && numpadPanel->isGrabbing && rightHand.isValid) {
-                            numpadPanel->grabbedControllerInitialTransform = rightControllerUnscaledTransform;
-                        }
-                        numpadGrabbedLastFrame = numpadPanel->isGrabbing;
+                        panelGrabbedLastFrame[name] = panel.isGrabbing;
                         
-                        if (rightHand.triggerReleased && numpadPanel->isGrabbing) {
-                            numpadPanel->isGrabbing = false;
-                            numpadPanel->GetOffsetTransform() = glm::inverse(leftControllerUnscaledTransform) * numpadPanel->transform;
-                        }
-
-                        if(numpadPanel->isGrabbing && rightHand.isValid) {
-                             glm::mat4 deltaTransform = rightControllerUnscaledTransform * glm::inverse(numpadPanel->grabbedControllerInitialTransform);
-                             numpadPanel->transform = deltaTransform * numpadPanel->grabbedInitialTransform;
+                        if (rightHand.triggerReleased && panel.isGrabbing) {
+                            panel.isGrabbing = false;
+                            
+                            glm::mat4 parentMatrix = leftControllerUnscaledTransform;
+                            
+                            if (panel.GetParent()) {
+                                parentMatrix = panel.GetParent()->transform;
+                            } else if (panel.IsPinned()) {
+                                parentMatrix = headTransformInWorldSpace;
+                            }
+                            
+                            panel.GetOffsetTransform() = glm::inverse(parentMatrix) * panel.transform;
                         }
                     }
 

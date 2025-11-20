@@ -61,6 +61,12 @@ VRPanel::VRPanel(const std::string& name, const std::string& displayName, const 
 
 }
 
+// --- NEW: SetParent Implementation ---
+void VRPanel::SetParent(VRPanel* parent) {
+    parentPanel_ = parent;
+}
+// -------------------------------------
+
 void VRPanel::AddWidget(std::unique_ptr<IVRWidget> widget) {
     widgets_.push_back(std::move(widget));
 }
@@ -102,16 +108,21 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
     float targetT = minimizeTargetState_ ? 1.0f : 0.0f;
     minimizeT_ += (targetT - minimizeT_) * ANIM_SPEED;
 
+    glm::mat4 effectiveParentTransform = parentTransform;
+    if (parentPanel_) {
+        effectiveParentTransform = parentPanel_->transform;
+    }
+
     if (isGrabbing) {
         glm::mat4 deltaTransform = interactionTransform * glm::inverse(grabbedControllerInitialTransform);
         transform = deltaTransform * grabbedInitialTransform;
-        offsetTransform_ = glm::inverse(parentTransform) * transform;
+        offsetTransform_ = glm::inverse(effectiveParentTransform) * transform;
     } else {
-        transform = parentTransform * offsetTransform_;
+        transform = effectiveParentTransform * offsetTransform_;
     }
 
     // --- Service buttons fade logic ---
-    HitResult panelHit = CheckIntersection(worldRay, parentTransform);
+    HitResult panelHit = CheckIntersection(worldRay, effectiveParentTransform);
     bool isPanelHovered = panelHit.didHit;
     
     const float SERVICE_FADE_SPEED = 0.15f;
@@ -151,7 +162,7 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
             } else { // isChangingProportions_ (Non-proportional, affects size_)
                 // -- START OF MODIFICATION --
                 // Compensate for the global world scale
-                float worldScale = glm::length(glm::vec3(parentTransform[0]));
+                float worldScale = glm::length(glm::vec3(effectiveParentTransform[0]));
                 if (worldScale < 1e-5f) worldScale = 1.0f;
 
                 // Vectors from panel center to current and start controller positions (on panel plane)
@@ -469,7 +480,8 @@ HitResult VRPanel::CheckIntersection(const Ray& worldRay, const glm::mat4& paren
     HitResult result;
     if (!isVisible_) return result;
     
-    glm::mat4 finalTransform = parentTransform * offsetTransform_;
+    glm::mat4 effectiveParentTransform = parentPanel_ ? parentPanel_->transform : parentTransform;
+    glm::mat4 finalTransform = effectiveParentTransform * offsetTransform_;
     glm::mat4 invFinalTransform = glm::inverse(finalTransform);
     Ray localRay;
     localRay.origin = invFinalTransform * glm::vec4(worldRay.origin, 1.0f);
