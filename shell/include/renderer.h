@@ -130,6 +130,15 @@ namespace Urbaxio {
             const std::optional<UI::MaskData>& mask = std::nullopt
         );
 
+        // --- NEW: Render a simple textured quad for desktop mirror ---
+        void RenderVRTexture(
+            const glm::mat4& view, const glm::mat4& projection,
+            const glm::mat4& model,
+            GLuint textureId,
+            float alpha,
+            const std::optional<UI::MaskData>& mask = std::nullopt
+        );
+
         // --- MODIFIED: Added mask support ---
         void RenderVRPanel(
             const glm::mat4& view, const glm::mat4& projection,
@@ -288,6 +297,11 @@ namespace Urbaxio {
         GLsizei ghostMeshLineIndexCount = 0;     // <-- ДОБАВИТЬ
         GLuint sphereVAO = 0, sphereVBO = 0, sphereEBO = 0;
         GLsizei sphereIndexCount = 0;
+
+        // Unit Quad Resources for desktop mirror texture widgets
+        GLuint unitQuadVAO = 0; 
+        GLuint unitQuadVBO = 0;
+
         glm::vec3 brushPreviewPos_{0,0,0};
         float brushPreviewRadius_ = 1.0f;
         glm::vec3 brushPreviewColor_{0.2f, 0.8f, 1.0f};
@@ -341,6 +355,7 @@ namespace Urbaxio {
         bool CreateGhostMeshResources(); // <-- NEW
         bool CreatePanelOutlineResources(); // <-- NEW
         bool CreateBubbleResources();
+        bool CreateUnitQuadResources(); // Dedicated resource for texture widgets
         void Cleanup();
         void DrawSnapMarker(const SnapResult& snap, const glm::mat4& view, const glm::mat4& proj, int viewportWidth, int viewportHeight);
         

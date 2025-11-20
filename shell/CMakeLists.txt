@@ -21,6 +21,7 @@ set(SHELL_SOURCES
     src/VRManager.cpp
     src/Voxelizer.cpp
     src/LoadingManager.cpp
+    src/DesktopCapture.cpp
     # Add tool source files
     src/tools/ToolManager.cpp
     src/tools/SelectTool.cpp
@@ -41,6 +42,7 @@ set(SHELL_SOURCES
     src/ui/VRScrollWidget.cpp
     src/ui/VRSliderWidget.cpp
     src/ui/VRToggleWidget.cpp
+    src/ui/VRTextureWidget.cpp
     # Add ImGui backend implementation files directly to the compilation
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_sdl2.cpp"
     "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_opengl3.cpp"
@@ -90,6 +92,7 @@ target_link_libraries(Urbaxio PRIVATE
     OpenXR::openxr_loader
     Eigen3::Eigen
     igl::igl_core
+    dwmapi          # For DwmGetWindowAttribute
 )
 
 # Link GPU library directly if available (CUDA static libs need explicit linking)

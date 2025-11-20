@@ -688,5 +688,32 @@ void VRPanel::OnSizeChanged() {
     }
 }
 
+void VRPanel::SetSize(const glm::vec2& newSize) {
+    if (glm::distance(size_, newSize) < 0.001f) return;
+    
+    size_ = newSize;
+    
+    // Recalculate handle positions based on new size
+    const float handleDiameter = 0.02f;
+    const float handleSpacing = 0.025f;
+
+    // We assume horizontal layout for maximized state by default or based on previous logic
+    // Re-running the constructor logic essentially:
+    
+    glm::vec3 closePos    = { size_.x * 0.5f - handleDiameter * 0.5f, size_.y * 0.5f - handleDiameter * 0.5f, 0.01f };
+    glm::vec3 minimizePos = closePos - glm::vec3(handleSpacing, 0, 0);
+    glm::vec3 pinPos      = minimizePos - glm::vec3(handleSpacing, 0, 0);
+    glm::vec3 grabPos     = pinPos - glm::vec3(handleSpacing, 0, 0);
+    glm::vec3 resizePos   = { size_.x * 0.5f - handleDiameter * 0.5f, -size_.y * 0.5f + handleDiameter * 0.5f, 0.01f };
+
+    closeHandle_->SetLocalPosition(closePos);
+    minimizeHandle_->SetLocalPosition(minimizePos);
+    pinHandle_->SetLocalPosition(pinPos);
+    grabHandle_->SetLocalPosition(grabPos);
+    resizeHandle_->SetLocalPosition(resizePos);
+
+    OnSizeChanged(); // Updates children and scroll widgets
+}
+
 }
 

@@ -480,7 +480,7 @@ namespace Urbaxio {
             "uniform float u_globalAlpha;\n"
             "uniform vec3 u_aberrationColor1;\n"
             "uniform vec3 u_aberrationColor2;\n"
-            "uniform int u_shapeType; // 0 for circle, 1 for rounded rect\n"
+            "uniform int u_shapeType; // 0=Circle, 1=RoundedRect(Solid), 2=TextureRect(NoClip)\n"
             "uniform float u_rectCornerRadius;\n"
             "uniform vec2 u_rectSize;\n"
             "uniform float u_panelAspectRatio;\n"
@@ -507,6 +507,22 @@ namespace Urbaxio {
             "        float maskAlpha = 1.0 - smoothstep(-0.01, 0.0, dist);\n"
             "        baseFinalAlpha *= maskAlpha;\n"
             "        if (baseFinalAlpha < 0.01) discard;\n"
+            "    }\n"
+            "    \n"
+            "    // --- TYPE 2: Simple Textured Quad (Desktop Mirror) ---\n"
+            "    if (u_shapeType == 2) {\n"
+            "        if (u_useTexture) {\n"
+            "            // vUv is [-0.5, 0.5].\n"
+            "            // Standard mapping: vUv + 0.5 => [0, 1].\n"
+            "            // GDI captures Top-Down, OpenGL is Bottom-Up.\n"
+            "            // To flip Y: 1.0 - (vUv.y + 0.5)  =>  0.5 - vUv.y\n"
+            "            vec2 flippedUV = vec2(vUv.x + 0.5, 0.5 - vUv.y);\n"
+            "            vec4 texColor = texture(u_texture, flippedUV);\n"
+            "            FragColor = vec4(texColor.rgb, 1.0) * baseFinalAlpha;\n"
+            "        } else {\n"
+            "            FragColor = vec4(u_baseColor, baseFinalAlpha);\n"
+            "        }\n"
+            "        return;\n"
             "    }\n"
             "    \n"
             "    if (u_shapeType == 1) { // Rounded Rect (Panel Background OR Display)\n"
@@ -615,7 +631,7 @@ namespace Urbaxio {
         "}\n";
     // -- END OF MODIFICATION --
     Renderer::~Renderer() { Cleanup(); }
-    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateMultiviewShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreatePreviewBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateSplatResources()) return false; if (!CreateGhostMeshResources()) return false; if (!CreatePanelOutlineResources()) return false; if (!CreateBubbleResources()) return false; glGenFramebuffers(1, &blitFBO_); glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
+    bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateMultiviewShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreatePreviewBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateSplatResources()) return false; if (!CreateUnitQuadResources()) return false; if (!CreateGhostMeshResources()) return false; if (!CreatePanelOutlineResources()) return false; if (!CreateBubbleResources()) return false; glGenFramebuffers(1, &blitFBO_); glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
     void Renderer::SetViewport(int x, int y, int width, int height) { if (width > 0 && height > 0) { glViewport(x, y, width, height); } }
     
     // --- NEW: Method to invalidate the static batch, forcing a re-compile ---
@@ -1565,7 +1581,60 @@ namespace Urbaxio {
         std::cout << "Renderer: Axes VAO/VBO created." << std::endl;
         return axesVAO != 0 && axesVBO != 0;
     }
-    bool Renderer::CreateSplatResources() { /* ... same ... */ std::vector<float> quadVertices = GenerateQuadVertices(2.0f); unsigned int quadIndices[] = { 0, 1, 2, 0, 2, 3 }; glGenVertexArrays(1, &splatVAO); glGenBuffers(1, &splatVBO); glGenBuffers(1, &splatEBO); glBindVertexArray(splatVAO); glBindBuffer(GL_ARRAY_BUFFER, splatVBO); glBufferData(GL_ARRAY_BUFFER, quadVertices.size() * sizeof(float), quadVertices.data(), GL_STATIC_DRAW); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, splatEBO); glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(quadIndices), quadIndices, GL_STATIC_DRAW); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0); glEnableVertexAttribArray(0); glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1); glBindVertexArray(0); std::cout << "Renderer: Splat VAO/VBO/EBO created." << std::endl; return splatVAO != 0 && splatVBO != 0 && splatEBO != 0; }
+    // --- REVERT THIS FUNCTION TO ORIGINAL STATE (2.0f) ---
+    bool Renderer::CreateSplatResources() { 
+        std::vector<float> quadVertices = GenerateQuadVertices(2.0f); 
+        unsigned int quadIndices[] = { 0, 1, 2, 0, 2, 3 }; 
+        glGenVertexArrays(1, &splatVAO); 
+        glGenBuffers(1, &splatVBO); 
+        glGenBuffers(1, &splatEBO); 
+        glBindVertexArray(splatVAO); 
+        glBindBuffer(GL_ARRAY_BUFFER, splatVBO); 
+        glBufferData(GL_ARRAY_BUFFER, quadVertices.size() * sizeof(float), quadVertices.data(), GL_STATIC_DRAW); 
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, splatEBO); 
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(quadIndices), quadIndices, GL_STATIC_DRAW); 
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0); 
+        glEnableVertexAttribArray(0); 
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float))); 
+        glEnableVertexAttribArray(1); 
+        glBindVertexArray(0); 
+        std::cout << "Renderer: Splat VAO/VBO/EBO created." << std::endl; 
+        return splatVAO != 0 && splatVBO != 0 && splatEBO != 0; 
+    }
+
+    // --- NEW FUNCTION: Dedicated Unit Quad for Textures ---
+    bool Renderer::CreateUnitQuadResources() {
+        // Size 1.0 creates a quad from -0.5 to 0.5. 
+        // This perfectly matches the shader logic: vUv + 0.5 => [0, 1]
+        std::vector<float> quadVertices = GenerateQuadVertices(1.0f); 
+        
+        // Reuse the indices logic
+        unsigned int quadIndices[] = { 0, 1, 2, 0, 2, 3 }; 
+        
+        glGenVertexArrays(1, &unitQuadVAO);
+        glGenBuffers(1, &unitQuadVBO);
+        // We can reuse splatEBO since indices are identical for any quad
+        
+        glBindVertexArray(unitQuadVAO);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, unitQuadVBO);
+        glBufferData(GL_ARRAY_BUFFER, quadVertices.size() * sizeof(float), quadVertices.data(), GL_STATIC_DRAW);
+        
+        // Bind existing EBO
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, splatEBO); 
+        
+        // Position
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        // UV
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        
+        glBindVertexArray(0);
+        
+        std::cout << "Renderer: Unit Quad VAO/VBO created." << std::endl;
+        return unitQuadVAO != 0 && unitQuadVBO != 0;
+    }
     bool Renderer::CreateUserLinesResources() { 
         // Static lines
         glGenVertexArrays(1, &userLinesVAO); 
@@ -1803,6 +1872,10 @@ namespace Urbaxio {
         if (ghostMeshEBO_lines != 0) { glDeleteBuffers(1, &ghostMeshEBO_lines); ghostMeshEBO_lines = 0; }
         if (panelOutlineVAO_ != 0) glDeleteVertexArrays(1, &panelOutlineVAO_); panelOutlineVAO_ = 0;
         if (panelOutlineVBO_ != 0) glDeleteBuffers(1, &panelOutlineVBO_); panelOutlineVBO_ = 0;
+        
+        if (unitQuadVAO != 0) glDeleteVertexArrays(1, &unitQuadVAO); unitQuadVAO = 0;
+        if (unitQuadVBO != 0) glDeleteBuffers(1, &unitQuadVBO); unitQuadVBO = 0;
+        
         if (sphereVAO != 0) glDeleteVertexArrays(1, &sphereVAO); sphereVAO = 0;
         if (sphereVBO != 0) glDeleteBuffers(1, &sphereVBO); sphereVBO = 0;
         if (sphereEBO != 0) glDeleteBuffers(1, &sphereEBO); sphereEBO = 0;
@@ -2220,6 +2293,56 @@ namespace Urbaxio {
         glUniform3fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationColor2"), 1, glm::value_ptr(aberrationColor2));
         
         glBindVertexArray(splatVAO);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        glDepthMask(GL_TRUE);
+    }
+
+    // --- NEW: Implementation for RenderVRTexture ---
+    void Renderer::RenderVRTexture(
+        const glm::mat4& view, const glm::mat4& projection,
+        const glm::mat4& model,
+        GLuint textureId,
+        float alpha,
+        const std::optional<UI::MaskData>& mask
+    ) {
+        // Use unitQuadVAO instead of splatVAO to ensure UVs match the shader math for textured quads
+        if (vrMenuWidgetShaderProgram == 0 || unitQuadVAO == 0 || textureId == 0) return;
+
+        glDepthMask(GL_FALSE);
+        glEnable(GL_BLEND);
+        // Use standard blending because GDI textures might not have premultiplied alpha or correct alpha
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        glUseProgram(vrMenuWidgetShaderProgram);
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+        
+        if (mask.has_value()) {
+            glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_enableMask"), 1);
+            glUniformMatrix4fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_maskTransform"), 1, GL_FALSE, glm::value_ptr(mask->transform));
+            glUniform2fv(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_maskSize"), 1, glm::value_ptr(mask->size));
+            glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_maskCornerRadius"), mask->cornerRadius);
+        } else {
+            glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_enableMask"), 0);
+        }
+
+        // Bind Texture
+        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_useTexture"), 1);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, textureId);
+        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_texture"), 0);
+
+        // Shape Type 2 = Simple Textured Quad (Fix for empty panel)
+        glUniform1i(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_shapeType"), 2); 
+        
+        // Base color white (multiplicative identity)
+        glUniform3f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_baseColor"), 1.0f, 1.0f, 1.0f);
+        glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_globalAlpha"), alpha);
+        glUniform1f(glGetUniformLocation(vrMenuWidgetShaderProgram, "u_aberrationAmount"), 0.0f);
+
+        // --- USE NEW VAO HERE ---
+        glBindVertexArray(unitQuadVAO);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
         glDepthMask(GL_TRUE);
     }

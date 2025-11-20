@@ -67,6 +67,10 @@ public:
     
     void OnSizeChanged();
     
+    // --- NEW: Set panel size explicitly ---
+    void SetSize(const glm::vec2& newSize);
+    // --------------------------------------
+    
     glm::mat4 transform;
     float alpha = 0.0f;
 

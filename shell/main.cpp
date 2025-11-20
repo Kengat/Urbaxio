@@ -90,6 +90,8 @@ extern "C" {
 #include "ui/VRScrollWidget.h"
 #include "ui/VRSliderWidget.h"
 #include "ui/VRToggleWidget.h"
+#include "ui/VRTextureWidget.h"
+#include "DesktopCapture.h"
 // --- VR menu interaction helpers ---
 #include <glm/gtx/intersect.hpp>
 
@@ -1284,6 +1286,29 @@ namespace { // Anonymous namespace for helpers
         fileMenu.RecalculateLayout();
     }
 
+    // --- NEW: Setup Desktop Panel ---
+    Urbaxio::UI::VRTextureWidget* SetupDesktopPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
+        // Place it in front of user
+        glm::vec3 translation(0.0f, 0.0f, -0.5f); 
+        glm::mat4 offset = glm::translate(glm::mat4(1.0f), translation);
+        
+        // Initial size 800x600 ratio
+        glm::vec2 panelSize(0.4f, 0.3f); 
+        
+        auto& panel = vruiManager.AddPanel("DesktopPanel", "Desktop Mirror", panelSize, offset, 0.01f, dragIcon, pinIcon, closeIcon, minimizeIcon);
+        
+        // Hidden by default, shown when file dialog opens
+        panel.SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
+        panel.SetVisible(false);
+        
+        // Add texture widget filling the panel
+        auto texWidget = std::make_unique<Urbaxio::UI::VRTextureWidget>(glm::vec3(0,0,0.01f), panelSize);
+        auto* ptr = texWidget.get();
+        panel.AddWidget(std::move(texWidget));
+        
+        return ptr;
+    }
+
     // --- START OF MODIFICATION ---
     unsigned int LoadTextureFromFile(const std::string& path, GLint wrapMode = GL_REPEAT) {
         int width, height, channels;
@@ -1540,6 +1565,7 @@ int main(int argc, char* argv[]) {
 
     // --- NEW: VR UI Manager ---
     Urbaxio::UI::VRUIManager vruiManager;
+    Urbaxio::DesktopCapture desktopCapture;
     std::string g_newNumpadInput = "0";
 
     std::atomic<bool> isFileDialogActive = false;
@@ -1581,6 +1607,10 @@ int main(int argc, char* argv[]) {
     SetupSculptToolsPanel(vruiManager, toolManager, toolContext, dragIconTexture, pinIconTexture, sculptIconTexture, sculptDrawIconTexture, sculptPinchIconTexture, sculptSmoothIconTexture, voxelizationIconTexture, closeIconTexture, minimizeIconTexture);
     SetupPanelManagerPanel(vruiManager, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture, backIconTexture);
     SetupFileMenuPanel(vruiManager, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture, window, isFileDialogActive, fileDialogResultReady, filePathFromDialog, filePathMutex, isImportDialog);
+    
+    // --- NEW: Setup Desktop Panel ---
+    Urbaxio::UI::VRTextureWidget* desktopWidget = SetupDesktopPanel(vruiManager, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
+    // ----------------------------------
     
     if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
         panelMgr->SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
@@ -1775,6 +1805,66 @@ int main(int argc, char* argv[]) {
             
             inputHandler.droppedFilePath.clear(); // Clear the path to prevent re-triggering
         }
+
+        // --- NEW: Update Desktop Capture ---
+        // Only update if file dialog is expected to be active
+        if (isFileDialogActive.load()) {
+            SDL_SysWMinfo wmInfo;
+            SDL_VERSION(&wmInfo.version);
+            SDL_GetWindowWMInfo(window, &wmInfo);
+            
+#if defined(_WIN32)
+            desktopCapture.Update(wmInfo.info.win.window);
+#endif
+            
+            if (auto* desktopPanel = vruiManager.GetPanel("DesktopPanel")) {
+                if (desktopCapture.IsCapturing()) {
+                    // Show panel if hidden
+                    if (!desktopPanel->IsVisible()) {
+                        desktopPanel->SetVisible(true);
+                        // Optional: Bring to front / reset position
+                        std::cout << "[Main] Showing Desktop Panel" << std::endl;
+                    }
+                    
+                    // Update texture on widget
+                    if (desktopWidget) {
+                        desktopWidget->SetTexture(desktopCapture.GetTextureID());
+                        
+                        // Aspect ratio logic
+                        float aspect = desktopCapture.GetAspectRatio();
+                        if (aspect < 0.1f) aspect = 1.0f; // Safety check
+                        
+                        float panelWidth = 0.6f; // Fixed width 60cm
+                        float panelHeight = panelWidth / aspect;
+                        
+                        glm::vec2 newSize(panelWidth, panelHeight);
+                        
+                        // Only resize if changed significantly to avoid jitter
+                        if (glm::distance(desktopWidget->GetSize(), newSize) > 0.001f) {
+                             // std::cout << "[Main] Resizing Desktop Widget and Panel to " << newSize.x << "x" << newSize.y << std::endl;
+                             
+                             // 1. Update Widget Size
+                             desktopWidget->SetSize(newSize);
+                             
+                             // 2. Update Panel Size to match Widget exactly
+                             // (Add a tiny margin if you want borders, or 0 for full fill)
+                             desktopPanel->SetSize(newSize + glm::vec2(0.02f)); // 1cm border padding
+                        }
+                    }
+                } else {
+                     if (desktopPanel->IsVisible()) {
+                         desktopPanel->SetVisible(false);
+                         std::cout << "[Main] Hiding Desktop Panel (Capture lost)" << std::endl;
+                     }
+                }
+            }
+        } else {
+            // Ensure panel is hidden if logic says no dialog
+            if (auto* desktopPanel = vruiManager.GetPanel("DesktopPanel")) {
+                if (desktopPanel->IsVisible()) desktopPanel->SetVisible(false);
+            }
+        }
+        // -----------------------------------
 
         // --- NEW: Asynchronous Texture Loading ---
         if (scene_ptr && scene_ptr->getMaterialManager()) {
