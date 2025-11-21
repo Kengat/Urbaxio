@@ -2,6 +2,7 @@
 
 #include "ui/IVRWidget.h"
 #include <functional>
+#include <string>
 #include <glm/glm.hpp>
 
 namespace Urbaxio {
@@ -48,6 +49,8 @@ public:
 
     void SetDepthStrength(float forwardFactorScale, float disparityScale);
 
+    void SetLabel(const std::string& text, bool alwaysVisible, float verticalOffset = 0.0f, float horizontalOffset = 0.0f);
+
 private:
     glm::vec3 localPosition_;
     float diameter_;
@@ -64,6 +67,11 @@ private:
 
     float forwardFactorScale_ = 1.0f;
     float disparityScale_ = 1.0f;
+
+    std::string labelText_;
+    bool labelAlwaysVisible_ = false;
+    float labelVerticalOffset_ = 0.0f;
+    float labelHorizontalOffset_ = 0.0f;
 
 };
 

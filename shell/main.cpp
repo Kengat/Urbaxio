@@ -125,6 +125,10 @@ extern "C" {
 #include <BRepBuilderAPI_Transform.hxx>
 
 namespace { // Anonymous namespace for helpers
+    int g_importUnitIndex = 0;
+    float g_customImportScale = 1.0f;
+    std::string g_pendingImportPathVR;
+    
     // --- START OF MODIFICATION: Replace the entire VRPanelRowWidget class with this ---
     class VRPanelRowWidget : public Urbaxio::UI::IVRWidget {
     public:
@@ -1314,6 +1318,136 @@ namespace { // Anonymous namespace for helpers
         return ptr;
     }
 
+    void SetupImportOptionsPanel(Urbaxio::UI::VRUIManager& vruiManager, 
+                                 unsigned int dragIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon, 
+                                 unsigned int metersIcon, unsigned int centimetersIcon, unsigned int millimetersIcon, 
+                                 unsigned int disapproveIcon, unsigned int approveIcon,
+                                 Urbaxio::LoadingManager& loadingManager) {
+        // Standard values for ImportOptions panel
+        glm::vec3 translation(0.007f, -0.200f, 0.060f);
+        glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-2.403f, 1.742f, 0.143f));
+        glm::vec3 scale(0.732f, 0.732f, 0.732f);
+
+        glm::mat4 offset = glm::translate(glm::mat4(1.0f), translation) *
+                           glm::mat4_cast(glm::quat(eulerAnglesRad)) *
+                           glm::scale(glm::mat4(1.0f), scale);
+
+        glm::vec2 size(0.471f, 0.156f);
+
+        auto& panel = vruiManager.AddPanel("ImportOptions", "Import Settings", size, offset, 0.02f, dragIcon, pinIcon, closeIcon, minimizeIcon);
+
+        // --- FIX: Hide from Panel Manager list ---
+        panel.showInPanelManager = false;
+        // -----------------------------------------
+
+        // --- Set Parent ---
+        if (auto* desktopPanel = vruiManager.GetPanel("DesktopPanel")) {
+            panel.SetParent(desktopPanel);
+        }
+        // ------------------
+
+        panel.SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
+        panel.SetVisible(false);
+
+        // --- NEW LAYOUT CONSTANTS ---
+        float yTopRow = 0.035f;
+        float yBotRow = -0.035f;
+
+        // Row-specific offsets
+        float topRowXOffset = 0.03f; // Shift top row right
+        float botRowXOffset = -0.05f; // Shift bottom row left
+
+        // Unit Button Spacing
+        float unitSpacing = 0.14f;
+        float unitBtnDiameter = 0.035f;
+        float textOffsetX = 0.07f; // Label offset from button center
+
+        // --- ROW 1: Header & Actions ---
+
+        // 1. Header Text (Aligned above the first unit button)
+        // X position matches the 'Meters' button X, but in top row, shifted right
+        float headerTextXOffset = 0.03f; // Additional right offset for header text
+        glm::vec3 headerPos(-unitSpacing + botRowXOffset + topRowXOffset + headerTextXOffset, yTopRow, 0.01f);
+        auto headerWidget = std::make_unique<Urbaxio::UI::VRButtonWidget>("Scale Units:", headerPos, glm::vec2(0.2f, 0.04f), [](){});
+        panel.AddWidget(std::move(headerWidget));
+
+        // Action Buttons (Right side)
+        float btnActionDiameter = 0.05f;
+        float actionSpacing = 0.08f;
+        // Align Action Group to the right side
+        float actionGroupCenterX = 0.12f + topRowXOffset;
+
+        // 2. Cancel (Red) - Left of action group
+        auto btnCancel = std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
+            glm::vec3(actionGroupCenterX - actionSpacing/2.0f, yTopRow, 0.01f),
+            btnActionDiameter,
+            disapproveIcon,
+            [&vruiManager](){
+                g_pendingImportPathVR.clear();
+                if (auto* p = vruiManager.GetPanel("ImportOptions")) p->SetVisible(false);
+                if (auto* d = vruiManager.GetPanel("DesktopPanel")) d->SetVisible(false);
+            },
+            glm::vec3(1.0f, 0.2f, 0.2f)
+        );
+        btnCancel->SetLabel("Cancel", false); // Hover only
+        panel.AddWidget(std::move(btnCancel));
+
+        // 3. Import (Green) - Right of action group
+        const glm::vec3 numpadGreen(0.1f, 0.8f, 0.2f);
+        auto btnImport = std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
+            glm::vec3(actionGroupCenterX + actionSpacing/2.0f, yTopRow, 0.01f),
+            btnActionDiameter,
+            approveIcon,
+            [&loadingManager, &vruiManager](){
+                if (!g_pendingImportPathVR.empty()) {
+                    loadingManager.RequestLoadObj(g_pendingImportPathVR, g_customImportScale);
+                    g_pendingImportPathVR.clear();
+                }
+                if (auto* p = vruiManager.GetPanel("ImportOptions")) p->SetVisible(false);
+                if (auto* d = vruiManager.GetPanel("DesktopPanel")) d->SetVisible(false);
+            },
+            numpadGreen
+        );
+        btnImport->SetLabel("Import", false); // Hover only
+        panel.AddWidget(std::move(btnImport));
+
+        // --- ROW 2: Unit Buttons ---
+        const glm::vec3 blueColor(0.3f, 0.75f, 1.0f);
+
+        // 4. Meters (Left)
+        auto btnM = std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
+            glm::vec3(-unitSpacing + botRowXOffset, yBotRow, 0.01f),
+            unitBtnDiameter,
+            metersIcon,
+            [](){ g_importUnitIndex = 0; g_customImportScale = 1.0f; },
+            blueColor
+        );
+        btnM->SetLabel("in Meters", true, 0.0f, textOffsetX);
+        panel.AddWidget(std::move(btnM));
+
+        // 5. Centimeters (Center)
+        auto btnCM = std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
+            glm::vec3(0.0f + botRowXOffset, yBotRow, 0.01f),
+            unitBtnDiameter,
+            centimetersIcon,
+            [](){ g_importUnitIndex = 1; g_customImportScale = 0.01f; },
+            blueColor
+        );
+        btnCM->SetLabel("in Centimeters", true, 0.0f, textOffsetX);
+        panel.AddWidget(std::move(btnCM));
+
+        // 6. Millimeters (Right)
+        auto btnMM = std::make_unique<Urbaxio::UI::VRConfirmButtonWidget>(
+            glm::vec3(unitSpacing + botRowXOffset, yBotRow, 0.01f),
+            unitBtnDiameter,
+            millimetersIcon,
+            [](){ g_importUnitIndex = 2; g_customImportScale = 0.001f; },
+            blueColor
+        );
+        btnMM->SetLabel("in Millimeters", true, 0.0f, textOffsetX);
+        panel.AddWidget(std::move(btnMM));
+    }
+
     // --- START OF MODIFICATION ---
     unsigned int LoadTextureFromFile(const std::string& path, GLint wrapMode = GL_REPEAT) {
         int width, height, channels;
@@ -1609,6 +1743,14 @@ int main(int argc, char* argv[]) {
     unsigned int panelManagerIconTexture = load_icon("panel_manager.png");
     unsigned int backIconTexture = load_icon("back.png");
 
+    // --- NEW: Import Options Panel Icons ---
+    unsigned int metersIconTexture = load_icon("meters.png");
+    unsigned int centimetersIconTexture = load_icon("centimeters.png");
+    unsigned int millimetersIconTexture = load_icon("millimeters.png");
+    unsigned int disapproveIconTexture = load_icon("disapprove.png");
+    unsigned int approveIconTexture = load_icon("approve.png");
+    // ---------------------------------------
+
     // --- NEW: Setup our VR panels using the new system ---
     SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
     SetupStandardToolsPanel(vruiManager, toolManager, dragIconTexture, pinIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture, paintBucketIconTexture, closeIconTexture, minimizeIconTexture);
@@ -1621,6 +1763,10 @@ int main(int argc, char* argv[]) {
     if (desktopWidget) {
         desktopWidget->SetDesktopCapture(&desktopCapture);
     }
+    SetupImportOptionsPanel(vruiManager, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture, 
+                            metersIconTexture, centimetersIconTexture, millimetersIconTexture, 
+                            disapproveIconTexture, approveIconTexture, 
+                            loadingManager);
     // ----------------------------------
     
     if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
@@ -1724,6 +1870,31 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        if (auto* importPanel = vruiManager.GetPanel("ImportOptions")) {
+            if (importPanel->IsVisible()) {
+                // Colors: Active = Orange, Inactive = Blue
+                // Indices changed:
+                // 0 = Header
+                // 1 = Cancel
+                // 2 = Import
+                // 3 = Meters
+                // 4 = CM
+                // 5 = MM
+                const glm::vec3 blueColor(0.3f, 0.75f, 1.0f);
+                const glm::vec3 orangeColor(1.0f, 0.79f, 0.4f);
+
+                auto applyColor = [&](size_t index, bool active) {
+                    if (auto* widget = dynamic_cast<Urbaxio::UI::VRConfirmButtonWidget*>(importPanel->GetWidget(index))) {
+                        widget->SetColor(active ? orangeColor : blueColor);
+                    }
+                };
+                // --- FIX: Update indices based on add order ---
+                applyColor(3, g_importUnitIndex == 0);
+                applyColor(4, g_importUnitIndex == 1);
+                applyColor(5, g_importUnitIndex == 2);
+            }
+        }
+
         if (fileDialogResultReady.load()) {
             std::string path;
             bool isImport = isImportDialog;
@@ -1737,11 +1908,44 @@ int main(int argc, char* argv[]) {
                 if (isImport) {
                     std::filesystem::path filePath(path);
                     if (filePath.extension() == ".obj") {
-                        g_fileToImportPath = path;
-                        g_showImportOptionsPopup = true;
+                        if (vr_mode) {
+                            g_pendingImportPathVR = path;
+                            g_importUnitIndex = 0;
+                            g_customImportScale = 1.0f;
+
+                            if (auto* importPanel = vruiManager.GetPanel("ImportOptions")) {
+                                importPanel->SetVisible(true);
+                                // ResetPosition() not needed for child panel - it's anchored to parent
+                            }
+                            if (auto* desktopPanel = vruiManager.GetPanel("DesktopPanel")) {
+                                desktopPanel->SetVisible(true);
+                            }
+                        } else {
+                            g_fileToImportPath = path;
+                            g_showImportOptionsPopup = true;
+                        }
                     }
                 } else {
                     Urbaxio::FileIO::ExportSceneToObj(path, *scene_ptr);
+                    if (vr_mode) {
+                        g_pendingImportPathVR.clear();
+                        if (auto* importPanel = vruiManager.GetPanel("ImportOptions")) {
+                            importPanel->SetVisible(false);
+                        }
+                        if (auto* desktopPanel = vruiManager.GetPanel("DesktopPanel")) {
+                            desktopPanel->SetVisible(false);
+                        }
+                    }
+                }
+            } else {
+                if (vr_mode) {
+                    g_pendingImportPathVR.clear();
+                    if (auto* importPanel = vruiManager.GetPanel("ImportOptions")) {
+                        importPanel->SetVisible(false);
+                    }
+                    if (auto* desktopPanel = vruiManager.GetPanel("DesktopPanel")) {
+                        desktopPanel->SetVisible(false);
+                    }
                 }
             }
         }
@@ -1818,7 +2022,7 @@ int main(int argc, char* argv[]) {
         }
 
         // --- NEW: Update Desktop Capture ---
-        // Only update if file dialog is expected to be active
+        bool shouldDisplayDesktopPanel = isFileDialogActive.load() || !g_pendingImportPathVR.empty() || fileDialogResultReady.load();
         if (isFileDialogActive.load()) {
             SDL_SysWMinfo wmInfo;
             SDL_VERSION(&wmInfo.version);
@@ -1863,16 +2067,19 @@ int main(int argc, char* argv[]) {
                         }
                     }
                 } else {
-                     if (desktopPanel->IsVisible()) {
-                         desktopPanel->SetVisible(false);
-                         std::cout << "[Main] Hiding Desktop Panel (Capture lost)" << std::endl;
-                     }
+                    if (!shouldDisplayDesktopPanel && desktopPanel->IsVisible()) {
+                        desktopPanel->SetVisible(false);
+                        std::cout << "[Main] Hiding Desktop Panel (Capture lost)" << std::endl;
+                    }
                 }
             }
-        } else {
-            // Ensure panel is hidden if logic says no dialog
+        } else if (!shouldDisplayDesktopPanel) {
             if (auto* desktopPanel = vruiManager.GetPanel("DesktopPanel")) {
                 if (desktopPanel->IsVisible()) desktopPanel->SetVisible(false);
+            }
+        } else {
+            if (auto* desktopPanel = vruiManager.GetPanel("DesktopPanel")) {
+                if (!desktopPanel->IsVisible()) desktopPanel->SetVisible(true);
             }
         }
         // -----------------------------------

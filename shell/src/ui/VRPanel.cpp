@@ -151,7 +151,7 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
             glm::vec3 scale, translation, skew;
             glm::quat orientation;
             glm::vec4 perspective;
-            (void)glm::decompose(offsetTransform_, scale, orientation, translation, skew, perspective);
+            [[maybe_unused]] bool decomposedResize = glm::decompose(offsetTransform_, scale, orientation, translation, skew, perspective);
 
             if (isResizing_) {
                 // --- UNIFORM SCALE (proportional) ---
@@ -284,7 +284,7 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
             lastControllerPosOnPlane_ = resizeStartControllerPos_;
 
             // Store initial scale
-            (void)glm::decompose(offsetTransform_, resizeStartScale_, glm::quat(), glm::vec3(), glm::vec3(), glm::vec4());
+            [[maybe_unused]] bool decomposedStart = glm::decompose(offsetTransform_, resizeStartScale_, glm::quat(), glm::vec3(), glm::vec3(), glm::vec4());
 
             // Non-proportional resize now requires BOTH trigger and A-button to be held
             if (aButtonHeld) {

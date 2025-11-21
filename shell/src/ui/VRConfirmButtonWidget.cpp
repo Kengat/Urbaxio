@@ -1,6 +1,7 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "ui/VRConfirmButtonWidget.h"
 #include "renderer.h"
+#include "TextRenderer.h"
 #include <glm/gtx/intersect.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/norm.hpp>
@@ -25,10 +26,13 @@ void VRConfirmButtonWidget::SetFadesWhenNotHovered(bool fades) {
 
 }
 
-void VRConfirmButtonWidget::SetColor(const glm::vec3& newColor) {
+void VRConfirmButtonWidget::SetColor(const glm::vec3& newColor) { color_ = newColor; }
 
-    color_ = newColor;
-
+void VRConfirmButtonWidget::SetLabel(const std::string& text, bool alwaysVisible, float verticalOffset, float horizontalOffset) {
+    labelText_ = text;
+    labelAlwaysVisible_ = alwaysVisible;
+    labelVerticalOffset_ = verticalOffset;
+    labelHorizontalOffset_ = horizontalOffset;
 }
 
 void VRConfirmButtonWidget::Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) {
@@ -63,7 +67,7 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
     }
     // END OF MODIFICATION
 
-    if (finalAlpha < 0.01f) {
+    if (finalAlpha < 0.01f && labelText_.empty()) {
         return;
     }
     
@@ -125,9 +129,11 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
     }
     // --- КОНЕЦ ИЗМЕНЕНИЯ ---
     
-    renderer.RenderVRMenuWidget(view, projection, modelMatrix, color_, aberration, finalAlpha, abColor1, abColor2);
+    if (finalAlpha > 0.01f) {
+        renderer.RenderVRMenuWidget(view, projection, modelMatrix, color_, aberration, finalAlpha, abColor1, abColor2);
+    }
 
-    if (textureId_ != 0) {
+    if (textureId_ != 0 && finalAlpha > 0.01f) {
         // -- START OF MODIFICATION --
 
         const float ICON_FORWARD_FACTOR_CONCAVE = 0.12f;  // Reduced concave forward offset
@@ -180,6 +186,24 @@ void VRConfirmButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRen
         // -- END OF MODIFICATION --
 
         renderer.RenderVRMenuWidget(view, projection, iconModelMatrix, glm::vec3(1.0f), 0.0f, finalAlpha, glm::vec3(0.0f), glm::vec3(0.0f), textureId_);
+    }
+
+    if (!labelText_.empty()) {
+        float textAlpha = alpha;
+        if (!labelAlwaysVisible_) {
+            textAlpha *= hoverAlpha_;
+        }
+
+        if (textAlpha > 0.01f) {
+            textRenderer.SetPanelModelMatrix(panelTransform);
+            glm::vec3 textPos = localPosition_;
+            textPos.z += 0.005f; // Reduced from 0.02f to push text back closer to panel surface
+            textPos.y += labelVerticalOffset_;
+            textPos.x += labelHorizontalOffset_;
+            float textHeight = diameter_ * 0.6f;
+            glm::vec4 textColor(1.0f, 1.0f, 1.0f, textAlpha);
+            textRenderer.AddTextOnPanel(labelText_, textPos, textColor, textHeight, Urbaxio::TextAlign::CENTER, mask);
+        }
     }
 }
 

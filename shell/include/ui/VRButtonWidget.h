@@ -25,11 +25,15 @@ public:
     const glm::vec3& GetLocalPosition() const override;
     glm::vec2 GetSize() const override;
 
+    void SetBaseColor(const glm::vec3& color);
+    const glm::vec3& GetBaseColor() const;
+
 private:
     std::string text_;
     glm::vec3 localPosition_;
     glm::vec2 size_;
     std::function<void()> onClick_;
+    glm::vec3 baseColor_ = glm::vec3(1.0f);
 };
 
 }

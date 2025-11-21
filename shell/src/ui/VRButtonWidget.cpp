@@ -16,7 +16,8 @@ void VRButtonWidget::Update(const Ray& localRay, bool triggerPressed, bool trigg
 void VRButtonWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) const {
     textRenderer.SetPanelModelMatrix(panelTransform);
     float textHeight = size_.y;
-    glm::vec4 color = glm::vec4(1.0f, 1.0f, 1.0f, alpha * (isHovered_ ? 1.0f : 0.7f));
+    float finalAlpha = alpha * (isHovered_ ? 1.0f : 0.7f);
+    glm::vec4 color(baseColor_, finalAlpha);
     textRenderer.AddTextOnPanel(text_, localPosition_, color, textHeight, Urbaxio::TextAlign::CENTER, mask);
 }
 
@@ -45,6 +46,10 @@ void VRButtonWidget::SetLocalPosition(const glm::vec3& pos) { localPosition_ = p
 const glm::vec3& VRButtonWidget::GetLocalPosition() const { return localPosition_; }
 
 glm::vec2 VRButtonWidget::GetSize() const { return size_; }
+
+void VRButtonWidget::SetBaseColor(const glm::vec3& color) { baseColor_ = color; }
+
+const glm::vec3& VRButtonWidget::GetBaseColor() const { return baseColor_; }
 
 }
 
