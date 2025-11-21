@@ -900,6 +900,7 @@ namespace Urbaxio {
         }
 
         // --- 2. TRANSPARENT / OVERLAY PASS ---
+        glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -1074,19 +1075,6 @@ namespace Urbaxio {
 
         glLineWidth(1.0f);
 
-        // --- NEW: Draw VR Pointer Ray ---
-        if (vrPointerEnabled && vrPointerVAO != 0 && simpleLineShaderProgram != 0) {
-            glLineWidth(2.0f);
-            glUseProgram(simpleLineShaderProgram);
-            glUniformMatrix4fv(simpleLineShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
-            glUniformMatrix4fv(simpleLineShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(simpleLineShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
-            glBindVertexArray(vrPointerVAO);
-            glDrawArrays(GL_LINES, 0, 2);
-            glBindVertexArray(0);
-            glLineWidth(1.0f);
-        }
-        
         if (unlitShaderProgram != 0 && scene) {
             glUseProgram(unlitShaderProgram);
             glUniformMatrix4fv(glGetUniformLocation(unlitShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
@@ -2117,6 +2105,25 @@ namespace Urbaxio {
         glBindBuffer(GL_ARRAY_BUFFER, vrPointerVBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(lineData), lineData, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    void Renderer::DrawVRPointer(const glm::mat4& view, const glm::mat4& projection) {
+        if (!vrPointerEnabled || vrPointerVAO == 0 || simpleLineShaderProgram == 0) return;
+
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+
+        glLineWidth(2.0f);
+        glUseProgram(simpleLineShaderProgram);
+        glm::mat4 identityModel(1.0f);
+        glUniformMatrix4fv(simpleLineShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
+        glUniformMatrix4fv(simpleLineShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(simpleLineShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
+
+        glBindVertexArray(vrPointerVAO);
+        glDrawArrays(GL_LINES, 0, 2);
+        glBindVertexArray(0);
+        glLineWidth(1.0f);
     }
 
     void Renderer::UpdateAxesVBO(const glm::vec4& colorX, const glm::vec4& colorY, const glm::vec4& colorZ, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor) {

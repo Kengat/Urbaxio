@@ -102,6 +102,8 @@ extern "C" {
 // --- NEW: For File Dialogs on Windows ---
 #if defined(_WIN32)
 #include <windows.h>
+#include <ShellScalingApi.h>
+#pragma comment(lib, "Shcore.lib")
 #endif
 
 #include <limits>
@@ -1288,12 +1290,15 @@ namespace { // Anonymous namespace for helpers
 
     // --- NEW: Setup Desktop Panel ---
     Urbaxio::UI::VRTextureWidget* SetupDesktopPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
-        // Place it in front of user
-        glm::vec3 translation(0.0f, 0.0f, -0.5f); 
-        glm::mat4 offset = glm::translate(glm::mat4(1.0f), translation);
+        glm::vec3 translation(-0.205f, -0.043f, -0.207f);
+        glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-104.769f, 0.544f, -15.469f));
+        glm::vec3 scale(0.463f);
         
-        // Initial size 800x600 ratio
-        glm::vec2 panelSize(0.4f, 0.3f); 
+        glm::mat4 offset = glm::translate(glm::mat4(1.0f), translation) *
+                           glm::mat4_cast(glm::quat(eulerAnglesRad)) *
+                           glm::scale(glm::mat4(1.0f), scale);
+        
+        glm::vec2 panelSize(0.620f, 0.396f); 
         
         auto& panel = vruiManager.AddPanel("DesktopPanel", "Desktop Mirror", panelSize, offset, 0.01f, dragIcon, pinIcon, closeIcon, minimizeIcon);
         
@@ -1403,6 +1408,9 @@ bool UploadMeshToGPU(Urbaxio::Engine::SceneObject& object) {
 }
 
 int main(int argc, char* argv[]) {
+#if defined(_WIN32)
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+#endif
     std::cout << "Shell: Starting Urbaxio Application..." << std::endl;
     // --- Initialization ---
     initialize_engine(); Urbaxio::Engine::Scene* scene_ptr = reinterpret_cast<Urbaxio::Engine::Scene*>(get_engine_scene()); if (!scene_ptr) return 1; if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1; const char* glsl_version = "#version 430 core"; SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE); SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8); SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN); SDL_Window* window = SDL_CreateWindow("Urbaxio", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags); if (!window) { SDL_Quit(); return 1; } SDL_GLContext gl_context = SDL_GL_CreateContext(window); if (!gl_context) { SDL_DestroyWindow(window); SDL_Quit(); return 1; } SDL_GL_MakeCurrent(window, gl_context); SDL_GL_SetSwapInterval(1); if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) { return 1; } std::cout << "Shell: OpenGL Initialized: V:" << glGetString(GL_VERSION) << std::endl; std::cout << "Shell: OpenGL Renderer: " << glGetString(GL_RENDERER) << std::endl; std::cout << "Shell: OpenGL Vendor: " << glGetString(GL_VENDOR) << std::endl; IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; ImGui::StyleColorsDark(); if (!ImGui_ImplSDL2_InitForOpenGL(window, gl_context)) return 1; if (!ImGui_ImplOpenGL3_Init(glsl_version)) return 1;     std::cout << "Shell: All subsystems initialized." << std::endl;
@@ -1610,6 +1618,9 @@ int main(int argc, char* argv[]) {
     
     // --- NEW: Setup Desktop Panel ---
     Urbaxio::UI::VRTextureWidget* desktopWidget = SetupDesktopPanel(vruiManager, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
+    if (desktopWidget) {
+        desktopWidget->SetDesktopCapture(&desktopCapture);
+    }
     // ----------------------------------
     
     if (auto* panelMgr = vruiManager.GetPanel("PanelManager")) {
@@ -2904,6 +2915,9 @@ int main(int argc, char* argv[]) {
                     } else {
                         renderer.RenderSnapMarker(vrSnap, view, projection, swapchain.width, swapchain.height);
                     }
+                    
+                    // Draw the VR pointer before transparent UI so it writes depth first
+                    renderer.DrawVRPointer(view, projection);
                     
                     // Render UI and Text per-eye
                     // ... (The transparentQueue logic for rendering panels, buttons, etc. remains the same)

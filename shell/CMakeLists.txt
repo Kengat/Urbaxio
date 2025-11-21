@@ -93,6 +93,7 @@ target_link_libraries(Urbaxio PRIVATE
     Eigen3::Eigen
     igl::igl_core
     dwmapi          # For DwmGetWindowAttribute
+    shcore          # For SetProcessDpiAwarenessContext
 )
 
 # Link GPU library directly if available (CUDA static libs need explicit linking)

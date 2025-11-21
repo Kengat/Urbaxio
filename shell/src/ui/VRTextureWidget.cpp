@@ -1,8 +1,10 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "ui/VRTextureWidget.h"
 #include "renderer.h"
+#include "DesktopCapture.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/intersect.hpp>
+#include <algorithm>
 
 namespace Urbaxio::UI {
 
@@ -13,8 +15,36 @@ void VRTextureWidget::SetTexture(GLuint textureId) {
     textureId_ = textureId;
 }
 
+void VRTextureWidget::SetDesktopCapture(DesktopCapture* capture) {
+    desktopCapture_ = capture;
+}
+
 void VRTextureWidget::Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) {
-    // Passive widget for now
+    if (!desktopCapture_ || !isHovered_) return;
+
+    float t;
+    if (glm::intersectRayPlane(localRay.origin, localRay.direction, localPosition_, glm::vec3(0, 0, 1), t) && t > 0) {
+        glm::vec3 hitPoint = localRay.origin + localRay.direction * t;
+
+        glm::vec3 widgetLocalHit = hitPoint - localPosition_;
+
+        float halfW = size_.x * 0.5f;
+        float halfH = size_.y * 0.5f;
+
+        if (std::abs(widgetLocalHit.x) > halfW || std::abs(widgetLocalHit.y) > halfH) return;
+
+        float u = (widgetLocalHit.x + halfW) / size_.x;
+        float v = 1.0f - ((widgetLocalHit.y + halfH) / size_.y);
+
+        desktopCapture_->InjectMouseMove(std::clamp(u, 0.0f, 1.0f), std::clamp(v, 0.0f, 1.0f));
+
+        if (triggerPressed) {
+            desktopCapture_->InjectMouseButton(true);
+        }
+        if (triggerReleased) {
+            desktopCapture_->InjectMouseButton(false);
+        }
+    }
 }
 
 void VRTextureWidget::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& panelTransform, const glm::mat4& view, const glm::mat4& projection, float alpha, const std::optional<MaskData>& mask) const {

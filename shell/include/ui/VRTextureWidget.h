@@ -3,6 +3,8 @@
 #include "ui/IVRWidget.h"
 #include <glad/glad.h>
 
+namespace Urbaxio { class DesktopCapture; }
+
 namespace Urbaxio::UI {
 
 class VRTextureWidget : public IVRWidget {
@@ -10,6 +12,7 @@ public:
     VRTextureWidget(const glm::vec3& localPos, const glm::vec2& size);
 
     void SetTexture(GLuint textureId);
+    void SetDesktopCapture(DesktopCapture* capture);
 
     // Standard overrides
     void Update(const Ray& localRay, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, float stickY) override;
@@ -26,6 +29,7 @@ private:
     glm::vec3 localPosition_;
     glm::vec2 size_;
     GLuint textureId_ = 0;
+    DesktopCapture* desktopCapture_ = nullptr;
 };
 
 }

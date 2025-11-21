@@ -25,6 +25,11 @@ public:
     int GetHeight() const { return height_; }
     float GetAspectRatio() const { return (height_ > 0) ? (float)width_ / (float)height_ : 1.0f; }
 
+    // --- NEW: Input Injection ---
+    void InjectMouseMove(float u, float v);
+    void InjectMouseButton(bool down);
+    // ----------------------------
+
 private:
     void Cleanup();
     void RecreateTexture(int w, int h);
@@ -34,6 +39,11 @@ private:
     int width_ = 0;
     int height_ = 0;
     bool isCapturing_ = false;
+
+    // --- NEW: Track on-screen window position ---
+    int screenLeft_ = 0;
+    int screenTop_ = 0;
+    // --------------------------------------------
     
     // GDI resources
     void* memDC_ = nullptr;     // HDC

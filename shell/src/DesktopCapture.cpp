@@ -11,6 +11,30 @@ DesktopCapture::~DesktopCapture() {
     Cleanup();
 }
 
+// --- NEW: Input Implementation ---
+void DesktopCapture::InjectMouseMove(float u, float v) {
+#if defined(_WIN32)
+    if (!isCapturing_ || width_ <= 0 || height_ <= 0) return;
+
+    int targetX = screenLeft_ + static_cast<int>(u * width_);
+    int targetY = screenTop_ + static_cast<int>(v * height_);
+    SetCursorPos(targetX, targetY);
+#endif
+}
+
+void DesktopCapture::InjectMouseButton(bool down) {
+#if defined(_WIN32)
+    if (!isCapturing_) return;
+
+    if (down) {
+        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+    } else {
+        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+    }
+#endif
+}
+// --------------------------------
+
 void DesktopCapture::Cleanup() {
     if (textureID_ != 0) {
         glDeleteTextures(1, &textureID_);
@@ -80,6 +104,11 @@ void DesktopCapture::Update(void* ownerWindowHandle) {
     
     int w = visRect.right - visRect.left;
     int h = visRect.bottom - visRect.top;
+
+    // --- NEW: Save window screen offset for input mapping ---
+    screenLeft_ = visRect.left;
+    screenTop_ = visRect.top;
+    // -------------------------------------------------------
 
     if (w <= 0 || h <= 0) return;
 

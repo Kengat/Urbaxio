@@ -112,6 +112,7 @@ namespace Urbaxio {
         );
         void UpdatePreviewLine(const glm::vec3& start, const glm::vec3& end, bool enabled = true);
         void UpdateVRPointer(const glm::vec3& start, const glm::vec3& end, bool enabled); // <-- NEW
+        void DrawVRPointer(const glm::mat4& view, const glm::mat4& projection);
         void UpdatePushPullPreview(const Engine::SceneObject& object, const std::vector<size_t>& faceIndices, const glm::vec3& direction, float distance);
         void UpdateAxesVBO(const glm::vec4& colorX, const glm::vec4& colorY, const glm::vec4& colorZ, const glm::vec4& posFadeColor, const glm::vec4& negFadeColor);
         void RenderSelectionBox(const glm::vec2& start, const glm::vec2& end, int screenWidth, int screenHeight); // <-- NEW
