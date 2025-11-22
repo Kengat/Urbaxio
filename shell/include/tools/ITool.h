@@ -34,7 +34,11 @@ enum class ToolType {
     SculptDraw,
     SculptPinch,
     SculptSmooth,
-    VoxelizeAction // A dummy type for one-shot action buttons
+    VoxelizeAction, // A dummy type for one-shot action buttons
+    // --- NEW: File Menu Actions ---
+    ImportAction,
+    ExportAction,
+    SettingsAction
 };
 
 // Bundles common objects and state that tools need to access.

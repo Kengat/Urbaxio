@@ -782,8 +782,8 @@ namespace { // Anonymous namespace for helpers
     void SetupVRPanels(Urbaxio::UI::VRUIManager& vruiManager, std::string& numpadInputTarget, Urbaxio::Tools::ToolManager& toolManager, bool& isNumpadActiveFlag, const Urbaxio::Tools::ToolContext& toolContext, unsigned int dragIconTexture, unsigned int pinIconTexture, unsigned int closeIconTexture, unsigned int minimizeIconTexture) {
         {
             // --- Transform values from your tuning ---
-            glm::vec3 translation = glm::vec3(-0.012f, -0.063f, -0.127f);
-            glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-109.914f, 3.989f, -3.402f));
+            glm::vec3 translation = glm::vec3(-0.012f, -0.072f, -0.133f);
+            glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-107.160f, 5.000f, -3.535f));
             glm::vec3 scale = glm::vec3(0.297f, 0.297f, 0.297f);
 
             glm::mat4 offset = glm::translate(glm::mat4(1.0f), translation) *
@@ -870,44 +870,72 @@ namespace { // Anonymous namespace for helpers
         }
     }
 
-    // --- NEW: Factory function to create the tool menu panel ---
-    void SetupStandardToolsPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, unsigned int dragIconTexture, unsigned int pinIconTexture, unsigned int selectIcon, unsigned int lineIcon, unsigned int pushpullIcon, unsigned int moveIcon, unsigned int paintIcon, unsigned int closeIconTexture, unsigned int minimizeIconTexture) {
-        // --- FINAL: Default transform values from your tuning ---
-        glm::vec3 translation = glm::vec3(0.059f, -0.033f, -0.050f);
-        glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-113.214f, 3.417f, -3.030f));
-        glm::vec3 scale = glm::vec3(0.403f, 0.403f, 0.403f);
-
+    // --- NEW: "RECIPE" FOR STANDARD TOOLBARS ---
+    // Creates the Panel, ScrollWidget, and AdaptiveGrid, returning the ScrollWidget
+    // so you can just add buttons to it.
+    Urbaxio::UI::VRScrollWidget* CreateStandardToolbarContainer(
+        Urbaxio::UI::VRUIManager& vruiManager,
+        const std::string& id,
+        const std::string& title,
+        const glm::vec3& translation,
+        const glm::vec3& eulerAnglesDeg, // Degrees for easier tuning
+        const glm::vec3& scale,
+        unsigned int dragIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon
+    ) {
+        // 1. Calculate Transform
+        glm::vec3 eulerRad = glm::radians(eulerAnglesDeg);
         glm::mat4 panelOffset = glm::translate(glm::mat4(1.0f), translation) *
-                                glm::mat4_cast(glm::quat(eulerAnglesRad)) *
+                                glm::mat4_cast(glm::quat(eulerRad)) *
                                 glm::scale(glm::mat4(1.0f), scale);
-        
-        // --- CHANGED: Use the new default size ---
-        float panelWidth = 0.067f;
-        float panelHeight = 0.342f;
-        float cornerRadius = 0.04f;
 
-        auto& toolMenu = vruiManager.AddPanel("StandardTools", "Standard", glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
-        
-        // Create a scroll widget with adaptive grid (fixed button sizes)
+        // 2. Standard Constants
+        const float panelWidth = 0.067f;
+        const float panelHeight = 0.342f;
+        const float cornerRadius = 0.04f;
         const float padding = 0.01f;
         const float buttonSize = 0.06f;
-        
+
+        // 3. Create Panel
+        auto& panel = vruiManager.AddPanel(id, title, glm::vec2(panelWidth, panelHeight), panelOffset, cornerRadius, dragIcon, pinIcon, closeIcon, minimizeIcon);
+
+        // 4. Create Scroll Widget
         glm::vec2 scrollSize(panelWidth - padding, panelHeight - padding);
         auto scrollWidget = std::make_unique<Urbaxio::UI::VRScrollWidget>(glm::vec3(0, 0, 0.01f), scrollSize);
-        
-        // Use adaptive grid with FIXED button sizes
-        auto gridLayout = std::make_unique<Urbaxio::UI::AdaptiveGridLayout>(buttonSize, glm::vec2(0.005f, 0.005f));
-        
-        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Select", glm::vec3(0), glm::vec2(buttonSize), selectIcon, Urbaxio::Tools::ToolType::Select, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Select); }));
-        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Line", glm::vec3(0), glm::vec2(buttonSize), lineIcon, Urbaxio::Tools::ToolType::Line, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Line); }));
-        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Push/Pull", glm::vec3(0), glm::vec2(buttonSize), pushpullIcon, Urbaxio::Tools::ToolType::PushPull, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull); }));
-        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Move", glm::vec3(0), glm::vec2(buttonSize), moveIcon, Urbaxio::Tools::ToolType::Move, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Move); }));
-        scrollWidget->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Paint", glm::vec3(0), glm::vec2(buttonSize), paintIcon, Urbaxio::Tools::ToolType::Paint, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Paint); }));
 
+        // 5. Create Standard Grid Layout
+        auto gridLayout = std::make_unique<Urbaxio::UI::AdaptiveGridLayout>(buttonSize, glm::vec2(0.005f, 0.005f));
         scrollWidget->SetLayout(std::move(gridLayout));
-        scrollWidget->RecalculateContentLayout();
+
+        // 6. Add Scroll to Panel and return raw pointer to add buttons
+        auto* ptr = scrollWidget.get();
+        panel.AddWidget(std::move(scrollWidget));
         
-        toolMenu.AddWidget(std::move(scrollWidget));
+        return ptr;
+    }
+
+    // --- REFACTORED: Standard Tools Panel using the "Recipe" ---
+    void SetupStandardToolsPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, unsigned int dragIconTexture, unsigned int pinIconTexture, unsigned int selectIcon, unsigned int lineIcon, unsigned int pushpullIcon, unsigned int moveIcon, unsigned int paintIcon, unsigned int closeIconTexture, unsigned int minimizeIconTexture) {
+        
+        // Just define Where and What
+        auto* scroll = CreateStandardToolbarContainer(
+            vruiManager, 
+            "StandardTools", "Standard",
+            glm::vec3(0.059f, -0.033f, -0.050f),      // Translation
+            glm::vec3(-113.214f, 3.417f, -3.030f),    // Rotation (Deg)
+            glm::vec3(0.403f),                        // Scale
+            dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture
+        );
+
+        // Just add buttons
+        const float buttonSize = 0.06f; // Need this for widget constructor
+        scroll->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Select", glm::vec3(0), glm::vec2(buttonSize), selectIcon, Urbaxio::Tools::ToolType::Select, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Select); }));
+        scroll->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Line", glm::vec3(0), glm::vec2(buttonSize), lineIcon, Urbaxio::Tools::ToolType::Line, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Line); }));
+        scroll->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Push/Pull", glm::vec3(0), glm::vec2(buttonSize), pushpullIcon, Urbaxio::Tools::ToolType::PushPull, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull); }));
+        scroll->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Move", glm::vec3(0), glm::vec2(buttonSize), moveIcon, Urbaxio::Tools::ToolType::Move, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Move); }));
+        scroll->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>("Paint", glm::vec3(0), glm::vec2(buttonSize), paintIcon, Urbaxio::Tools::ToolType::Paint, toolManager, [&toolManager]() { toolManager.SetTool(Urbaxio::Tools::ToolType::Paint); }));
+
+        // Layout is already set in the helper, just recalc content
+        scroll->RecalculateContentLayout();
     }
 
     void SetupSculptToolsPanel(Urbaxio::UI::VRUIManager& vruiManager, Urbaxio::Tools::ToolManager& toolManager, const Urbaxio::Tools::ToolContext& toolContext, unsigned int dragIcon, unsigned int pinIcon, unsigned int sculptIcon, unsigned int sculptDrawIcon, unsigned int sculptPinchIcon, unsigned int sculptSmoothIcon, unsigned int voxelizationIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
@@ -1240,69 +1268,130 @@ namespace { // Anonymous namespace for helpers
         }
     }
 
-    void SetupFileMenuPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon, SDL_Window* window, std::atomic<bool>& isFileDialogActive, std::atomic<bool>& fileDialogResultReady, std::string& filePathFromDialog, std::mutex& filePathMutex, bool& isImportDialog) {
-        glm::vec3 translation = glm::vec3(-0.076f, -0.030f, -0.063f);
-        glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-114.529f, 1.170f, -11.124f));
-        glm::vec3 scale = glm::vec3(0.365f);
+    // --- REFACTORED: File Menu Panel to match Standard Toolbar look ---
+    void SetupFileMenuPanel(
+        Urbaxio::UI::VRUIManager& vruiManager, 
+        unsigned int dragIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon, 
+        unsigned int importIcon, unsigned int exportIcon, unsigned int settingsIcon,
+        SDL_Window* window, 
+        std::atomic<bool>& isFileDialogActive, 
+        std::atomic<bool>& fileDialogResultReady, 
+        std::string& filePathFromDialog, 
+        std::mutex& filePathMutex, 
+        bool& isImportDialog,
+        bool& showStyleEditor,
+        Urbaxio::Tools::ToolManager& toolManager // Added ToolManager reference
+    ) {
+        // 1. Create Standard Container
+        auto* scroll = CreateStandardToolbarContainer(
+            vruiManager,
+            "FileMenu", "File",
+            glm::vec3(-0.066f, -0.021f, -0.047f),     // NEW Translation
+            glm::vec3(-114.867f, 2.427f, -10.356f),   // NEW Rotation (Deg)
+            glm::vec3(0.403f),                        // NEW Scale
+            dragIcon, pinIcon, closeIcon, minimizeIcon
+        );
 
-        glm::mat4 panelOffset = glm::translate(glm::mat4(1.0f), translation) *
-                                glm::mat4_cast(glm::quat(eulerAnglesRad)) *
-                                glm::scale(glm::mat4(1.0f), scale);
+        const float buttonSize = 0.06f; // Standard tool button size
 
-        auto& fileMenu = vruiManager.AddPanel("FileMenu", "File", glm::vec2(0.156f, 0.293f), panelOffset, 0.04f, dragIcon, pinIcon, closeIcon, minimizeIcon);
+        // Define Colors for File Menu (Blue Theme)
+        // Inactive: Darker Blue
+        const Urbaxio::UI::ToolButtonColors fileInactiveColors = { 
+            {0.2f, 0.4f, 0.8f},   // base
+            {0.3f, 0.5f, 0.9f},   // aberration1
+            {0.1f, 0.3f, 0.7f}    // aberration2
+        };
+        // Selected/Active: Bright Cyan/Blue
+        const Urbaxio::UI::ToolButtonColors fileSelectedColors = { 
+            {0.4f, 0.7f, 1.0f},   // base
+            {0.5f, 0.8f, 1.0f},   // aberration1
+            {0.3f, 0.6f, 0.9f}    // aberration2
+        };
 
+        // 2. Add Buttons using VRToolButtonWidget
+        // NOTE: We use ToolType actions. Since they are instantaneous actions, 
+        // they won't stay "selected" in the ToolManager, which is correct for buttons.
+
+        // Import
         auto importCallback = [&, window]() {
+            // Reset tool selection to avoid sticking
+            // toolManager.SetTool(Urbaxio::Tools::ToolType::Select); 
+            
             if (isFileDialogActive.load()) return;
             isFileDialogActive = true;
             fileDialogResultReady = false;
             isImportDialog = true;
-
             std::thread([&, window]() {
                 std::string path = OpenObjDialog(window);
-                {
-                    std::lock_guard<std::mutex> lock(filePathMutex);
-                    filePathFromDialog = path;
-                }
-                fileDialogResultReady = true;
-                isFileDialogActive = false;
+                { std::lock_guard<std::mutex> lock(filePathMutex); filePathFromDialog = path; }
+                fileDialogResultReady = true; isFileDialogActive = false;
             }).detach();
         };
+        
+        scroll->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>(
+            "Import", 
+            glm::vec3(0), glm::vec2(buttonSize), 
+            importIcon, 
+            Urbaxio::Tools::ToolType::ImportAction, // Dummy type
+            toolManager, 
+            importCallback,
+            fileSelectedColors, fileInactiveColors
+        ));
 
+        // Export
         auto exportCallback = [&, window]() {
             if (isFileDialogActive.load()) return;
             isFileDialogActive = true;
             fileDialogResultReady = false;
             isImportDialog = false;
-
             std::thread([&, window]() {
                 std::string path = SaveObjDialog(window);
-                {
-                    std::lock_guard<std::mutex> lock(filePathMutex);
-                    filePathFromDialog = path;
-                }
-                fileDialogResultReady = true;
-                isFileDialogActive = false;
+                { std::lock_guard<std::mutex> lock(filePathMutex); filePathFromDialog = path; }
+                fileDialogResultReady = true; isFileDialogActive = false;
             }).detach();
         };
 
-        fileMenu.AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>("Import...", glm::vec3(0), glm::vec2(0.18f, 0.04f), importCallback));
-        fileMenu.AddWidget(std::make_unique<Urbaxio::UI::VRButtonWidget>("Export...", glm::vec3(0), glm::vec2(0.18f, 0.04f), exportCallback));
+        scroll->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>(
+            "Export", 
+            glm::vec3(0), glm::vec2(buttonSize), 
+            exportIcon, 
+            Urbaxio::Tools::ToolType::ExportAction, 
+            toolManager, 
+            exportCallback,
+            fileSelectedColors, fileInactiveColors
+        ));
 
-        fileMenu.SetLayout(std::make_unique<Urbaxio::UI::VerticalLayout>(0.01f));
-        fileMenu.RecalculateLayout();
+        // Settings
+        auto settingsCallback = [&showStyleEditor]() {
+            showStyleEditor = !showStyleEditor;
+            std::cout << "VR UI: Toggled Appearance Settings on Desktop." << std::endl;
+        };
+
+        scroll->AddWidget(std::make_unique<Urbaxio::UI::VRToolButtonWidget>(
+            "Settings", 
+            glm::vec3(0), glm::vec2(buttonSize), 
+            settingsIcon, 
+            Urbaxio::Tools::ToolType::SettingsAction, 
+            toolManager, 
+            settingsCallback,
+            fileSelectedColors, fileInactiveColors
+        ));
+
+        // 3. Finalize Layout
+        scroll->RecalculateContentLayout();
     }
 
     // --- NEW: Setup Desktop Panel ---
     Urbaxio::UI::VRTextureWidget* SetupDesktopPanel(Urbaxio::UI::VRUIManager& vruiManager, unsigned int dragIcon, unsigned int pinIcon, unsigned int closeIcon, unsigned int minimizeIcon) {
-        glm::vec3 translation(-0.205f, -0.043f, -0.207f);
-        glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-104.769f, 0.544f, -15.469f));
-        glm::vec3 scale(0.463f);
+        glm::vec3 translation(-0.208f, -0.037f, -0.196f); // NEW Translation
+        glm::vec3 eulerAnglesRad = glm::radians(glm::vec3(-106.291f, 0.841f, -17.394f)); // NEW Rotation
+        glm::vec3 scale(0.461f); // NEW Scale
         
         glm::mat4 offset = glm::translate(glm::mat4(1.0f), translation) *
                            glm::mat4_cast(glm::quat(eulerAnglesRad)) *
                            glm::scale(glm::mat4(1.0f), scale);
         
-        glm::vec2 panelSize(0.620f, 0.396f); 
+        glm::vec2 panelSize(0.620f, 0.353f); // NEW Size 
         
         auto& panel = vruiManager.AddPanel("DesktopPanel", "Desktop Mirror", panelSize, offset, 0.01f, dragIcon, pinIcon, closeIcon, minimizeIcon);
         
@@ -1751,12 +1840,24 @@ int main(int argc, char* argv[]) {
     unsigned int approveIconTexture = load_icon("approve.png");
     // ---------------------------------------
 
+    // --- NEW: File Menu Icons ---
+    unsigned int importIconTexture = load_icon("import.png");
+    unsigned int exportIconTexture = load_icon("export.png");
+    unsigned int settingsIconTexture = load_icon("settings.png");
+    // ---------------------------------------
+
     // --- NEW: Setup our VR panels using the new system ---
     SetupVRPanels(vruiManager, g_newNumpadInput, toolManager, numpadInputActive, toolContext, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
     SetupStandardToolsPanel(vruiManager, toolManager, dragIconTexture, pinIconTexture, selectIconTexture, lineIconTexture, pushpullIconTexture, moveIconTexture, paintBucketIconTexture, closeIconTexture, minimizeIconTexture);
     SetupSculptToolsPanel(vruiManager, toolManager, toolContext, dragIconTexture, pinIconTexture, sculptIconTexture, sculptDrawIconTexture, sculptPinchIconTexture, sculptSmoothIconTexture, voxelizationIconTexture, closeIconTexture, minimizeIconTexture);
     SetupPanelManagerPanel(vruiManager, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture, backIconTexture);
-    SetupFileMenuPanel(vruiManager, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture, window, isFileDialogActive, fileDialogResultReady, filePathFromDialog, filePathMutex, isImportDialog);
+    // --- MODIFIED: Pass toolManager to SetupFileMenuPanel ---
+    SetupFileMenuPanel(vruiManager, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture, 
+                       importIconTexture, exportIconTexture, settingsIconTexture, 
+                       window, isFileDialogActive, fileDialogResultReady, filePathFromDialog, filePathMutex, isImportDialog,
+                       show_style_editor,
+                       toolManager); // <-- Added toolManager
+    // --------------------------------------------------------
     
     // --- NEW: Setup Desktop Panel ---
     Urbaxio::UI::VRTextureWidget* desktopWidget = SetupDesktopPanel(vruiManager, dragIconTexture, pinIconTexture, closeIconTexture, minimizeIconTexture);
