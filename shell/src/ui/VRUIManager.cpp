@@ -84,7 +84,8 @@ void VRUIManager::Update(const Ray& worldRay, const glm::mat4& leftControllerTra
 
     for (VRPanel* panelPtr : sortedPanels) {
         VRPanel& panel = *panelPtr;
-        if (panel.IsVisible()) {
+        // --- FIX: Only interact if panel is visible AND opaque enough (>20%) ---
+        if (panel.IsVisible() && panel.alpha > 0.2f) {
             glm::mat4 parentTransform = panel.GetParent() ? panel.GetParent()->transform : leftControllerTransform;
             HitResult hit = panel.CheckIntersection(worldRay, parentTransform);
             if (hit.didHit && hit.distance < closestHitDist) {
@@ -134,7 +135,8 @@ const std::map<std::string, VRPanel>& VRUIManager::GetPanels() const {
 
 bool VRUIManager::IsRayBlockedByPanel(const Ray& worldRay, const glm::mat4& parentTransform) const {
     for (const auto& [name, panel] : panels_) {
-        if (panel.alpha > 0.01f && panel.IsVisible()) {
+        // --- FIX: Allow ray to pass through if panel is mostly transparent (< 20%) ---
+        if (panel.IsVisible() && panel.alpha > 0.2f) {
             glm::mat4 effectiveParent;
             if (panel.GetParent()) {
                 effectiveParent = panel.GetParent()->transform;
@@ -176,7 +178,8 @@ void VRUIManager::UpdateWithHeadTransform(const Ray& worldRay, const glm::mat4& 
 
     for (VRPanel* panelPtr : sortedPanels) {
         VRPanel& panel = *panelPtr;
-        if (panel.IsVisible()) {
+        // --- FIX: Only interact if panel is visible AND opaque enough (>20%) ---
+        if (panel.IsVisible() && panel.alpha > 0.2f) {
             glm::mat4 parentTransform;
             if (panel.GetParent()) {
                 parentTransform = panel.GetParent()->transform;

@@ -156,6 +156,10 @@ void VrDrawTool::InitializePersistentResources() {
     s_sharedHashGrid->ExtractMesh(0.0f, &dummy_v, &dummy_n, &dummy_c, nullptr);
     cudaDeviceSynchronize();
     
+    // --- FIX: Clear the dummy pre-warm data so it doesn't appear in the scene ---
+    s_sharedHashGrid->Reset();
+    // ---------------------------------------------------------------------------
+    
     s_resourcesReady = true;
     std::cout << "[VrDrawTool] ✅ Persistent resources ready (~450 MB)" << std::endl;
 }

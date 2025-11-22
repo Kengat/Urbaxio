@@ -146,8 +146,8 @@ void PaintTool::updateHover(const glm::vec3& rayOrigin, const glm::vec3& rayDire
     size_t currentHoveredTriangleIdx = 0;
     float closestHitDist = std::numeric_limits<float>::max();
     for (Urbaxio::Engine::SceneObject* obj_ptr : context.scene->get_all_objects()) {
-        const auto& name = obj_ptr->get_name();
-        if (obj_ptr && obj_ptr->hasMesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m" && name != "LeftControllerVisual" && name != "RightControllerVisual") {
+        // --- FIX: Ignore non-exportable objects ---
+        if (obj_ptr && obj_ptr->hasMesh() && obj_ptr->isExportable()) {
             const auto& mesh = obj_ptr->getMeshBuffers();
             for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                 glm::vec3 v0(mesh.vertices[mesh.indices[i]*3], mesh.vertices[mesh.indices[i]*3+1], mesh.vertices[mesh.indices[i]*3+2]);

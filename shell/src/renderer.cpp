@@ -629,6 +629,19 @@ namespace Urbaxio {
         "    vBaseColor = aBaseColorAlpha;\n"
         "    gl_Position = projection[gl_ViewID_OVR] * view[gl_ViewID_OVR] * vec4(vWorldPos, 1.0);\n"
         "}\n";
+    const char* unlitMultiviewVertexShaderSource =
+        "#version 430 core\n"
+        "#extension GL_OVR_multiview2 : require\n"
+        "layout(num_views = 2) in;\n"
+        "layout (location = 0) in vec3 aPos;\n"
+        "uniform mat4 model;\n"
+        "uniform mat4 view[2];\n"
+        "uniform mat4 projection[2];\n"
+        "out vec3 vWorldPos;\n"
+        "void main() {\n"
+        "    vWorldPos = vec3(model * vec4(aPos, 1.0));\n"
+        "    gl_Position = projection[gl_ViewID_OVR] * view[gl_ViewID_OVR] * vec4(vWorldPos, 1.0);\n"
+        "}\n";
     // -- END OF MODIFICATION --
     Renderer::~Renderer() { Cleanup(); }
     bool Renderer::Initialize() { std::cout << "Renderer: Initializing..." << std::endl; GLfloat range[2] = { 1.0f, 1.0f }; glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range); maxLineWidth = std::max(1.0f, range[1]); std::cout << "Renderer: Supported ALIASED Line Width Range: [" << range[0] << ", " << maxLineWidth << "]" << std::endl; if (!CreateShaderPrograms()) return false; if (!CreateMultiviewShaderPrograms()) return false; if (!CreateGridResources()) return false; if (!CreateAxesResources()) return false; if (!CreateUserLinesResources()) return false; if (!CreateMarkerResources()) return false; if (!CreatePreviewResources()) return false; if (!CreatePreviewLineResources()) return false; if (!CreatePreviewOutlineResources()) return false; if (!CreateSelectionBoxResources()) return false; if (!CreatePreviewBoxResources()) return false; if (!CreateVRPointerResources()) return false; if (!CreateSplatResources()) return false; if (!CreateUnitQuadResources()) return false; if (!CreateGhostMeshResources()) return false; if (!CreatePanelOutlineResources()) return false; if (!CreateBubbleResources()) return false; glGenFramebuffers(1, &blitFBO_); glEnable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX); std::cout << "Renderer: Initialization successful." << std::endl; return true; }
@@ -1373,6 +1386,72 @@ namespace Urbaxio {
             }
         }
         
+        // --- NEW: Draw Markers (Unlit Multiview) ---
+        if (unlitMultiviewShaderProgram != 0 && scene) {
+            glUseProgram(unlitMultiviewShaderProgram);
+            glUniformMatrix4fv(unlitMultiviewShaderLocs.view, 2, GL_FALSE, glm::value_ptr(viewMatrices[0]));
+            glUniformMatrix4fv(unlitMultiviewShaderLocs.projection, 2, GL_FALSE, glm::value_ptr(projMatrices[0]));
+            glUniform3fv(unlitMultiviewShaderLocs.cursorWorldPos, 1, glm::value_ptr(cursorWorldPos));
+            glUniform1f(unlitMultiviewShaderLocs.cursorRadius, cursorRadius);
+            glUniform1f(unlitMultiviewShaderLocs.intensity, intensity);
+            Urbaxio::Engine::SceneObject* center_marker = nullptr, *capsule_marker_10m_template = nullptr, *capsule_marker_5m_template = nullptr;
+            for(auto* obj : scene->get_all_objects()){ if(obj) { const auto& name = obj->get_name(); if(name == "CenterMarker") center_marker = obj; else if (name == "UnitCapsuleMarker10m") capsule_marker_10m_template = obj; else if (name == "UnitCapsuleMarker5m") capsule_marker_5m_template = obj; } }
+
+            if (center_marker && center_marker->vao != 0) {
+                 float scale = (distanceToCamera / referenceDistance) * 0.7f;
+                 glUniform1f(unlitMultiviewShaderLocs.fadeStart, 0.0); 
+                 glUniform1f(unlitMultiviewShaderLocs.fadeEnd, 0.0);
+                 glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+                 glUniformMatrix4fv(unlitMultiviewShaderLocs.model, 1, GL_FALSE, glm::value_ptr(modelMatrix));
+                 glUniform3f(unlitMultiviewShaderLocs.baseColor, 1.0f, 1.0f, 1.0f);
+                 glUniform3f(unlitMultiviewShaderLocs.fadeColor, 1.0f, 1.0f, 1.0f);
+                 glBindVertexArray(center_marker->vao);
+                 glDrawElements(GL_TRIANGLES, center_marker->index_count, GL_UNSIGNED_INT, 0);
+            }
+
+            if (showAxes && capsule_marker_10m_template && capsule_marker_10m_template->vao != 0 && capsule_marker_5m_template && capsule_marker_5m_template->vao != 0) {
+                const float markerBaseScale = 0.15f, maxMarkerDist = 100, maxMarkerWorldSize = 0.5f;
+                const float baseFadeStart = 0.5f, baseFadeEnd = 4.0f;
+                glUniform1f(unlitMultiviewShaderLocs.fadeStart, baseFadeStart * distanceScale);
+                glUniform1f(unlitMultiviewShaderLocs.fadeEnd, baseFadeEnd * distanceScale);
+                
+                // Fade color matches positive axis fade color
+                glUniform3fv(unlitMultiviewShaderLocs.fadeColor, 1, glm::value_ptr(glm::vec3(positiveAxisFadeColor)));
+                
+                struct AxisInfo { glm::vec3 dir; glm::vec4 color; }; 
+                std::vector<AxisInfo> axes_info = { {glm::vec3(1,0,0), axisColorX}, {glm::vec3(0,1,0), axisColorY}, {glm::vec3(0,0,1), axisColorZ} };
+                
+                for(const auto& axis : axes_info) {
+                    glUniform3fv(unlitMultiviewShaderLocs.baseColor, 1, glm::value_ptr(glm::vec3(axis.color)));
+                    for(int i = 5; i <= maxMarkerDist; i += 5) {
+                        glm::vec3 position = axis.dir * (float)i; 
+                        float distToMarker = glm::length(viewPos - position);
+                        float scale = (distToMarker / referenceDistance) * markerBaseScale;
+                        if (scale > maxMarkerWorldSize) scale = maxMarkerWorldSize;
+                        
+                        glm::mat4 translationMatrix = glm::translate(glm::mat4(1.0f), position);
+                        Urbaxio::Engine::SceneObject* current_marker_template = (i % 10 == 0) ? capsule_marker_10m_template : capsule_marker_5m_template;
+                        
+                        glm::quat rotation; 
+                        if (glm::abs(axis.dir.z) > 0.99) { 
+                            rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(1,0,0)); 
+                            rotation = glm::angleAxis(glm::radians(45.0f), glm::vec3(0,0,1)) * rotation; 
+                        } else { 
+                            rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(1,0,0)); 
+                            rotation = glm::angleAxis(glm::atan(axis.dir.y, axis.dir.x), glm::vec3(0,0,1)) * rotation; 
+                        }
+                        
+                        glm::mat4 modelMatrix = translationMatrix * glm::mat4_cast(rotation) * glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+                        glUniformMatrix4fv(unlitMultiviewShaderLocs.model, 1, GL_FALSE, glm::value_ptr(modelMatrix));
+                        
+                        glBindVertexArray(current_marker_template->vao);
+                        glDrawElements(GL_TRIANGLES, current_marker_template->index_count, GL_UNSIGNED_INT, 0);
+                    }
+                }
+            }
+            glBindVertexArray(0);
+        }
+        
         // --- TRANSPARENT / OVERLAY PASS (Multiview) ---
         glDepthMask(GL_FALSE);
         glEnable(GL_BLEND);
@@ -1501,6 +1580,24 @@ namespace Urbaxio {
             axisMultiviewShaderLocs.positiveFadeColor = glGetUniformLocation(axisMultiviewShaderProgram, "u_positiveFadeColor");
             axisMultiviewShaderLocs.negativeAxisFadeColor = glGetUniformLocation(axisMultiviewShaderProgram, "u_negativeAxisFadeColor");
             std::cout << "Renderer: Axis MULTIVIEW shader program created." << std::endl;
+        }
+        // Unlit Multiview Shader (for markers)
+        {
+            GLuint vs = CompileShader(GL_VERTEX_SHADER, unlitMultiviewVertexShaderSource);
+            GLuint fs = CompileShader(GL_FRAGMENT_SHADER, unlitFragmentShaderSource);
+            if (vs != 0 && fs != 0) unlitMultiviewShaderProgram = LinkShaderProgram(vs, fs);
+            if (unlitMultiviewShaderProgram == 0) return false;
+            unlitMultiviewShaderLocs.model = glGetUniformLocation(unlitMultiviewShaderProgram, "model");
+            unlitMultiviewShaderLocs.view = glGetUniformLocation(unlitMultiviewShaderProgram, "view");
+            unlitMultiviewShaderLocs.projection = glGetUniformLocation(unlitMultiviewShaderProgram, "projection");
+            unlitMultiviewShaderLocs.baseColor = glGetUniformLocation(unlitMultiviewShaderProgram, "u_baseColor");
+            unlitMultiviewShaderLocs.fadeColor = glGetUniformLocation(unlitMultiviewShaderProgram, "u_fadeColor");
+            unlitMultiviewShaderLocs.cursorWorldPos = glGetUniformLocation(unlitMultiviewShaderProgram, "u_cursorWorldPos");
+            unlitMultiviewShaderLocs.cursorRadius = glGetUniformLocation(unlitMultiviewShaderProgram, "u_cursorRadius");
+            unlitMultiviewShaderLocs.intensity = glGetUniformLocation(unlitMultiviewShaderProgram, "u_intensity");
+            unlitMultiviewShaderLocs.fadeStart = glGetUniformLocation(unlitMultiviewShaderProgram, "u_fadeStart");
+            unlitMultiviewShaderLocs.fadeEnd = glGetUniformLocation(unlitMultiviewShaderProgram, "u_fadeEnd");
+            std::cout << "Renderer: Unlit MULTIVIEW shader program created." << std::endl;
         }
         return true;
     }
@@ -1665,14 +1762,12 @@ namespace Urbaxio {
             }
         }
         
-        // Ignore lines from controller visuals
+        // Ignore lines from ALL non-exportable objects (controllers, markers, cursors)
         if (scene) {
             for (auto* obj : scene->get_all_objects()) {
-                if (obj) {
-                    const auto& obj_name = obj->get_name();
-                    if (obj_name == "LeftControllerVisual" || obj_name == "RightControllerVisual") {
-                        ignoredLineIDs.insert(obj->boundaryLineIDs.begin(), obj->boundaryLineIDs.end());
-                    }
+                // --- FIX: Check isExportable ---
+                if (obj && !obj->isExportable()) {
+                    ignoredLineIDs.insert(obj->boundaryLineIDs.begin(), obj->boundaryLineIDs.end());
                 }
             }
         }
@@ -1875,6 +1970,7 @@ namespace Urbaxio {
         if (objectMultiviewShaderProgram != 0) glDeleteProgram(objectMultiviewShaderProgram); objectMultiviewShaderProgram = 0;
         if (gridMultiviewShaderProgram != 0) glDeleteProgram(gridMultiviewShaderProgram); gridMultiviewShaderProgram = 0;
         if (axisMultiviewShaderProgram != 0) glDeleteProgram(axisMultiviewShaderProgram); axisMultiviewShaderProgram = 0;
+        if (unlitMultiviewShaderProgram != 0) glDeleteProgram(unlitMultiviewShaderProgram); unlitMultiviewShaderProgram = 0;
         // -- END OF MODIFICATION --
         if (simpleLineShaderProgram != 0) glDeleteProgram(simpleLineShaderProgram); simpleLineShaderProgram = 0;
         if (gridShaderProgram != 0) glDeleteProgram(gridShaderProgram); gridShaderProgram = 0;

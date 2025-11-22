@@ -108,6 +108,10 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
     alpha = std::min(1.0f, std::max(0.0f, alpha));
     // --- КОНЕЦ НОВОЙ ЛОГИКИ ---
 
+    // --- FIX: Disable interaction when panel is mostly transparent ---
+    bool isInteractive = (alpha > 0.2f);
+    // ---------------------------------------------------------------
+
     // --- Animation Logic ---
     float targetT = minimizeTargetState_ ? 1.0f : 0.0f;
     minimizeT_ += (targetT - minimizeT_) * ANIM_SPEED;
@@ -126,15 +130,18 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
     }
 
     // --- Service buttons fade logic ---
-    HitResult panelHit = CheckIntersection(worldRay, effectiveParentTransform);
-    bool isPanelHovered = panelHit.didHit;
+    bool isPanelHovered = false;
+    if (isInteractive) {
+        HitResult panelHit = CheckIntersection(worldRay, effectiveParentTransform);
+        isPanelHovered = panelHit.didHit;
+    }
     
     const float SERVICE_FADE_SPEED = 0.15f;
     float targetServiceAlpha = isPanelHovered ? 1.0f : 0.0f;
     serviceButtonsAlpha_ += (targetServiceAlpha - serviceButtonsAlpha_) * SERVICE_FADE_SPEED;
 
     // --- Resize/Proportion Drag Logic ---
-    if (isResizing_ || isChangingProportions_) {
+    if ((isResizing_ || isChangingProportions_) && isInteractive) {
         if (!triggerHeld) {
             isResizing_ = false;
             isChangingProportions_ = false;
@@ -218,26 +225,28 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
 
     bool clickConsumed = false;
 
-    // Always update all handles
-    HitResult grabHit = grabHandle_->CheckIntersection(localRay);
-    HitResult pinHit = pinHandle_->CheckIntersection(localRay);
-    HitResult resizeHit = resizeHandle_->CheckIntersection(localRay);
-    HitResult minimizeHit = minimizeHandle_->CheckIntersection(localRay);
-    HitResult closeHit = closeHandle_->CheckIntersection(localRay);
-    
-    grabHandle_->SetHover(grabHit.didHit);
-    pinHandle_->SetHover(pinHit.didHit);
-    resizeHandle_->SetHover(resizeHit.didHit);
-    minimizeHandle_->SetHover(minimizeHit.didHit);
-    closeHandle_->SetHover(closeHit.didHit);
-    
-    grabHandle_->Update(localRay, triggerPressed && grabHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
-    pinHandle_->Update(localRay, (triggerPressed || aButtonPressed) && pinHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
-    resizeHandle_->Update(localRay, triggerPressed && resizeHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
-    minimizeHandle_->Update(localRay, (triggerPressed || aButtonPressed) && minimizeHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
-    closeHandle_->Update(localRay, (triggerPressed || aButtonPressed) && closeHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
+    // --- FIX: Only update handles and check intersections if interactive ---
+    if (isInteractive) {
+        // Always update all handles
+        HitResult grabHit = grabHandle_->CheckIntersection(localRay);
+        HitResult pinHit = pinHandle_->CheckIntersection(localRay);
+        HitResult resizeHit = resizeHandle_->CheckIntersection(localRay);
+        HitResult minimizeHit = minimizeHandle_->CheckIntersection(localRay);
+        HitResult closeHit = closeHandle_->CheckIntersection(localRay);
+        
+        grabHandle_->SetHover(grabHit.didHit);
+        pinHandle_->SetHover(pinHit.didHit);
+        resizeHandle_->SetHover(resizeHit.didHit);
+        minimizeHandle_->SetHover(minimizeHit.didHit);
+        closeHandle_->SetHover(closeHit.didHit);
+        
+        grabHandle_->Update(localRay, triggerPressed && grabHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
+        pinHandle_->Update(localRay, (triggerPressed || aButtonPressed) && pinHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
+        resizeHandle_->Update(localRay, triggerPressed && resizeHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
+        minimizeHandle_->Update(localRay, (triggerPressed || aButtonPressed) && minimizeHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
+        closeHandle_->Update(localRay, (triggerPressed || aButtonPressed) && closeHit.didHit, triggerReleased, triggerHeld, aButtonPressed, 0.0f);
 
-    if (triggerPressed) {
+        if (triggerPressed) {
         // Handle logging first to ensure we read final size_ from previous frame's resize
         if (resizeHit.didHit && bButtonIsPressed) {
             // Log panel info to console
@@ -302,48 +311,62 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
         }
     }
 
-    // Handle simple clicks (Trigger or A button) for close/minimize
-    if ((triggerPressed || aButtonPressed) && !clickConsumed) {
-        if (minimizeHit.didHit) {
-            SetMinimized(!IsMinimized());
-            clickConsumed = true;
-        } else if (closeHit.didHit) {
-            SetVisible(false);
-            clickConsumed = true;
-        }
-    }
-    
-    // Only interact with main widgets if not minimized and no handle was clicked
-    if (!clickConsumed && minimizeT_ < 0.99f) {
-        IVRWidget* newHoveredWidget = nullptr;
-        float closestHitDist = std::numeric_limits<float>::max();
-        for (auto& widget : widgets_) {
-            // --- NEW: Skip invisible widgets ---
-            if (!widget->IsVisible()) continue;
-            // -----------------------------------
-            HitResult hit = widget->CheckIntersection(localRay);
-            if (hit.didHit && hit.distance < closestHitDist) {
-                closestHitDist = hit.distance;
-                newHoveredWidget = widget.get();
+        // Handle simple clicks (Trigger or A button) for close/minimize
+        if ((triggerPressed || aButtonPressed) && !clickConsumed) {
+            if (minimizeHit.didHit) {
+                SetMinimized(!IsMinimized());
+                clickConsumed = true;
+            } else if (closeHit.didHit) {
+                SetVisible(false);
+                clickConsumed = true;
             }
         }
         
-        if (hoveredWidget_ != newHoveredWidget) {
+        // Only interact with main widgets if not minimized and no handle was clicked
+        if (!clickConsumed && minimizeT_ < 0.99f) {
+            IVRWidget* newHoveredWidget = nullptr;
+            float closestHitDist = std::numeric_limits<float>::max();
+            for (auto& widget : widgets_) {
+                // --- NEW: Skip invisible widgets ---
+                if (!widget->IsVisible()) continue;
+                // -----------------------------------
+                HitResult hit = widget->CheckIntersection(localRay);
+                if (hit.didHit && hit.distance < closestHitDist) {
+                    closestHitDist = hit.distance;
+                    newHoveredWidget = widget.get();
+                }
+            }
+            
+            if (hoveredWidget_ != newHoveredWidget) {
+                if (hoveredWidget_) hoveredWidget_->SetHover(false);
+                hoveredWidget_ = newHoveredWidget;
+                if (hoveredWidget_) hoveredWidget_->SetHover(true);
+            }
+        } else {
             if (hoveredWidget_) hoveredWidget_->SetHover(false);
-            hoveredWidget_ = newHoveredWidget;
-            if (hoveredWidget_) hoveredWidget_->SetHover(true);
+            hoveredWidget_ = nullptr;
         }
     } else {
+        // --- FIX: If not interactive, clear all hover states to prevent stuck highlights ---
         if (hoveredWidget_) hoveredWidget_->SetHover(false);
         hoveredWidget_ = nullptr;
+        grabHandle_->SetHover(false);
+        pinHandle_->SetHover(false);
+        resizeHandle_->SetHover(false);
+        minimizeHandle_->SetHover(false);
+        closeHandle_->SetHover(false);
     }
     
     // --- START OF MODIFICATION ---
     if (minimizeT_ < 0.99f) {
         for (auto& widget : widgets_) {
             bool childIsHovered = (hoveredWidget_ == widget.get());
-            // Pass triggerPressed and aButtonPressed separately, gated by hover.
-            widget->Update(localRay, triggerPressed && childIsHovered, triggerReleased, triggerHeld, aButtonPressed && childIsHovered, stickY);
+            // --- FIX: Gate inputs by isInteractive ---
+            bool passTrigger = triggerPressed && childIsHovered && isInteractive;
+            bool passAButton = aButtonPressed && childIsHovered && isInteractive;
+            bool passTriggerHeld = triggerHeld && isInteractive;
+            
+            widget->Update(localRay, passTrigger, triggerReleased, passTriggerHeld, passAButton, stickY);
         }
     }
     // --- END OF MODIFICATION ---
@@ -489,7 +512,8 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
 
 HitResult VRPanel::CheckIntersection(const Ray& worldRay, const glm::mat4& parentTransform) const {
     HitResult result;
-    if (!isVisible_) return result;
+    // --- FIX: Ignore panel if it's not visible OR if it's too transparent (< 20% opacity) ---
+    if (!isVisible_ || alpha < 0.2f) return result;
     
     glm::mat4 effectiveParentTransform = parentPanel_ ? parentPanel_->transform : parentTransform;
     glm::mat4 finalTransform = effectiveParentTransform * offsetTransform_;

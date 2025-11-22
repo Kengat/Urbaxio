@@ -218,6 +218,11 @@ namespace Urbaxio {
             GLuint model, view, projection, cursorWorldPos, cursorRadius, intensity;
             GLuint fadeStart, fadeEnd, holeStart, holeEnd, positiveFadeColor, negativeAxisFadeColor;
         } axisMultiviewShaderLocs;
+        
+        struct UnlitMultiviewShaderLocations {
+            GLuint model, view, projection;
+            GLuint baseColor, fadeColor, cursorWorldPos, cursorRadius, intensity, fadeStart, fadeEnd;
+        } unlitMultiviewShaderLocs;
         // -- END OF MODIFICATION --
 
         struct DashedLineShaderLocations {
@@ -236,6 +241,7 @@ namespace Urbaxio {
         GLuint objectMultiviewShaderProgram = 0;
         GLuint gridMultiviewShaderProgram = 0;
         GLuint axisMultiviewShaderProgram = 0;
+        GLuint unlitMultiviewShaderProgram = 0;
         // -- END OF MODIFICATION --
         // --- OLD SHADER (renamed for clarity, used for user lines and rubber band) ---
         GLuint simpleLineShaderProgram = 0; 

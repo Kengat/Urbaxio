@@ -203,10 +203,8 @@ SnapResult SnappingSystem::FindSnapPoint(
 
     for (const auto& [dist, obj] : intersectedObjects) {
         if (dist > min_hit_distance) break;
-        if (!obj->hasMesh()) continue;
-
-        const auto& name = obj->get_name();
-        if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
+        // --- FIX: Ignore non-exportable objects (markers, controllers, cursors) ---
+        if (!obj->hasMesh() || !obj->isExportable()) continue;
 
         const auto& mesh = obj->getMeshBuffers();
         for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
@@ -242,11 +240,9 @@ SnapResult SnappingSystem::FindSnapPoint(
     std::vector<const Engine::SceneObject*> objects = scene.get_all_objects();
     std::set<uint64_t> ignoredLineIDs;
     for (const auto* obj : objects) {
-        if (obj) {
-            const auto& name = obj->get_name();
-            if (name == "LeftControllerVisual" || name == "RightControllerVisual") {
-                ignoredLineIDs.insert(obj->boundaryLineIDs.begin(), obj->boundaryLineIDs.end());
-            }
+        // --- FIX: Collect ignored lines from all non-exportable objects ---
+        if (obj && !obj->isExportable()) {
+            ignoredLineIDs.insert(obj->boundaryLineIDs.begin(), obj->boundaryLineIDs.end());
         }
     }
 
@@ -300,10 +296,8 @@ SnapResult SnappingSystem::FindSnapPoint(
 
     for (const auto* obj : objects) {
         if (processedObjects.count(obj->get_id())) {
-            if (obj && obj->hasMesh()) {
-                const auto& name = obj->get_name();
-                if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
-                
+            // --- FIX: Ignore non-exportable objects ---
+            if (obj && obj->hasMesh() && obj->isExportable()) {
                 const auto& vertices_obj = obj->getMeshBuffers().vertices;
                 for (size_t i = 0; i < vertices_obj.size(); i += 3) {
                     glm::vec3 vertexPos(vertices_obj[i], vertices_obj[i+1], vertices_obj[i+2]);
@@ -392,10 +386,8 @@ SnapResult SnappingSystem::FindSnapPointFromRay(
     
     for (const auto& [dist, obj] : intersectedObjects) {
         if (dist > min_hit_distance) break;
-        if (!obj->hasMesh()) continue;
-        
-        const auto& name = obj->get_name();
-        if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
+        // --- FIX: Ignore non-exportable objects ---
+        if (!obj->hasMesh() || !obj->isExportable()) continue;
     
         const auto& mesh = obj->getMeshBuffers();
         for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
@@ -420,11 +412,9 @@ SnapResult SnappingSystem::FindSnapPointFromRay(
     std::vector<const Engine::SceneObject*> objects = scene.get_all_objects();
     std::set<uint64_t> ignoredLineIDs;
     for (const auto* obj : objects) {
-        if (obj) {
-            const auto& name = obj->get_name();
-            if (name == "LeftControllerVisual" || name == "RightControllerVisual") {
-                ignoredLineIDs.insert(obj->boundaryLineIDs.begin(), obj->boundaryLineIDs.end());
-            }
+        // --- FIX: Ignore non-exportable objects ---
+        if (obj && !obj->isExportable()) {
+            ignoredLineIDs.insert(obj->boundaryLineIDs.begin(), obj->boundaryLineIDs.end());
         }
     }
 

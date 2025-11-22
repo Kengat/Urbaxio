@@ -215,8 +215,8 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
                 uint64_t hitObjectId = vrClickSnapResult.snappedEntityId;
                 Urbaxio::Engine::SceneObject* hitObject = context.scene->get_object_by_id(hitObjectId);
                 if (hitObject) {
-                    const auto& name = hitObject->get_name();
-                    if (name == "LeftControllerVisual" || name == "RightControllerVisual") {
+                    // --- FIX: Ignore non-exportable objects ---
+                    if (!hitObject->isExportable()) {
                         return;
                     }
                     int faceId = hitObject->getFaceIdForTriangle(vrClickSnapResult.snappedTriangleIndex);
@@ -253,9 +253,8 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
         job.screenWidth = *context.display_w;
         job.screenHeight = *context.display_h;
         for (auto* obj : context.scene->get_all_objects()) {
-            if (!obj || !obj->hasMesh()) continue;
-            const auto& name = obj->get_name();
-            if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
+            // --- FIX: Ignore non-exportable objects ---
+            if (!obj || !obj->hasMesh() || !obj->isExportable()) continue;
             job.objectData[obj->get_id()] = {
                 obj->getMeshBuffers(),
                 obj->getTriangleToFaceIDMap(),
@@ -301,8 +300,8 @@ void SelectTool::OnLeftMouseUp(int mouseX, int mouseY, bool shift, bool ctrl) {
             }
         } else {
              for (Urbaxio::Engine::SceneObject* obj_ptr : context.scene->get_all_objects()) {
-                const auto& name = obj_ptr->get_name();
-                if (obj_ptr && obj_ptr->hasMesh() && name != "CenterMarker" && name != "UnitCapsuleMarker10m" && name != "UnitCapsuleMarker5m" && name != "LeftControllerVisual" && name != "RightControllerVisual") {
+                // --- FIX: Ignore non-exportable objects ---
+                if (obj_ptr && obj_ptr->hasMesh() && obj_ptr->isExportable()) {
                     const auto& mesh = obj_ptr->getMeshBuffers();
                     for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                         glm::vec3 v0(mesh.vertices[mesh.indices[i] * 3], mesh.vertices[mesh.indices[i] * 3 + 1], mesh.vertices[mesh.indices[i] * 3 + 2]);
@@ -362,9 +361,8 @@ void SelectTool::FinalizeVrDragSelection(const glm::mat4& centerEyeViewMatrix, b
     job.shift = shift;
 
     for (auto* obj : context.scene->get_all_objects()) {
-        if (!obj || !obj->hasMesh()) continue;
-        const auto& name = obj->get_name();
-        if (name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m" || name == "LeftControllerVisual" || name == "RightControllerVisual") continue;
+        // --- FIX: Ignore non-exportable objects ---
+        if (!obj || !obj->hasMesh() || !obj->isExportable()) continue;
         
         job.objectData[obj->get_id()] = {
             obj->getMeshBuffers(),

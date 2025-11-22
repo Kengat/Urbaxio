@@ -181,8 +181,8 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
         Camera::ScreenToWorldRay(mouseX, mouseY, *context.display_w, *context.display_h, context.camera->GetViewMatrix(), context.camera->GetProjectionMatrix((float)*context.display_w / *context.display_h), rayOrigin, rayDir);
         uint64_t hitObjectId = 0; size_t hitTriangleBaseIndex = 0; float closestHitDistance = std::numeric_limits<float>::max();
         for (auto* obj : context.scene->get_all_objects()) {
-            const auto& name = obj->get_name();
-            if (!obj || !obj->hasMesh() || name == "CenterMarker" || name == "UnitCapsuleMarker10m" || name == "UnitCapsuleMarker5m") continue;
+            // --- FIX: Ignore non-exportable objects ---
+            if (!obj || !obj->hasMesh() || !obj->isExportable()) continue;
             const auto& mesh = obj->getMeshBuffers();
             for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                 unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
