@@ -2210,8 +2210,9 @@ int main(int argc, char* argv[]) {
         // --- Update Active Tool ---
         toolManager.OnUpdate(currentSnap);
 
-        // --- NEW: Sub-Panel Visibility Logic ---
-        if (vr_mode && vrManager) {
+        // --- NEW: Sub-Panel Visibility Logic (MOVED OUTSIDE VR BLOCK) ---
+        // This ensures sub-panels appear/disappear based on tool selection in both VR and Desktop modes.
+        {
             Urbaxio::Tools::ToolType activeType = toolManager.GetActiveToolType();
 
             // Draw Tool Settings Visibility
@@ -2220,15 +2221,15 @@ int main(int argc, char* argv[]) {
                 drawSettings->SetVisible(shouldShow);
             }
 
-            // --- NEW: Sculpt Tool Settings Visibility ---
+            // Sculpt Tool Settings Visibility
             if (auto* sculptSettings = vruiManager.GetPanel("SculptToolSettings")) {
                 // Show if EITHER GPU Sculpt OR CPU Sculpt is active
                 bool shouldShow = (activeType == Urbaxio::Tools::ToolType::SculptGpu || 
                                    activeType == Urbaxio::Tools::ToolType::Sculpt);
                 sculptSettings->SetVisible(shouldShow);
             }
-            // --------------------------------------------
         }
+        // --------------------------------------------
         
         // --- GPU Upload for new/modified objects ---
         if (scene_ptr) {
@@ -3461,6 +3462,170 @@ int main(int argc, char* argv[]) {
                     renderer.RenderSelectionBox(start, end, display_w, display_h);
                 }
             }
+            
+            // --- NEW: Desktop UI Overlay ---
+            // 1. Setup Orthographic Camera for UI
+            // Define a virtual canvas height of 2.0 meters (arbitrary, but matches VR scale well)
+            // Origin (0,0) is center of screen. Range Y: [-1, 1].
+            float uiHeight = 2.0f; 
+            float aspectRatio = (float)display_w / (float)display_h;
+            float uiWidth = uiHeight * aspectRatio;
+            
+            glm::mat4 uiProjection = glm::ortho(-uiWidth/2.0f, uiWidth/2.0f, -uiHeight/2.0f, uiHeight/2.0f, -10.0f, 10.0f);
+            
+            // 2. Create Mouse Ray
+            // Convert mouse pixels to virtual canvas coordinates
+            // FIX: Remove redefinition of mouseX/mouseY by reusing variables from top of frame or getting state without declaring new vars
+            uint32_t mouseState = SDL_GetMouseState(&mouseX, &mouseY);
+            
+            float mouseNormX = (float)mouseX / display_w;       // [0, 1]
+            float mouseNormY = 1.0f - (float)mouseY / display_h;// [0, 1], flip Y
+            
+            float mouseWorldX = (mouseNormX - 0.5f) * uiWidth;
+            float mouseWorldY = (mouseNormY - 0.5f) * uiHeight;
+            
+            Urbaxio::UI::Ray mouseRay;
+            mouseRay.origin = glm::vec3(mouseWorldX, mouseWorldY, 5.0f); // Start from "camera"
+            mouseRay.direction = glm::vec3(0.0f, 0.0f, -1.0f); // Shoot into screen
+            
+            bool isLeftDown = (mouseState & SDL_BUTTON(SDL_BUTTON_LEFT));
+            // We need "Clicked" (one frame) and "Held"
+            static bool wasLeftDown = false;
+            bool isLeftClicked = isLeftDown && !wasLeftDown;
+            wasLeftDown = isLeftDown;
+            
+            // Get scroll wheel (requires accumulating events or reading state from input handler)
+            // For simplicity here, we assume 0 or we'd need to hook into InputHandler more deeply.
+            // Ideally pass scroll from InputHandler. For now 0.
+            float scrollY = 0.0f; 
+            
+            // 3. Check blocking
+            bool isUiBlocked = vruiManager.IsRayBlockedByPanelDesktop(mouseRay);
+            
+            // 4. Update UI
+            // --- FIX: Pass ctrlDown for resizing logic ---
+            vruiManager.UpdateDesktop(mouseRay, isLeftClicked, isLeftDown, ctrlDown, scrollY);
+            
+            // 5. Render UI
+            // Clear depth so UI draws on top of 3D scene
+            glClear(GL_DEPTH_BUFFER_BIT);
+            
+            // --- FIX: Set fake eye position far away for Ortho UI ---
+            // This ensures buttons face "forward" (flat to screen) instead of looking at (0,0,0)
+            renderer.setCyclopsEyePosition(glm::vec3(0.0f, 0.0f, -1000.0f));
+            
+            // Set panels to visible for testing if they are hidden (e.g., File Menu)
+            // You might want logic to arrange them initially for desktop
+            static bool firstFrameDesktop = true;
+            if (firstFrameDesktop) {
+                // Scale factor to make panels readable on desktop (VR panels are tiny real-world size)
+                float desktopScale = 2.5f; 
+                
+                // Helper to reset a panel's transform completely (Zero rotation, Clean scale)
+                auto resetPanel = [&](const std::string& name, const glm::vec3& pos, float scale) {
+                    if (auto* p = vruiManager.GetPanel(name)) {
+                        p->GetOffsetTransform() = glm::translate(glm::mat4(1.0f), pos) * 
+                                                  glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+                    }
+                };
+
+                // 1. File Menu: Left side, Top
+                if (auto* filePanel = vruiManager.GetPanel("FileMenu")) {
+                    filePanel->SetVisible(true);
+                    filePanel->SetVisibilityMode(Urbaxio::UI::VisibilityMode::ALWAYS_VISIBLE);
+                    resetPanel("FileMenu", glm::vec3(-uiWidth/2.0f + 0.15f, uiHeight/2.0f - 0.5f, 0.0f), desktopScale);
+                }
+                
+                // 2. Standard Tools: Left side, Middle
+                if (auto* toolPanel = vruiManager.GetPanel("StandardTools")) {
+                    toolPanel->SetVisible(true);
+                    toolPanel->SetVisibilityMode(Urbaxio::UI::VisibilityMode::ALWAYS_VISIBLE);
+                    resetPanel("StandardTools", glm::vec3(-uiWidth/2.0f + 0.15f, uiHeight/2.0f - 1.5f, 0.0f), desktopScale);
+                }
+                
+                // 3. Sculpt Tools: Right side, Middle
+                if (auto* sculptPanel = vruiManager.GetPanel("SculptureTools")) {
+                    sculptPanel->SetVisible(true);
+                    sculptPanel->SetVisibilityMode(Urbaxio::UI::VisibilityMode::ALWAYS_VISIBLE);
+                    resetPanel("SculptureTools", glm::vec3(uiWidth/2.0f - 0.15f, uiHeight/2.0f - 1.5f, 0.0f), desktopScale);
+                }
+
+                // 4. Panel Manager: Center (Hidden by default, but needs correct transform)
+                resetPanel("PanelManager", glm::vec3(0.0f, 0.0f, 0.1f), desktopScale);
+
+                // 5. Numpad: Center (Hidden by default)
+                if (auto* numpad = vruiManager.GetPanel("NewNumpad")) {
+                    numpad->SetVisible(false);
+                }
+                resetPanel("NewNumpad", glm::vec3(0.0f, 0.0f, 0.2f), desktopScale);
+                
+                // 6. Sub-Panels (Relative to Parent)
+                // NOTE: For child panels, OffsetTransform is relative to parent.
+                // We do NOT apply desktopScale here because they inherit scale from the parent (SculptureTools).
+                // We just position them to the LEFT of the parent.
+                // 0.25f is roughly the width of a panel in local space.
+                
+                if (auto* drawSettings = vruiManager.GetPanel("DrawToolSettings")) {
+                    drawSettings->SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
+                    // Reset to identity rotation, translate left
+                    drawSettings->GetOffsetTransform() = glm::translate(glm::mat4(1.0f), glm::vec3(-0.22f, 0.0f, 0.0f)); 
+                }
+                if (auto* sculptSettings = vruiManager.GetPanel("SculptToolSettings")) {
+                    sculptSettings->SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
+                    // Reset to identity rotation, translate left
+                    sculptSettings->GetOffsetTransform() = glm::translate(glm::mat4(1.0f), glm::vec3(-0.22f, 0.0f, 0.0f)); 
+                }
+                
+                firstFrameDesktop = false;
+            }
+            
+            vruiManager.RenderDesktop(renderer, textRenderer, uiProjection);
+
+            // --- NEW: Render Panel Manager Button (Top-Left Corner) ---
+            if (menuSphereWidget) {
+                // 1. Calculate position: Top-Left with padding
+                float padding = 0.15f;
+                // Ortho top-left is (-W/2, H/2)
+                glm::vec3 buttonPos(-uiWidth/2.0f + padding, uiHeight/2.0f - padding, 0.0f);
+                
+                // --- FIX: Increased scale significantly for 2D visibility ---
+                float buttonScale = 12.0f; 
+
+                // 2. Create Model Matrix (Flat facing screen)
+                glm::mat4 buttonModel = glm::translate(glm::mat4(1.0f), buttonPos) * 
+                                        glm::scale(glm::mat4(1.0f), glm::vec3(buttonScale));
+
+                // 3. Update Widget State
+                // We need to transform the global mouse ray into the widget's local space
+                // Widget expects local ray in range roughly [-diameter/2, diameter/2]
+                glm::mat4 invButton = glm::inverse(buttonModel);
+                Urbaxio::UI::Ray localButtonRay;
+                localButtonRay.origin = glm::vec3(invButton * glm::vec4(mouseRay.origin, 1.0f));
+                localButtonRay.direction = glm::normalize(glm::vec3(invButton * glm::vec4(mouseRay.direction, 0.0f)));
+
+                Urbaxio::UI::HitResult hit = menuSphereWidget->CheckIntersection(localButtonRay);
+                menuSphereWidget->SetHover(hit.didHit);
+                
+                // Update animation/state
+                menuSphereWidget->Update(localButtonRay, isLeftClicked && hit.didHit, !isLeftDown, isLeftDown, false, 0.0f);
+
+                // Handle Click
+                if (isLeftClicked && hit.didHit) {
+                    menuSphereWidget->HandleClick();
+                }
+
+                // 4. Render
+                menuSphereWidget->Render(renderer, textRenderer, buttonModel, glm::mat4(1.0f), uiProjection, 1.0f, std::nullopt);
+            }
+            // ---------------------------------------------------------
+            
+            // Prevent 3D tool interaction if UI blocked mouse
+            if (isUiBlocked && isLeftDown) {
+                // Reset tool interaction flags or ensure InputHandler checks this
+                // For now, InputHandler runs before this, so we might have a frame of overlap.
+                // Ideally, integrate IsRayBlocked check into InputHandler.
+            }
+            // ---------------------------
         }
             
         SDL_GL_SwapWindow(window);

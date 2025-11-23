@@ -218,5 +218,44 @@ void VRUIManager::UpdateWithHeadTransform(const Ray& worldRay, const glm::mat4& 
     }
 }
 
+// --- NEW: Desktop Implementation ---
+void VRUIManager::UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHeld, bool isCtrlHeld, float scrollY) {
+    // Simple iteration, order doesn't matter much for update logic as panels track grab state independently
+    // Reverse iterator might be better for click occlusion, but CheckIntersection handles depth in Panels
+    
+    for (auto& [name, panel] : panels_) {
+        // In desktop mode, we assume panels are top-level or parented to each other, not controllers
+        panel.UpdateDesktop(mouseRay, isLeftClick, isLeftHeld, isCtrlHeld, scrollY);
+    }
+}
+
+void VRUIManager::RenderDesktop(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& orthoProjection) {
+    glm::mat4 identityView(1.0f);
+    
+    // Sort by Z position? In 2D we might want manual Z-ordering (e.g. active panel on top).
+    // For now, simple iteration. Since we clear depth buffer before UI pass, 
+    // painters algorithm (draw order) determines visibility.
+    
+    // We use the standard Render method but with Identity View and Ortho Projection.
+    for (auto& [name, panel] : panels_) {
+        panel.Render(renderer, textRenderer, identityView, orthoProjection);
+    }
+}
+
+bool VRUIManager::IsRayBlockedByPanelDesktop(const Ray& mouseRay) const {
+    glm::mat4 identity(1.0f);
+    for (const auto& [name, panel] : panels_) {
+        if (panel.IsVisible() && panel.alpha > 0.2f) {
+            // In desktop mode, parent is effectively identity
+            HitResult hit = panel.CheckIntersection(mouseRay, identity);
+            if (hit.didHit) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+// -----------------------------------
+
 }
 

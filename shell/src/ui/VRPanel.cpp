@@ -158,7 +158,8 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
             glm::vec3 scale, translation, skew;
             glm::quat orientation;
             glm::vec4 perspective;
-            [[maybe_unused]] bool decomposedResize = glm::decompose(offsetTransform_, scale, orientation, translation, skew, perspective);
+            // FIX: Cast to void to suppress C4834 warning
+            (void)glm::decompose(offsetTransform_, scale, orientation, translation, skew, perspective);
 
             if (isResizing_) {
                 // --- UNIFORM SCALE (proportional) ---
@@ -293,7 +294,8 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
             lastControllerPosOnPlane_ = resizeStartControllerPos_;
 
             // Store initial scale
-            [[maybe_unused]] bool decomposedStart = glm::decompose(offsetTransform_, resizeStartScale_, glm::quat(), glm::vec3(), glm::vec3(), glm::vec4());
+            // FIX: Cast to void to suppress C4834 warning
+            (void)glm::decompose(offsetTransform_, resizeStartScale_, glm::quat(), glm::vec3(), glm::vec3(), glm::vec4());
 
             // Non-proportional resize now requires BOTH trigger and A-button to be held
             if (aButtonHeld) {
@@ -361,6 +363,7 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
     if (minimizeT_ < 0.99f) {
         for (auto& widget : widgets_) {
             bool childIsHovered = (hoveredWidget_ == widget.get());
+
             // --- FIX: Gate inputs by isInteractive ---
             bool passTrigger = triggerPressed && childIsHovered && isInteractive;
             bool passAButton = aButtonPressed && childIsHovered && isInteractive;
@@ -371,6 +374,214 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
     }
     // --- END OF MODIFICATION ---
 }
+
+// --- NEW: Desktop Update Implementation ---
+void VRPanel::UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHeld, bool isCtrlHeld, float scrollY) {
+    // Animation logic (same as VR)
+    const float ANIM_SPEED = 0.1f;
+    float targetAlpha = isVisible_ ? 1.0f : 0.0f;
+    alpha += (targetAlpha - alpha) * ANIM_SPEED;
+    alpha = std::min(1.0f, std::max(0.0f, alpha));
+    
+    float targetT = minimizeTargetState_ ? 1.0f : 0.0f;
+    minimizeT_ += (targetT - minimizeT_) * ANIM_SPEED;
+
+    // --- FIX: Apply Parent Transform in Desktop Mode ---
+    glm::mat4 parentMat = parentPanel_ ? parentPanel_->transform : glm::mat4(1.0f);
+    transform = parentMat * offsetTransform_; 
+    // --------------------------------------------------
+
+    bool isInteractive = (alpha > 0.2f);
+
+    // --- Service buttons fade logic ---
+    bool isPanelHovered = false;
+    if (isInteractive) {
+        // Check intersection using the *current* transform (which includes parent)
+        // We pass Identity as parentTransform to CheckIntersection because 'transform' already includes it
+        HitResult panelHit = CheckIntersection(mouseRay, glm::mat4(1.0f));
+        isPanelHovered = panelHit.didHit;
+    }
+    
+    const float SERVICE_FADE_SPEED = 0.15f;
+    float targetServiceAlpha = isPanelHovered ? 1.0f : 0.0f;
+    serviceButtonsAlpha_ += (targetServiceAlpha - serviceButtonsAlpha_) * SERVICE_FADE_SPEED;
+
+    // --- Dragging (Moving) Logic ---
+    // Only allow grab if NOT resizing
+    if (isGrabbing && isInteractive && !isResizing_ && !isChangingProportions_) {
+        if (!isLeftHeld) {
+            isGrabbing = false;
+        } else {
+            glm::vec3 currentPos = mouseRay.origin;
+            glm::vec3 lastPos = lastControllerPosOnPlane_; 
+            glm::vec3 delta = currentPos - lastPos;
+            
+            // Apply translation to offsetTransform_
+            // Note: If parented, delta needs to be in parent space ideally, but for simple 2D panning
+            // applying world delta to local offset usually works if rotation is identity.
+            offsetTransform_ = glm::translate(glm::mat4(1.0f), delta) * offsetTransform_;
+            
+            // Update final transform immediately
+            transform = parentMat * offsetTransform_; 
+            
+            lastControllerPosOnPlane_ = currentPos;
+        }
+    }
+
+    // --- Resize / Proportion Logic (FIXED for Desktop) ---
+    if ((isResizing_ || isChangingProportions_) && isInteractive) {
+        if (!isLeftHeld) {
+            isResizing_ = false;
+            isChangingProportions_ = false;
+        } else {
+            // MouseRay origin is the 3D world position on the UI plane
+            glm::vec3 controllerPosOnPlane = mouseRay.origin;
+
+            // Decompose current transform
+            glm::vec3 scale, translation, skew;
+            glm::quat orientation;
+            glm::vec4 perspective;
+            (void)glm::decompose(offsetTransform_, scale, orientation, translation, skew, perspective);
+
+            if (isResizing_) {
+                // --- UNIFORM SCALE ---
+                float currentDist = glm::distance(panelCenterAtResizeStart_, controllerPosOnPlane);
+                float initialDist = glm::distance(panelCenterAtResizeStart_, resizeStartControllerPos_);
+                
+                // Avoid division by zero
+                float scaleFactor = (initialDist > 0.001f) ? (currentDist / initialDist) : 1.0f;
+                scaleFactor = glm::max(0.1f, scaleFactor); 
+                
+                glm::vec3 newScale = resizeStartScale_ * scaleFactor;
+                
+                // Apply new scale to offset transform
+                offsetTransform_ = glm::translate(glm::mat4(1.0f), translation) * glm::mat4_cast(orientation) * glm::scale(glm::mat4(1.0f), newScale);
+                
+                // Update final transform immediately for visual feedback
+                transform = parentMat * offsetTransform_;
+            
+            } else { // isChangingProportions_
+                // ... (Logic for non-uniform resize remains same as previous step) ...
+                glm::vec3 currentVec = controllerPosOnPlane - panelCenterAtResizeStart_;
+                glm::vec3 initialVec = resizeStartControllerPos_ - panelCenterAtResizeStart_;
+                
+                float currentDistX = std::abs(glm::dot(currentVec, initialPanelXDir_));
+                float currentDistY = std::abs(glm::dot(currentVec, initialPanelYDir_));
+                float initialDistX = std::abs(glm::dot(initialVec, initialPanelXDir_));
+                float initialDistY = std::abs(glm::dot(initialVec, initialPanelYDir_));
+
+                float deltaX = currentDistX - initialDistX;
+                float deltaY = currentDistY - initialDistY;
+
+                float scaleCompensatorX = (resizeStartScale_.x > 1e-5f) ? (1.0f / resizeStartScale_.x) : 1.0f;
+                float scaleCompensatorY = (resizeStartScale_.y > 1e-5f) ? (1.0f / resizeStartScale_.y) : 1.0f;
+
+                const float minSize = 0.05f;
+                float newWidth  = resizeStartSize_.x + (deltaX * 2.0f) * scaleCompensatorX;
+                float newHeight = resizeStartSize_.y + (deltaY * 2.0f) * scaleCompensatorY;
+                size_.x = glm::max(minSize, newWidth);
+                size_.y = glm::max(minSize, newHeight);
+
+                RecalculateLayout();
+                OnSizeChanged();
+                // Size changed, but transform (center) stays same, so we just update children
+            }
+        }
+    }
+
+    glm::mat4 invTransform = glm::inverse(transform);
+    Ray localRay;
+    localRay.origin = invTransform * glm::vec4(mouseRay.origin, 1.0f);
+    localRay.direction = glm::normalize(glm::vec3(invTransform * glm::vec4(mouseRay.direction, 0.0f)));
+
+    bool clickConsumed = false;
+
+    if (isInteractive) {
+        // Check handles
+        HitResult grabHit = grabHandle_->CheckIntersection(localRay);
+        HitResult minimizeHit = minimizeHandle_->CheckIntersection(localRay);
+        HitResult closeHit = closeHandle_->CheckIntersection(localRay);
+        HitResult resizeHit = resizeHandle_->CheckIntersection(localRay);
+        
+        grabHandle_->SetHover(grabHit.didHit);
+        minimizeHandle_->SetHover(minimizeHit.didHit);
+        closeHandle_->SetHover(closeHit.didHit);
+        resizeHandle_->SetHover(resizeHit.didHit);
+        
+        grabHandle_->Update(localRay, isLeftClick && grabHit.didHit, !isLeftHeld, isLeftHeld, false, 0.0f);
+        minimizeHandle_->Update(localRay, isLeftClick && minimizeHit.didHit, !isLeftHeld, isLeftHeld, false, 0.0f);
+        closeHandle_->Update(localRay, isLeftClick && closeHit.didHit, !isLeftHeld, isLeftHeld, false, 0.0f);
+        resizeHandle_->Update(localRay, isLeftClick && resizeHit.didHit, !isLeftHeld, isLeftHeld, false, 0.0f);
+
+        if (isLeftClick && !clickConsumed) {
+            if (resizeHit.didHit) {
+                clickConsumed = true;
+                // Initialize Resize State
+                // Use current world position from transform
+                panelCenterAtResizeStart_ = glm::vec3(transform[3]);
+                resizeStartControllerPos_ = mouseRay.origin;
+                lastControllerPosOnPlane_ = mouseRay.origin;
+                
+                (void)glm::decompose(offsetTransform_, resizeStartScale_, glm::quat(), glm::vec3(), glm::vec3(), glm::vec4());
+
+                if (isCtrlHeld) {
+                    isChangingProportions_ = true;
+                    isResizing_ = false;
+                    // Store WORLD axes
+                    initialPanelXDir_ = glm::normalize(glm::vec3(transform[0]));
+                    initialPanelYDir_ = glm::normalize(glm::vec3(transform[1]));
+                    resizeStartSize_ = size_;
+                } else {
+                    isResizing_ = true;
+                    isChangingProportions_ = false;
+                }
+            } else if (grabHit.didHit) {
+                isGrabbing = true;
+                lastControllerPosOnPlane_ = mouseRay.origin;
+                clickConsumed = true;
+            } else if (minimizeHit.didHit) {
+                SetMinimized(!IsMinimized());
+                clickConsumed = true;
+            } else if (closeHit.didHit) {
+                SetVisible(false);
+                clickConsumed = true;
+            }
+        }
+
+        // Main Widgets Interaction
+        if (!clickConsumed && !isGrabbing && !isResizing_ && !isChangingProportions_ && minimizeT_ < 0.99f) {
+            IVRWidget* newHoveredWidget = nullptr;
+            float closestHitDist = std::numeric_limits<float>::max();
+            
+            for (auto& widget : widgets_) {
+                if (!widget->IsVisible()) continue;
+                HitResult hit = widget->CheckIntersection(localRay);
+                if (hit.didHit && hit.distance < closestHitDist) {
+                    closestHitDist = hit.distance;
+                    newHoveredWidget = widget.get();
+                }
+            }
+            
+            if (hoveredWidget_ != newHoveredWidget) {
+                if (hoveredWidget_) hoveredWidget_->SetHover(false);
+                hoveredWidget_ = newHoveredWidget;
+                if (hoveredWidget_) hoveredWidget_->SetHover(true);
+            }
+            
+            for (auto& widget : widgets_) {
+                bool childIsHovered = (hoveredWidget_ == widget.get());
+                bool passTrigger = isLeftClick && childIsHovered;
+                bool passTriggerHeld = isLeftHeld;
+                
+                widget->Update(localRay, passTrigger, !isLeftHeld, passTriggerHeld, false, scrollY);
+            }
+        } else {
+            if (hoveredWidget_) hoveredWidget_->SetHover(false);
+            hoveredWidget_ = nullptr;
+        }
+    }
+}
+// ------------------------------
 
 void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection) const {
     if (!isVisible_ || alpha < 0.01f) return;

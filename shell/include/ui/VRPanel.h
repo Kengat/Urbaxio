@@ -44,6 +44,11 @@ public:
     void SetLayout(std::unique_ptr<ILayout> layout);
     void RecalculateLayout();
     void Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, bool aButtonHeld, bool bButtonIsPressed, float stickY, bool isLeftTriggerPressed);
+
+    // --- NEW: Desktop Update ---
+    void UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHeld, bool isCtrlHeld, float scrollY);
+    // ---------------------------
+
     void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection) const;
     HitResult CheckIntersection(const Ray& worldRay, const glm::mat4& parentTransform) const;
     bool HandleClick();
