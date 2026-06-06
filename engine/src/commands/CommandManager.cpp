@@ -14,6 +14,12 @@ void CommandManager::ExecuteCommand(std::unique_ptr<ICommand> command) {
     
     // Execute the command. The command itself is responsible for changing the model.
     command->Execute();
+
+    if (!command->ShouldStoreInHistory()) {
+        std::cout << "CommandManager: Command '" << (commandName ? commandName : "Unknown")
+                  << "' produced no model change and will not be stored in undo history." << std::endl;
+        return;
+    }
     
     // Move the executed command to the undo stack.
     undoStack_.push_back(std::move(command));

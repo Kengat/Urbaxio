@@ -12,6 +12,7 @@
 
 #include <utility>
 #include <vector>
+#include <array>
 #include <unordered_map>
 #include <unordered_set>
 #include <iostream>
@@ -19,6 +20,8 @@
 #include <cmath>
 #include <algorithm> // for std::reverse, std::remove
 #include <deque> // For GrowCoplanarRegion helper
+#include <limits>
+#include <functional>
 
 #include <glm/gtx/norm.hpp>
 #include <glm/common.hpp> // For epsilonEqual
@@ -49,6 +52,7 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -59,6 +63,7 @@
 #include <Standard_Failure.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
 #include <GProp_GProps.hxx>
 #include <BRepGProp.hxx>
 #include <TopExp.hxx>
@@ -77,6 +82,9 @@
 #include <TopTools_ListOfShape.hxx>
 #include <TopTools_ListIteratorOfListOfShape.hxx> // For GrowCoplanarRegion helper
 #include <TopTools_IndexedMapOfShape.hxx>
+#include <TopLoc_Location.hxx>
+#include <Poly_Triangulation.hxx>
+#include <Poly_Triangle.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx> 
 #include <ShapeFix_Wire.hxx>
 #include <ShapeExtend_Status.hxx>
@@ -104,6 +112,7 @@
 #include <map>
 #include <BRepCheck_Status.hxx> // <-- THE CRUCIAL INCLUDE THAT WAS MISSING
 #include <ShapeFix_Face.hxx>
+#include <ShapeFix_Shell.hxx>
 
 namespace { // Anonymous namespace for utility functions
     bool PointOnLineSegment(const glm::vec3& p, const glm::vec3& a, const glm::vec3& b) {
@@ -300,13 +309,101 @@ namespace { // Anonymous namespace for utility functions
     // --- END OF MODIFIED HELPER FUNCTION ---
 
     // --- ДОБАВЬ ЭТОТ НОВЫЙ ХЕЛПЕР ---
+    static std::vector<gp_Pnt> UniqueFaceVertices(const TopoDS_Face& face) {
+        std::vector<gp_Pnt> points;
+        for (TopExp_Explorer vertexExp(face, TopAbs_VERTEX); vertexExp.More(); vertexExp.Next()) {
+            TopoDS_Vertex vertex = TopoDS::Vertex(vertexExp.Current());
+            if (vertex.IsNull()) {
+                continue;
+            }
+
+            const gp_Pnt point = BRep_Tool::Pnt(vertex);
+            bool exists = false;
+            for (const gp_Pnt& existing : points) {
+                if (point.Distance(existing) <= Precision::Confusion()) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                points.push_back(point);
+            }
+        }
+        return points;
+    }
+
+    static bool TryFaceNormalFromVertices(const TopoDS_Face& face, gp_Vec& normal, gp_Pnt& origin) {
+        const std::vector<gp_Pnt> points = UniqueFaceVertices(face);
+        if (points.size() < 3) {
+            return false;
+        }
+
+        origin = points.front();
+        for (size_t i = 1; i + 1 < points.size(); ++i) {
+            gp_Vec candidate = gp_Vec(origin, points[i]).Crossed(gp_Vec(origin, points[i + 1]));
+            if (candidate.SquareMagnitude() > 1.0e-14) {
+                candidate.Normalize();
+                normal = candidate;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool ShouldHideInternalTriangulationEdge(const TopoDS_Edge& edge, const TopTools_ListOfShape& faces) {
+        if (edge.IsNull() || faces.Extent() != 2) {
+            return false;
+        }
+
+        TopTools_ListIteratorOfListOfShape it(faces);
+        if (!it.More()) {
+            return false;
+        }
+        const TopoDS_Face firstFace = TopoDS::Face(it.Value());
+        it.Next();
+        if (!it.More()) {
+            return false;
+        }
+        const TopoDS_Face secondFace = TopoDS::Face(it.Value());
+
+        const std::vector<gp_Pnt> firstVertices = UniqueFaceVertices(firstFace);
+        const std::vector<gp_Pnt> secondVertices = UniqueFaceVertices(secondFace);
+        if (firstVertices.size() != 3 || secondVertices.size() != 3) {
+            return false;
+        }
+
+        gp_Vec firstNormal;
+        gp_Vec secondNormal;
+        gp_Pnt firstOrigin;
+        gp_Pnt secondOrigin;
+        if (!TryFaceNormalFromVertices(firstFace, firstNormal, firstOrigin) ||
+            !TryFaceNormalFromVertices(secondFace, secondNormal, secondOrigin)) {
+            return false;
+        }
+
+        const double normalDot = std::abs(firstNormal.Dot(secondNormal));
+        if (normalDot < std::cos(2.0 * M_PI / 180.0)) {
+            return false;
+        }
+
+        const double planeDistance = std::abs(gp_Vec(firstOrigin, secondOrigin).Dot(firstNormal));
+        return planeDistance <= 1.0e-5;
+    }
+
     std::vector<std::pair<glm::vec3, glm::vec3>> ExtractEdgesFromBRepShape(const TopoDS_Shape& shape) {
         std::vector<std::pair<glm::vec3, glm::vec3>> edges;
-        TopExp_Explorer explorer(shape, TopAbs_EDGE);
-        for (; explorer.More(); explorer.Next()) {
-            const TopoDS_Edge& edge = TopoDS::Edge(explorer.Current());
+        TopTools_IndexedDataMapOfShapeListOfShape edgeFaceMap;
+        TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeFaceMap);
+
+        for (int edgeIndex = 1; edgeIndex <= edgeFaceMap.Extent(); ++edgeIndex) {
+            const TopoDS_Edge& edge = TopoDS::Edge(edgeFaceMap.FindKey(edgeIndex));
+            const TopTools_ListOfShape& faces = edgeFaceMap.FindFromIndex(edgeIndex);
+            if (ShouldHideInternalTriangulationEdge(edge, faces)) {
+                continue;
+            }
+
             TopoDS_Vertex v1, v2;
-            TopExp::Vertices(edge, v1, v2);
+            TopExp::Vertices(edge, v1, v2, Standard_True);
             if (v1.IsNull() || v2.IsNull()) continue;
             gp_Pnt p1 = BRep_Tool::Pnt(v1);
             gp_Pnt p2 = BRep_Tool::Pnt(v2);
@@ -322,11 +419,1280 @@ namespace { // Anonymous namespace for utility functions
 
 namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
 
+    static double ShapeMatchTolerance(const TopoDS_Shape& shape) {
+        double diag = 1.0;
+        double maxAbsCoord = 1.0;
+        try {
+            Bnd_Box box;
+            BRepBndLib::Add(shape, box, Standard_False);
+            if (!box.IsVoid()) {
+                Standard_Real xmin, ymin, zmin, xmax, ymax, zmax;
+                box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+                diag = std::max(1.0, std::sqrt(std::max(0.0, static_cast<double>(box.SquareExtent()))));
+                maxAbsCoord = std::max({
+                    maxAbsCoord,
+                    std::abs(static_cast<double>(xmin)),
+                    std::abs(static_cast<double>(ymin)),
+                    std::abs(static_cast<double>(zmin)),
+                    std::abs(static_cast<double>(xmax)),
+                    std::abs(static_cast<double>(ymax)),
+                    std::abs(static_cast<double>(zmax))
+                });
+            }
+        } catch (...) {
+        }
+
+        return std::max({1.0e-4, diag * 1.0e-6, maxAbsCoord * 1.0e-7});
+    }
+
+    static double FaceContainmentTolerance(const TopoDS_Face& face, const double baseTolerance) {
+        double faceTolerance = baseTolerance;
+        try {
+            faceTolerance = std::max(faceTolerance, BRep_Tool::Tolerance(face));
+        } catch (...) {
+        }
+        return std::max({faceTolerance, Precision::Confusion(), 1.0e-7});
+    }
+
+    static bool PointLiesOnFaceByUV(
+        const TopoDS_Face& face,
+        const gp_Pnt& point,
+        const double baseTolerance) {
+        if (face.IsNull()) {
+            return false;
+        }
+
+        try {
+            Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+            if (surface.IsNull()) {
+                return false;
+            }
+
+            const double classifyTolerance = FaceContainmentTolerance(face, baseTolerance);
+            const double surfaceDistanceTolerance = std::max(classifyTolerance * 50.0, 1.0e-4);
+
+            Handle(ShapeAnalysis_Surface) analysis = new ShapeAnalysis_Surface(surface);
+            gp_Pnt2d uv = analysis->ValueOfUV(point, classifyTolerance);
+            gp_Pnt projected = surface->Value(uv.X(), uv.Y());
+            if (projected.Distance(point) > surfaceDistanceTolerance) {
+                return false;
+            }
+
+            BRepClass_FaceClassifier classifier;
+            classifier.Perform(face, uv, classifyTolerance, Standard_True);
+            TopAbs_State state = classifier.State();
+            if (state == TopAbs_IN || state == TopAbs_ON) {
+                return true;
+            }
+
+            // The UV classifier is the primary path, but keep a 3D fallback for
+            // OCC edge/boundary tolerance cases where UV lands microscopically out.
+            classifier.Perform(face, point, classifyTolerance, Standard_True);
+            state = classifier.State();
+            return state == TopAbs_IN || state == TopAbs_ON;
+        } catch (const Standard_Failure&) {
+            return false;
+        }
+    }
+
+    static bool LoopLiesOnFaceByUV(
+        const TopoDS_Face& face,
+        const std::vector<glm::vec3>& loopVertices,
+        const double baseTolerance) {
+        if (face.IsNull() || loopVertices.size() < 3) {
+            return false;
+        }
+
+        for (size_t i = 0; i < loopVertices.size(); ++i) {
+            const glm::vec3& a = loopVertices[i];
+            const glm::vec3& b = loopVertices[(i + 1) % loopVertices.size()];
+            const glm::vec3 midpoint = (a + b) * 0.5f;
+
+            if (!PointLiesOnFaceByUV(face, gp_Pnt(a.x, a.y, a.z), baseTolerance) ||
+                !PointLiesOnFaceByUV(face, gp_Pnt(midpoint.x, midpoint.y, midpoint.z), baseTolerance)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    static void AddUniqueFaceCandidate(std::vector<TopoDS_Face>& candidates, const TopoDS_Face& face) {
+        if (face.IsNull()) {
+            return;
+        }
+        for (const auto& existing : candidates) {
+            if (existing.IsSame(face)) {
+                return;
+            }
+        }
+        candidates.push_back(face);
+    }
+
+    static const char* SubObjectTypeName(SubObjectType type) {
+        switch (type) {
+            case SubObjectType::VERTEX: return "VERTEX";
+            case SubObjectType::EDGE: return "EDGE";
+            case SubObjectType::FACE: return "FACE";
+            default: return "UNKNOWN";
+        }
+    }
+
+    static gp_Pnt TranslatedPoint(const gp_Pnt& p, const gp_Vec& translation) {
+        gp_Pnt moved = p;
+        moved.Translate(translation);
+        return moved;
+    }
+
+    static bool MapContainsSameShape(const TopTools_IndexedMapOfShape& map, const TopoDS_Shape& shape) {
+        return !shape.IsNull() && map.FindIndex(shape) > 0;
+    }
+
+    static gp_Pnt LocatedVertexPoint(const TopoDS_Vertex& vertex) {
+        gp_Pnt point = BRep_Tool::Pnt(vertex);
+        try {
+            TopLoc_Location location = vertex.Location();
+            if (!location.IsIdentity()) {
+                point.Transform(location.Transformation());
+            }
+        } catch (...) {
+        }
+        return point;
+    }
+
+    static bool PointMatchesAnyPosition(const gp_Pnt& point, const std::vector<glm::vec3>& positions, const double tolerance) {
+        for (const auto& pos : positions) {
+            if (point.Distance(gp_Pnt(pos.x, pos.y, pos.z)) <= tolerance) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool VertexMatchesAnyPosition(const TopoDS_Vertex& vertex, const std::vector<glm::vec3>& positions, const double tolerance) {
+        if (vertex.IsNull()) {
+            return false;
+        }
+
+        const gp_Pnt rawPoint = BRep_Tool::Pnt(vertex);
+        if (PointMatchesAnyPosition(rawPoint, positions, tolerance)) {
+            return true;
+        }
+
+        const gp_Pnt locatedPoint = LocatedVertexPoint(vertex);
+        if (!locatedPoint.IsEqual(rawPoint, Precision::Confusion()) &&
+            PointMatchesAnyPosition(locatedPoint, positions, tolerance)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    static bool IsVertexSelected(
+        const TopoDS_Vertex& vertex,
+        const TopTools_IndexedMapOfShape& selectedVertices,
+        const std::vector<glm::vec3>& selectedPositions,
+        const double tolerance) {
+        if (vertex.IsNull()) {
+            return false;
+        }
+        if (MapContainsSameShape(selectedVertices, vertex)) {
+            return true;
+        }
+        return VertexMatchesAnyPosition(vertex, selectedPositions, tolerance);
+    }
+
+    static TopTools_IndexedMapOfShape FindVerticesNearPositions(
+        const TopoDS_Shape& shape,
+        const std::vector<glm::vec3>& positions,
+        const double tolerance) {
+        TopTools_IndexedMapOfShape result;
+        if (positions.empty()) return result;
+
+        for (TopExp_Explorer vertexExp(shape, TopAbs_VERTEX); vertexExp.More(); vertexExp.Next()) {
+            TopoDS_Vertex vertex = TopoDS::Vertex(vertexExp.Current());
+            if (VertexMatchesAnyPosition(vertex, positions, tolerance)) {
+                result.Add(vertex);
+            }
+        }
+        return result;
+    }
+
+    static void AddVerticesFromMap(TopTools_IndexedMapOfShape& destination, const TopTools_IndexedMapOfShape& source) {
+        for (int i = 1; i <= source.Extent(); ++i) {
+            destination.Add(source(i));
+        }
+    }
+
+    static void AddUniquePosition(std::vector<glm::vec3>& positions, const glm::vec3& candidate, const float tolerance) {
+        const float toleranceSq = tolerance * tolerance;
+        for (const auto& existing : positions) {
+            if (glm::distance2(existing, candidate) <= toleranceSq) {
+                return;
+            }
+        }
+        positions.push_back(candidate);
+    }
+
+    static std::vector<glm::vec3> VertexPositionsOfShape(const TopoDS_Shape& shape) {
+        std::vector<glm::vec3> positions;
+        TopTools_IndexedMapOfShape uniqueVertices;
+        TopExp::MapShapes(shape, TopAbs_VERTEX, uniqueVertices);
+        positions.reserve(static_cast<size_t>(uniqueVertices.Extent()) * 2);
+
+        auto addUnique = [&positions](const gp_Pnt& p) {
+            glm::vec3 candidate(static_cast<float>(p.X()), static_cast<float>(p.Y()), static_cast<float>(p.Z()));
+            for (const auto& existing : positions) {
+                if (glm::distance2(existing, candidate) <= 1.0e-12f) {
+                    return;
+                }
+            }
+            positions.push_back(candidate);
+        };
+
+        for (int i = 1; i <= uniqueVertices.Extent(); ++i) {
+            TopoDS_Vertex vertex = TopoDS::Vertex(uniqueVertices(i));
+            const gp_Pnt rawPoint = BRep_Tool::Pnt(vertex);
+            addUnique(rawPoint);
+            const gp_Pnt locatedPoint = LocatedVertexPoint(vertex);
+            if (!locatedPoint.IsEqual(rawPoint, Precision::Confusion())) {
+                addUnique(locatedPoint);
+            }
+        }
+        return positions;
+    }
+
+    static bool FaceUsesAnySelectedVertex(
+        const TopoDS_Face& face,
+        const TopTools_IndexedMapOfShape& selectedVertices,
+        const std::vector<glm::vec3>& selectedPositions,
+        const double tolerance) {
+        for (TopExp_Explorer vertexExp(face, TopAbs_VERTEX); vertexExp.More(); vertexExp.Next()) {
+            if (IsVertexSelected(TopoDS::Vertex(vertexExp.Current()), selectedVertices, selectedPositions, tolerance)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static TopoDS_Edge BuildMovedEdge(
+        const TopoDS_Edge& edge,
+        const TopTools_IndexedMapOfShape& selectedVertices,
+        const gp_Vec& translation,
+        bool& changed) {
+        changed = false;
+
+        TopoDS_Vertex v1, v2;
+        TopExp::Vertices(edge, v1, v2, Standard_True);
+        if (v1.IsNull() || v2.IsNull()) {
+            return edge;
+        }
+
+        const bool moveV1 = MapContainsSameShape(selectedVertices, v1);
+        const bool moveV2 = MapContainsSameShape(selectedVertices, v2);
+        if (!moveV1 && !moveV2) {
+            return edge;
+        }
+
+        changed = true;
+
+        if (moveV1 && moveV2) {
+            gp_Trsf moveTransform;
+            moveTransform.SetTranslation(translation);
+            TopoDS_Shape transformed = BRepBuilderAPI_Transform(edge, moveTransform, Standard_True).Shape();
+            if (!transformed.IsNull() && transformed.ShapeType() == TopAbs_EDGE) {
+                TopoDS_Edge movedEdge = TopoDS::Edge(transformed);
+                movedEdge.Orientation(TopAbs_FORWARD);
+                return movedEdge;
+            }
+        }
+
+        gp_Pnt p1 = BRep_Tool::Pnt(v1);
+        gp_Pnt p2 = BRep_Tool::Pnt(v2);
+        if (moveV1) p1 = TranslatedPoint(p1, translation);
+        if (moveV2) p2 = TranslatedPoint(p2, translation);
+        if (p1.IsEqual(p2, Precision::Confusion())) {
+            return TopoDS_Edge();
+        }
+
+        BRepBuilderAPI_MakeEdge edgeMaker(p1, p2);
+        if (!edgeMaker.IsDone()) {
+            return TopoDS_Edge();
+        }
+
+        TopoDS_Edge movedEdge = edgeMaker.Edge();
+        movedEdge.Orientation(TopAbs_FORWARD);
+        return movedEdge;
+    }
+
+    static bool TryMakePlaneFromPoints(const std::vector<gp_Pnt>& points, const double tolerance, gp_Pln& plane) {
+        if (points.size() < 3) return false;
+
+        for (size_t i = 0; i < points.size(); ++i) {
+            for (size_t j = i + 1; j < points.size(); ++j) {
+                gp_Vec a(points[i], points[j]);
+                if (a.SquareMagnitude() <= tolerance * tolerance) continue;
+
+                for (size_t k = j + 1; k < points.size(); ++k) {
+                    gp_Vec b(points[i], points[k]);
+                    gp_Vec n = a.Crossed(b);
+                    if (n.SquareMagnitude() <= tolerance * tolerance) continue;
+
+                    try {
+                        plane = gp_Pln(points[i], gp_Dir(n));
+                    } catch (...) {
+                        return false;
+                    }
+
+                    for (const gp_Pnt& p : points) {
+                        if (plane.Distance(p) > tolerance) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    static std::vector<gp_Pnt> RemoveConsecutiveDuplicatePoints(const std::vector<gp_Pnt>& points, const double tolerance) {
+        std::vector<gp_Pnt> cleaned;
+        cleaned.reserve(points.size());
+
+        for (const gp_Pnt& point : points) {
+            if (cleaned.empty() || !point.IsEqual(cleaned.back(), tolerance)) {
+                cleaned.push_back(point);
+            }
+        }
+
+        if (cleaned.size() > 1 && cleaned.front().IsEqual(cleaned.back(), tolerance)) {
+            cleaned.pop_back();
+        }
+
+        return cleaned;
+    }
+
+    static bool BuildPolygonWireFromOrderedPoints(
+        const std::vector<gp_Pnt>& points,
+        const double tolerance,
+        TopoDS_Wire& outWire) {
+        outWire = TopoDS_Wire();
+
+        const std::vector<gp_Pnt> cleaned = RemoveConsecutiveDuplicatePoints(points, tolerance);
+        if (cleaned.size() < 3) {
+            return false;
+        }
+
+        try {
+            BRepBuilderAPI_MakeWire wireMaker;
+            for (size_t i = 0; i < cleaned.size(); ++i) {
+                const gp_Pnt& a = cleaned[i];
+                const gp_Pnt& b = cleaned[(i + 1) % cleaned.size()];
+                if (a.IsEqual(b, tolerance)) {
+                    continue;
+                }
+
+                BRepBuilderAPI_MakeEdge edgeMaker(a, b);
+                if (!edgeMaker.IsDone()) {
+                    return false;
+                }
+                wireMaker.Add(edgeMaker.Edge());
+            }
+
+            if (!wireMaker.IsDone()) {
+                return false;
+            }
+
+            TopoDS_Wire rawWire = wireMaker.Wire();
+            Handle(ShapeFix_Wire) wireFix = new ShapeFix_Wire();
+            wireFix->Load(rawWire);
+            wireFix->SetPrecision(std::max(Precision::Confusion(), tolerance));
+            wireFix->SetMaxTolerance(std::max(tolerance * 20.0, 1.0e-5));
+            wireFix->SetMinTolerance(std::max(Precision::Confusion(), tolerance * 0.1));
+            wireFix->ClosedWireMode() = Standard_True;
+            wireFix->FixReorder();
+            wireFix->FixConnected();
+            wireFix->FixClosed();
+            wireFix->Perform();
+
+            outWire = wireFix->Wire();
+            return !outWire.IsNull();
+        } catch (const Standard_Failure&) {
+            return false;
+        }
+    }
+
+    static bool BuildMovedWire(
+        const TopoDS_Wire& wire,
+        const TopoDS_Face& face,
+        const TopTools_IndexedMapOfShape& selectedVertices,
+        const std::vector<glm::vec3>& selectedPositions,
+        const gp_Vec& translation,
+        const double tolerance,
+        TopoDS_Wire& movedWire,
+        std::vector<TopoDS_Edge>& movedEdges,
+        std::vector<gp_Pnt>& orderedPoints,
+        bool& changed) {
+        changed = false;
+        movedEdges.clear();
+        orderedPoints.clear();
+
+        BRepBuilderAPI_MakeWire wireMaker;
+        for (BRepTools_WireExplorer edgeExp(wire, face); edgeExp.More(); edgeExp.Next()) {
+            TopoDS_Edge originalEdge = edgeExp.Current();
+            TopoDS_Vertex vStart, vEnd;
+            TopExp::Vertices(originalEdge, vStart, vEnd, Standard_True);
+            if (vStart.IsNull() || vEnd.IsNull()) {
+                return false;
+            }
+
+            gp_Pnt pStart = BRep_Tool::Pnt(vStart);
+            gp_Pnt pEnd = BRep_Tool::Pnt(vEnd);
+            const bool moveStart = IsVertexSelected(vStart, selectedVertices, selectedPositions, tolerance);
+            const bool moveEnd = IsVertexSelected(vEnd, selectedVertices, selectedPositions, tolerance);
+            if (moveStart) pStart = TranslatedPoint(pStart, translation);
+            if (moveEnd) pEnd = TranslatedPoint(pEnd, translation);
+            changed = changed || moveStart || moveEnd;
+
+            if (!pStart.IsEqual(pEnd, tolerance)) {
+                BRepBuilderAPI_MakeEdge edgeMaker(pStart, pEnd);
+                if (edgeMaker.IsDone()) {
+                    TopoDS_Edge movedEdge = edgeMaker.Edge();
+                    movedEdge.Orientation(TopAbs_FORWARD);
+                    wireMaker.Add(movedEdge);
+                    movedEdges.push_back(movedEdge);
+                }
+            }
+            orderedPoints.push_back(pStart);
+        }
+
+        orderedPoints = RemoveConsecutiveDuplicatePoints(orderedPoints, tolerance);
+        if (orderedPoints.size() < 3) {
+            return false;
+        }
+
+        if (!movedEdges.empty() && wireMaker.IsDone()) {
+            movedWire = wireMaker.Wire();
+            if (!movedWire.IsNull()) {
+                return true;
+            }
+        }
+
+        return BuildPolygonWireFromOrderedPoints(orderedPoints, tolerance, movedWire);
+    }
+
+    static TopoDS_Face BuildTriangleFace(const gp_Pnt& a, const gp_Pnt& b, const gp_Pnt& c, TopAbs_Orientation orientation) {
+        try {
+            if (a.IsEqual(b, Precision::Confusion()) ||
+                b.IsEqual(c, Precision::Confusion()) ||
+                c.IsEqual(a, Precision::Confusion())) {
+                return TopoDS_Face();
+            }
+
+            BRepBuilderAPI_MakeWire wireMaker;
+            wireMaker.Add(BRepBuilderAPI_MakeEdge(a, b));
+            wireMaker.Add(BRepBuilderAPI_MakeEdge(b, c));
+            wireMaker.Add(BRepBuilderAPI_MakeEdge(c, a));
+            if (!wireMaker.IsDone()) {
+                return TopoDS_Face();
+            }
+
+            BRepBuilderAPI_MakeFace faceMaker(wireMaker.Wire(), Standard_True);
+            if (!faceMaker.IsDone()) {
+                return TopoDS_Face();
+            }
+
+            TopoDS_Face face = faceMaker.Face();
+            face.Orientation(orientation);
+            return face;
+        } catch (const Standard_Failure&) {
+            return TopoDS_Face();
+        }
+    }
+
+    struct TriangleIndex {
+        int a = 0;
+        int b = 0;
+        int c = 0;
+    };
+
+    struct MeshEdgeKey {
+        int a = 0;
+        int b = 0;
+
+        MeshEdgeKey() = default;
+        MeshEdgeKey(int first, int second)
+            : a(std::min(first, second)), b(std::max(first, second)) {}
+
+        bool operator<(const MeshEdgeKey& other) const {
+            if (a != other.a) {
+                return a < other.a;
+            }
+            return b < other.b;
+        }
+    };
+
+    struct EdgeUse {
+        int triangleIndex = -1;
+        int thirdVertex = -1;
+    };
+
+    struct ProjectedPoint {
+        double x = 0.0;
+        double y = 0.0;
+    };
+
+    static bool BuildProjectionBasis(
+        const std::vector<gp_Pnt>& points,
+        const std::array<int, 4>& indices,
+        gp_Dir& outU,
+        gp_Dir& outV) {
+        constexpr double eps = 1.0e-12;
+        const gp_Pnt& p0 = points[indices[0]];
+        const gp_Pnt& p1 = points[indices[1]];
+        const gp_Pnt& p2 = points[indices[2]];
+        const gp_Pnt& p3 = points[indices[3]];
+
+        std::array<gp_Vec, 4> edges = {
+            gp_Vec(p0, p1),
+            gp_Vec(p1, p2),
+            gp_Vec(p2, p3),
+            gp_Vec(p3, p0)
+        };
+
+        gp_Vec normal(0.0, 0.0, 0.0);
+        normal.Add(edges[0].Crossed(edges[1]));
+        normal.Add(edges[1].Crossed(edges[2]));
+        normal.Add(edges[2].Crossed(edges[3]));
+        normal.Add(edges[3].Crossed(edges[0]));
+        if (normal.SquareMagnitude() <= eps) {
+            normal = gp_Vec(p0, p1).Crossed(gp_Vec(p0, p2));
+        }
+        if (normal.SquareMagnitude() <= eps) {
+            return false;
+        }
+        normal.Normalize();
+
+        gp_Vec u = gp_Vec(p0, p1);
+        double bestLength = u.SquareMagnitude();
+        for (const gp_Vec& candidate : edges) {
+            const double length = candidate.SquareMagnitude();
+            if (length > bestLength) {
+                u = candidate;
+                bestLength = length;
+            }
+        }
+        if (bestLength <= eps) {
+            return false;
+        }
+
+        u.Subtract(normal.Multiplied(u.Dot(normal)));
+        if (u.SquareMagnitude() <= eps) {
+            return false;
+        }
+        u.Normalize();
+
+        gp_Vec v = normal.Crossed(u);
+        if (v.SquareMagnitude() <= eps) {
+            return false;
+        }
+        v.Normalize();
+
+        outU = gp_Dir(u);
+        outV = gp_Dir(v);
+        return true;
+    }
+
+    static ProjectedPoint ProjectToBasis(const gp_Pnt& origin, const gp_Dir& u, const gp_Dir& v, const gp_Pnt& point) {
+        const gp_Vec offset(origin, point);
+        return {offset.Dot(gp_Vec(u)), offset.Dot(gp_Vec(v))};
+    }
+
+    static double Cross2D(const ProjectedPoint& a, const ProjectedPoint& b, const ProjectedPoint& c) {
+        return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    }
+
+    static double SquareDistance2D(const ProjectedPoint& a, const ProjectedPoint& b) {
+        const double dx = a.x - b.x;
+        const double dy = a.y - b.y;
+        return dx * dx + dy * dy;
+    }
+
+    static double TriangleQuality2D(const ProjectedPoint& a, const ProjectedPoint& b, const ProjectedPoint& c) {
+        const double area2 = std::abs(Cross2D(a, b, c));
+        const double perimeterSq =
+            SquareDistance2D(a, b) +
+            SquareDistance2D(b, c) +
+            SquareDistance2D(c, a);
+        if (area2 <= 1.0e-12 || perimeterSq <= 1.0e-12) {
+            return 0.0;
+        }
+        return area2 / perimeterSq;
+    }
+
+    static TriangleIndex OrientedTriangle(
+        int a,
+        int b,
+        int c,
+        const double desiredSign,
+        const std::vector<ProjectedPoint>& projected) {
+        TriangleIndex triangle{a, b, c};
+        const double currentSign = Cross2D(projected[a], projected[b], projected[c]);
+        if (desiredSign != 0.0 && currentSign * desiredSign < 0.0) {
+            std::swap(triangle.b, triangle.c);
+        }
+        return triangle;
+    }
+
+    static bool TryFlipInternalEdge(
+        const MeshEdgeKey& edge,
+        const EdgeUse& firstUse,
+        const EdgeUse& secondUse,
+        const std::map<MeshEdgeKey, std::vector<EdgeUse>>& edgeUses,
+        const std::vector<gp_Pnt>& points,
+        std::vector<TriangleIndex>& triangles) {
+        const int a = edge.a;
+        const int b = edge.b;
+        const int c = firstUse.thirdVertex;
+        const int d = secondUse.thirdVertex;
+        if (a == b || c == d || c == a || c == b || d == a || d == b) {
+            return false;
+        }
+
+        if (edgeUses.find(MeshEdgeKey(c, d)) != edgeUses.end()) {
+            return false;
+        }
+
+        gp_Dir u(1.0, 0.0, 0.0);
+        gp_Dir v(0.0, 1.0, 0.0);
+        if (!BuildProjectionBasis(points, {a, c, b, d}, u, v)) {
+            return false;
+        }
+
+        const gp_Pnt& origin = points[a];
+        std::vector<ProjectedPoint> projected(points.size());
+        projected[a] = ProjectToBasis(origin, u, v, points[a]);
+        projected[b] = ProjectToBasis(origin, u, v, points[b]);
+        projected[c] = ProjectToBasis(origin, u, v, points[c]);
+        projected[d] = ProjectToBasis(origin, u, v, points[d]);
+
+        const double sideC = Cross2D(projected[a], projected[b], projected[c]);
+        const double sideD = Cross2D(projected[a], projected[b], projected[d]);
+        const double sideA = Cross2D(projected[c], projected[d], projected[a]);
+        const double sideB = Cross2D(projected[c], projected[d], projected[b]);
+        const double sideEps = 1.0e-10;
+        if (sideC * sideD >= -sideEps || sideA * sideB >= -sideEps) {
+            return false;
+        }
+
+        const TriangleIndex oldFirst = triangles[firstUse.triangleIndex];
+        const TriangleIndex oldSecond = triangles[secondUse.triangleIndex];
+        const double oldSignFirst = Cross2D(projected[oldFirst.a], projected[oldFirst.b], projected[oldFirst.c]);
+        const double oldSignSecond = Cross2D(projected[oldSecond.a], projected[oldSecond.b], projected[oldSecond.c]);
+        const double oldQuality = std::min(
+            TriangleQuality2D(projected[oldFirst.a], projected[oldFirst.b], projected[oldFirst.c]),
+            TriangleQuality2D(projected[oldSecond.a], projected[oldSecond.b], projected[oldSecond.c]));
+        const double newQuality = std::min(
+            TriangleQuality2D(projected[c], projected[d], projected[a]),
+            TriangleQuality2D(projected[c], projected[b], projected[d]));
+        if (newQuality <= 0.0) {
+            return false;
+        }
+
+        const double oldDiagSq = points[a].SquareDistance(points[b]);
+        const double newDiagSq = points[c].SquareDistance(points[d]);
+        const bool qualityImproves = newQuality > oldQuality * 1.0001;
+        const bool shorterWithoutRealQualityLoss =
+            newQuality >= oldQuality * 0.997 &&
+            newDiagSq + 1.0e-10 < oldDiagSq;
+        if (!qualityImproves && !shorterWithoutRealQualityLoss) {
+            return false;
+        }
+
+        triangles[firstUse.triangleIndex] = OrientedTriangle(c, d, a, oldSignFirst, projected);
+        triangles[secondUse.triangleIndex] = OrientedTriangle(c, b, d, oldSignSecond, projected);
+        return true;
+    }
+
+    static int OptimizeInternalTriangulationEdges(
+        const std::vector<gp_Pnt>& points,
+        std::vector<TriangleIndex>& triangles) {
+        if (points.size() < 4 || triangles.size() < 2) {
+            return 0;
+        }
+
+        int totalFlips = 0;
+        const size_t maxPasses = std::max<size_t>(8, triangles.size() * 4);
+        for (size_t pass = 0; pass < maxPasses; ++pass) {
+            std::map<MeshEdgeKey, std::vector<EdgeUse>> edgeUses;
+            for (size_t triIndex = 0; triIndex < triangles.size(); ++triIndex) {
+                const TriangleIndex& tri = triangles[triIndex];
+                if (tri.a == tri.b || tri.b == tri.c || tri.c == tri.a) {
+                    continue;
+                }
+                edgeUses[MeshEdgeKey(tri.a, tri.b)].push_back({static_cast<int>(triIndex), tri.c});
+                edgeUses[MeshEdgeKey(tri.b, tri.c)].push_back({static_cast<int>(triIndex), tri.a});
+                edgeUses[MeshEdgeKey(tri.c, tri.a)].push_back({static_cast<int>(triIndex), tri.b});
+            }
+
+            bool flipped = false;
+            for (const auto& [edge, uses] : edgeUses) {
+                if (uses.size() != 2) {
+                    continue;
+                }
+                if (TryFlipInternalEdge(edge, uses[0], uses[1], edgeUses, points, triangles)) {
+                    ++totalFlips;
+                    flipped = true;
+                    break;
+                }
+            }
+
+            if (!flipped) {
+                break;
+            }
+        }
+
+        return totalFlips;
+    }
+
+    static TopoDS_Shape BuildTriangulatedFaceCompound(
+        const std::vector<gp_Pnt>& orderedPoints,
+        TopAbs_Orientation orientation) {
+        if (orderedPoints.size() < 3) {
+            return TopoDS_Shape();
+        }
+
+        const std::vector<gp_Pnt> cleanedPoints = RemoveConsecutiveDuplicatePoints(orderedPoints, Precision::Confusion());
+        if (cleanedPoints.size() < 3) {
+            return TopoDS_Shape();
+        }
+
+        TopoDS_Compound compound;
+        BRep_Builder builder;
+        builder.MakeCompound(compound);
+        bool addedAny = false;
+
+        auto addTriangle = [&](const gp_Pnt& a, const gp_Pnt& b, const gp_Pnt& c) {
+            TopoDS_Face tri = BuildTriangleFace(a, b, c, orientation);
+            if (tri.IsNull()) {
+                return false;
+            }
+            builder.Add(compound, tri);
+            addedAny = true;
+            return true;
+        };
+
+        if (cleanedPoints.size() == 4) {
+            const double diag02 = cleanedPoints[0].SquareDistance(cleanedPoints[2]);
+            const double diag13 = cleanedPoints[1].SquareDistance(cleanedPoints[3]);
+            if (diag13 < diag02) {
+                if (!addTriangle(cleanedPoints[0], cleanedPoints[1], cleanedPoints[3]) ||
+                    !addTriangle(cleanedPoints[1], cleanedPoints[2], cleanedPoints[3])) {
+                    return TopoDS_Shape();
+                }
+            } else {
+                if (!addTriangle(cleanedPoints[0], cleanedPoints[1], cleanedPoints[2]) ||
+                    !addTriangle(cleanedPoints[0], cleanedPoints[2], cleanedPoints[3])) {
+                    return TopoDS_Shape();
+                }
+            }
+            return addedAny ? TopoDS_Shape(compound) : TopoDS_Shape();
+        }
+
+        for (size_t i = 1; i + 1 < cleanedPoints.size(); ++i) {
+            if (!addTriangle(cleanedPoints[0], cleanedPoints[i], cleanedPoints[i + 1])) {
+                return TopoDS_Shape();
+            }
+        }
+
+        return addedAny ? TopoDS_Shape(compound) : TopoDS_Shape();
+    }
+
+    static bool PointIsSelectedForMove(
+        const gp_Pnt& point,
+        const TopTools_IndexedMapOfShape& selectedVertices,
+        const std::vector<glm::vec3>& selectedPositions,
+        const double tolerance) {
+        if (PointMatchesAnyPosition(point, selectedPositions, tolerance)) {
+            return true;
+        }
+
+        for (int i = 1; i <= selectedVertices.Extent(); ++i) {
+            TopoDS_Vertex vertex = TopoDS::Vertex(selectedVertices(i));
+            if (vertex.IsNull()) {
+                continue;
+            }
+
+            const gp_Pnt rawPoint = BRep_Tool::Pnt(vertex);
+            if (point.Distance(rawPoint) <= tolerance) {
+                return true;
+            }
+
+            const gp_Pnt locatedPoint = LocatedVertexPoint(vertex);
+            if (point.Distance(locatedPoint) <= tolerance) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    static TopoDS_Shape BuildTriangulatedMovedFaceFromMesh(
+        TopoDS_Face originalFace,
+        const TopTools_IndexedMapOfShape& selectedVertices,
+        const std::vector<glm::vec3>& selectedPositions,
+        const gp_Vec& translation,
+        const double tolerance,
+        bool& changed) {
+        changed = false;
+
+        try {
+            TopLoc_Location location;
+            Handle(Poly_Triangulation) triangulation = BRep_Tool::Triangulation(originalFace, location);
+            if (triangulation.IsNull() || triangulation->NbTriangles() == 0) {
+                BRepMesh_IncrementalMesh mesher(originalFace, std::max(1.0e-4, tolerance * 10.0));
+                mesher.Perform();
+                triangulation = BRep_Tool::Triangulation(originalFace, location);
+            }
+            if (triangulation.IsNull() || triangulation->NbTriangles() == 0) {
+                return TopoDS_Shape();
+            }
+
+            const gp_Trsf locationTransform = location.Transformation();
+            std::vector<gp_Pnt> movedNodes;
+            movedNodes.reserve(static_cast<size_t>(triangulation->NbNodes()));
+            for (int nodeIndex = 1; nodeIndex <= triangulation->NbNodes(); ++nodeIndex) {
+                gp_Pnt point = triangulation->Node(nodeIndex).Transformed(locationTransform);
+                if (PointIsSelectedForMove(point, selectedVertices, selectedPositions, tolerance)) {
+                    point = TranslatedPoint(point, translation);
+                    changed = true;
+                }
+                movedNodes.push_back(point);
+            }
+
+            std::vector<TriangleIndex> triangles;
+            triangles.reserve(static_cast<size_t>(triangulation->NbTriangles()));
+            for (int triangleIndex = 1; triangleIndex <= triangulation->NbTriangles(); ++triangleIndex) {
+                int n1 = 0;
+                int n2 = 0;
+                int n3 = 0;
+                triangulation->Triangle(triangleIndex).Get(n1, n2, n3);
+                const int i1 = n1 - 1;
+                const int i2 = n2 - 1;
+                const int i3 = n3 - 1;
+                if (i1 < 0 || i2 < 0 || i3 < 0 ||
+                    i1 >= static_cast<int>(movedNodes.size()) ||
+                    i2 >= static_cast<int>(movedNodes.size()) ||
+                    i3 >= static_cast<int>(movedNodes.size())) {
+                    return TopoDS_Shape();
+                }
+                triangles.push_back({i1, i2, i3});
+            }
+
+            const int edgeFlips = OptimizeInternalTriangulationEdges(movedNodes, triangles);
+            if (edgeFlips > 0) {
+                std::cout << "MoveSubObject: optimized fallback triangulation with "
+                          << edgeFlips << " edge flips." << std::endl;
+            }
+
+            TopoDS_Compound triangleCompound;
+            BRep_Builder builder;
+            builder.MakeCompound(triangleCompound);
+
+            bool addedAny = false;
+            for (const TriangleIndex& triangle : triangles) {
+                TopoDS_Face triangleFace = BuildTriangleFace(
+                    movedNodes[triangle.a],
+                    movedNodes[triangle.b],
+                    movedNodes[triangle.c],
+                    originalFace.Orientation());
+                if (triangleFace.IsNull()) {
+                    return TopoDS_Shape();
+                }
+                builder.Add(triangleCompound, triangleFace);
+                addedAny = true;
+            }
+
+            return addedAny ? TopoDS_Shape(triangleCompound) : TopoDS_Shape();
+        } catch (const Standard_Failure& e) {
+            std::cout << "MoveSubObject Warning: triangulated face fallback failed: "
+                      << e.GetMessageString() << std::endl;
+            return TopoDS_Shape();
+        }
+    }
+
+    static TopoDS_Shape BuildMovedShapeFromPreviewMesh(
+        const Urbaxio::CadKernel::MeshBuffers& previewMesh,
+        const std::vector<unsigned int>& movingVertexIndices,
+        const gp_Vec& translation,
+        bool& changed) {
+        changed = false;
+        if (previewMesh.vertices.empty() || previewMesh.indices.empty() || movingVertexIndices.empty()) {
+            return TopoDS_Shape();
+        }
+
+        const size_t vertexCount = previewMesh.vertices.size() / 3;
+        if (vertexCount == 0) {
+            return TopoDS_Shape();
+        }
+
+        std::unordered_set<unsigned int> movingSet;
+        movingSet.reserve(movingVertexIndices.size());
+        for (unsigned int index : movingVertexIndices) {
+            if (index < vertexCount) {
+                movingSet.insert(index);
+            }
+        }
+        if (movingSet.empty()) {
+            return TopoDS_Shape();
+        }
+
+        std::vector<gp_Pnt> movedPoints;
+        movedPoints.reserve(vertexCount);
+        for (size_t i = 0; i < vertexCount; ++i) {
+            gp_Pnt point(
+                previewMesh.vertices[i * 3 + 0],
+                previewMesh.vertices[i * 3 + 1],
+                previewMesh.vertices[i * 3 + 2]);
+            if (movingSet.find(static_cast<unsigned int>(i)) != movingSet.end()) {
+                point = TranslatedPoint(point, translation);
+                changed = true;
+            }
+            movedPoints.push_back(point);
+        }
+
+        if (!changed) {
+            return TopoDS_Shape();
+        }
+
+        TopoDS_Compound compound;
+        BRep_Builder builder;
+        builder.MakeCompound(compound);
+
+        bool addedAny = false;
+        for (size_t i = 0; i + 2 < previewMesh.indices.size(); i += 3) {
+            const unsigned int ia = previewMesh.indices[i + 0];
+            const unsigned int ib = previewMesh.indices[i + 1];
+            const unsigned int ic = previewMesh.indices[i + 2];
+            if (ia >= movedPoints.size() || ib >= movedPoints.size() || ic >= movedPoints.size()) {
+                continue;
+            }
+
+            TopoDS_Face triangle = BuildTriangleFace(
+                movedPoints[ia],
+                movedPoints[ib],
+                movedPoints[ic],
+                TopAbs_FORWARD);
+            if (triangle.IsNull()) {
+                continue;
+            }
+
+            builder.Add(compound, triangle);
+            addedAny = true;
+        }
+
+        return addedAny ? TopoDS_Shape(compound) : TopoDS_Shape();
+    }
+
+    static TopoDS_Shape BuildMovedFace(
+        const TopoDS_Face& originalFace,
+        const TopTools_IndexedMapOfShape& selectedVertices,
+        const std::vector<glm::vec3>& selectedPositions,
+        const gp_Vec& translation,
+        const double tolerance,
+        bool& changed) {
+        changed = false;
+
+        std::vector<TopoDS_Wire> movedWires;
+        std::vector<std::vector<TopoDS_Edge>> movedWireEdges;
+        std::vector<gp_Pnt> outerPoints;
+
+        int wireIndex = 0;
+        for (TopExp_Explorer wireExp(originalFace, TopAbs_WIRE); wireExp.More(); wireExp.Next(), ++wireIndex) {
+            TopoDS_Wire movedWire;
+            std::vector<TopoDS_Edge> movedEdges;
+            std::vector<gp_Pnt> orderedPoints;
+            bool wireChanged = false;
+            if (!BuildMovedWire(TopoDS::Wire(wireExp.Current()), originalFace, selectedVertices, selectedPositions, translation, tolerance,
+                                movedWire, movedEdges, orderedPoints, wireChanged)) {
+                return TopoDS_Shape();
+            }
+
+            changed = changed || wireChanged;
+            if (wireIndex == 0) {
+                outerPoints = orderedPoints;
+            }
+            movedWires.push_back(movedWire);
+            movedWireEdges.push_back(std::move(movedEdges));
+        }
+
+        if (!changed) {
+            return originalFace;
+        }
+        if (movedWires.empty()) {
+            return TopoDS_Shape();
+        }
+
+        gp_Pln plane;
+        const double planarTolerance = std::max(tolerance * 10.0, 1.0e-6);
+        if (TryMakePlaneFromPoints(outerPoints, planarTolerance, plane)) {
+            BRepBuilderAPI_MakeFace faceMaker(plane, movedWires.front(), Standard_True);
+            if (!faceMaker.IsDone()) {
+                bool triangulatedChanged = false;
+                return BuildTriangulatedMovedFaceFromMesh(originalFace, selectedVertices, selectedPositions, translation, tolerance, triangulatedChanged);
+            }
+            for (size_t i = 1; i < movedWires.size(); ++i) {
+                faceMaker.Add(movedWires[i]);
+            }
+            if (!faceMaker.IsDone()) {
+                bool triangulatedChanged = false;
+                return BuildTriangulatedMovedFaceFromMesh(originalFace, selectedVertices, selectedPositions, translation, tolerance, triangulatedChanged);
+            }
+            TopoDS_Face movedFace = faceMaker.Face();
+            movedFace.Orientation(originalFace.Orientation());
+            return movedFace;
+        }
+
+        if (movedWires.size() > 1) {
+            bool triangulatedChanged = false;
+            TopoDS_Shape triangulated = BuildTriangulatedMovedFaceFromMesh(originalFace, selectedVertices, selectedPositions, translation, tolerance, triangulatedChanged);
+            if (!triangulated.IsNull()) {
+                return triangulated;
+            }
+            return TopoDS_Shape();
+        }
+
+        return BuildTriangulatedFaceCompound(outerPoints, originalFace.Orientation());
+    }
+
+    static bool ShapeContainsSolid(const TopoDS_Shape& shape) {
+        if (shape.ShapeType() == TopAbs_SOLID || shape.ShapeType() == TopAbs_COMPSOLID) {
+            return true;
+        }
+        for (TopExp_Explorer solidExp(shape, TopAbs_SOLID); solidExp.More(); solidExp.Next()) {
+            return true;
+        }
+        return false;
+    }
+
+    static int CountFaces(const TopoDS_Shape& shape) {
+        int faceCount = 0;
+        for (TopExp_Explorer faceExp(shape, TopAbs_FACE); faceExp.More(); faceExp.Next()) {
+            ++faceCount;
+        }
+        return faceCount;
+    }
+
+    static bool ShouldPreferPreviewTopologyMove(
+        const TopoDS_Shape& originalShape,
+        const Urbaxio::CadKernel::MeshBuffers& previewMesh) {
+        const int faceCount = CountFaces(originalShape);
+        const size_t triangleCount = previewMesh.indices.size() / 3;
+        return faceCount > 12 || triangleCount > 24;
+    }
+
+    static TopoDS_Shape HealMovedShape(const TopoDS_Shape& candidate, const TopoDS_Shape& originalShape, const double tolerance) {
+        TopoDS_Shape result = candidate;
+        const double precision = std::max(1.0e-7, tolerance * 0.1);
+        const double maxTolerance = std::max(1.0e-5, tolerance * 20.0);
+
+        try {
+            BRepLib::BuildCurves3d(result);
+            BRepLib::SameParameter(result, precision, Standard_True);
+        } catch (const Standard_Failure& e) {
+            std::cerr << "MoveSubObject Warning: curve rebuild failed: " << e.GetMessageString() << std::endl;
+        }
+
+        try {
+            ShapeFix_Shape fixer(result);
+            fixer.SetPrecision(precision);
+            fixer.SetMaxTolerance(maxTolerance);
+            fixer.Perform();
+            result = fixer.Shape();
+        } catch (const Standard_Failure& e) {
+            std::cerr << "MoveSubObject Warning: shape fix failed: " << e.GetMessageString() << std::endl;
+        }
+
+        const bool originalIsSolid = ShapeContainsSolid(originalShape);
+        if (!originalIsSolid && BRepCheck_Analyzer(result).IsValid()) {
+            return result;
+        }
+
+        try {
+            BRepBuilderAPI_Sewing sewing(maxTolerance, Standard_True, Standard_True, Standard_True, Standard_True);
+            sewing.SetNonManifoldMode(Standard_False);
+            sewing.Add(result);
+            sewing.Perform();
+            TopoDS_Shape sewed = sewing.SewedShape();
+            if (!sewed.IsNull()) {
+                result = sewed;
+            }
+        } catch (const Standard_Failure& e) {
+            std::cerr << "MoveSubObject Warning: sewing failed: " << e.GetMessageString() << std::endl;
+        }
+
+        if (originalIsSolid) {
+            try {
+                TopoDS_Compound compound;
+                BRep_Builder builder;
+                builder.MakeCompound(compound);
+                bool madeSolid = false;
+
+                for (TopExp_Explorer shellExp(result, TopAbs_SHELL); shellExp.More(); shellExp.Next()) {
+                    BRepBuilderAPI_MakeSolid solidMaker(TopoDS::Shell(shellExp.Current()));
+                    if (solidMaker.IsDone()) {
+                        TopoDS_Solid solid = solidMaker.Solid();
+                        BRepLib::OrientClosedSolid(solid);
+                        builder.Add(compound, solid);
+                        madeSolid = true;
+                    }
+                }
+
+                if (!madeSolid) {
+                    TopoDS_Shell rebuiltShell;
+                    builder.MakeShell(rebuiltShell);
+                    for (TopExp_Explorer faceExp(result, TopAbs_FACE); faceExp.More(); faceExp.Next()) {
+                        builder.Add(rebuiltShell, TopoDS::Face(faceExp.Current()));
+                    }
+
+                    try {
+                        ShapeFix_Shell shellFixer;
+                        shellFixer.Init(rebuiltShell);
+                        shellFixer.SetPrecision(precision);
+                        shellFixer.Perform();
+                        TopoDS_Shell fixedShell = shellFixer.Shell();
+                        if (!fixedShell.IsNull()) {
+                            rebuiltShell = fixedShell;
+                        }
+                    } catch (const Standard_Failure& e) {
+                        std::cerr << "MoveSubObject Warning: shell orientation fix failed: " << e.GetMessageString() << std::endl;
+                    }
+
+                    BRepBuilderAPI_MakeSolid solidMaker(rebuiltShell);
+                    if (solidMaker.IsDone()) {
+                        TopoDS_Solid solid = solidMaker.Solid();
+                        BRepLib::OrientClosedSolid(solid);
+                        builder.Add(compound, solid);
+                        madeSolid = true;
+                    }
+                }
+
+                if (madeSolid) {
+                    result = compound;
+                    if (BRepCheck_Analyzer(result).IsValid()) {
+                        return result;
+                    }
+                }
+            } catch (const Standard_Failure& e) {
+                std::cerr << "MoveSubObject Warning: solid rebuild failed: " << e.GetMessageString() << std::endl;
+            }
+        }
+
+        try {
+            ShapeFix_Shape finalFixer(result);
+            finalFixer.SetPrecision(precision);
+            finalFixer.SetMaxTolerance(maxTolerance);
+            finalFixer.Perform();
+            result = finalFixer.Shape();
+        } catch (const Standard_Failure& e) {
+            std::cerr << "MoveSubObject Warning: final shape fix failed: " << e.GetMessageString() << std::endl;
+        }
+
+        return result;
+    }
+
+    static TopoDS_Shape BuildMovedShapeFromFaces(
+        const TopoDS_Shape& originalShape,
+        const TopTools_IndexedMapOfShape& selectedVertices,
+        const std::vector<glm::vec3>& selectedPositions,
+        const gp_Vec& translation,
+        const double tolerance,
+        int& matchedFaceCount,
+        int& changedFaceCount) {
+        matchedFaceCount = 0;
+        changedFaceCount = 0;
+
+        TopoDS_Compound faceCompound;
+        BRep_Builder builder;
+        builder.MakeCompound(faceCompound);
+
+        for (TopExp_Explorer faceExp(originalShape, TopAbs_FACE); faceExp.More(); faceExp.Next()) {
+            TopoDS_Face originalFace = TopoDS::Face(faceExp.Current());
+            TopoDS_Shape faceToAdd = originalFace;
+
+            if (FaceUsesAnySelectedVertex(originalFace, selectedVertices, selectedPositions, tolerance)) {
+                ++matchedFaceCount;
+                bool faceChanged = false;
+                faceToAdd = BuildMovedFace(originalFace, selectedVertices, selectedPositions, translation, tolerance, faceChanged);
+                if (faceToAdd.IsNull()) {
+                    return TopoDS_Shape();
+                }
+                if (faceChanged) {
+                    ++changedFaceCount;
+                }
+            }
+
+            builder.Add(faceCompound, faceToAdd);
+        }
+
+        return faceCompound;
+    }
+
     const float COPLANARITY_TOLERANCE_SCENE = 1e-4f;
     const int MAX_DFS_DEPTH = 50; // Max recursion depth for DFS to prevent stack overflow
 
     bool AreVec3Equal(const glm::vec3& a, const glm::vec3& b) {
         return glm::all(glm::epsilonEqual(a, b, Urbaxio::SCENE_POINT_EQUALITY_TOLERANCE));
+    }
+
+    static bool HasNonCollinearTriple(const std::vector<glm::vec3>& points) {
+        if (points.size() < 3) {
+            return false;
+        }
+
+        for (size_t i = 0; i < points.size(); ++i) {
+            for (size_t j = i + 1; j < points.size(); ++j) {
+                const glm::vec3 ij = points[j] - points[i];
+                if (glm::length2(ij) < SCENE_POINT_EQUALITY_TOLERANCE * SCENE_POINT_EQUALITY_TOLERANCE) {
+                    continue;
+                }
+                for (size_t k = j + 1; k < points.size(); ++k) {
+                    const glm::vec3 ik = points[k] - points[i];
+                    if (glm::length2(glm::cross(ij, ik)) >
+                        SCENE_POINT_EQUALITY_TOLERANCE * SCENE_POINT_EQUALITY_TOLERANCE) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    static double PolygonArea3D(const std::vector<glm::vec3>& vertices) {
+        if (vertices.size() < 3) {
+            return 0.0;
+        }
+
+        glm::vec3 areaVector(0.0f);
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            const glm::vec3& a = vertices[i];
+            const glm::vec3& b = vertices[(i + 1) % vertices.size()];
+            areaVector += glm::cross(a, b);
+        }
+        return static_cast<double>(glm::length(areaVector)) * 0.5;
+    }
+
+    static double PolygonPerimeter(const std::vector<glm::vec3>& vertices) {
+        if (vertices.size() < 2) {
+            return 0.0;
+        }
+
+        double perimeter = 0.0;
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            perimeter += static_cast<double>(glm::distance(vertices[i], vertices[(i + 1) % vertices.size()]));
+        }
+        return perimeter;
     }
 
     Scene::Scene() {
@@ -339,6 +1705,14 @@ namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
 
     CommandManager* Scene::getCommandManager() {
         return commandManager_.get();
+    }
+
+    void Scene::setGeometryMode(GeometryMode mode) {
+        geometryMode_ = mode;
+    }
+
+    GeometryMode Scene::getGeometryMode() const {
+        return geometryMode_;
     }
 
     MaterialManager* Scene::getMaterialManager() {
@@ -371,9 +1745,13 @@ namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
             ObjectState objState;
             objState.id = id;
             objState.name = obj_ptr->get_name();
-            
-            // NEW: Check if the geometry is a BRepGeometry before serializing
-            if (auto* brepGeom = dynamic_cast<BRepGeometry*>(obj_ptr->getGeometry())) {
+
+            // Serialize geometry based on type
+            if (auto* meshGeom = dynamic_cast<MeshGeometry*>(obj_ptr->getGeometry())) {
+                objState.isMeshGeometry = true;
+                objState.serializedMesh = meshGeom->serialize();
+            } else if (auto* brepGeom = dynamic_cast<BRepGeometry*>(obj_ptr->getGeometry())) {
+                objState.isMeshGeometry = false;
                 const TopoDS_Shape* shape = brepGeom->getShape();
                 if (shape && !shape->IsNull()) {
                     std::stringstream ss;
@@ -420,7 +1798,14 @@ namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
                 obj->setExportable(true); // Ensure newly created objects from state are exportable
             }
 
-            if (!objState.serializedShape.empty()) {
+            // Restore geometry based on type
+            if (objState.isMeshGeometry && !objState.serializedMesh.empty()) {
+                auto meshGeom = MeshGeometry::deserialize(objState.serializedMesh);
+                if (meshGeom) {
+                    obj->setGeometry(std::move(meshGeom));
+                    this->UpdateObjectBoundary(obj);
+                }
+            } else if (!objState.serializedShape.empty()) {
                 TopoDS_Shape restoredShape;
                 std::stringstream ss(std::string(objState.serializedShape.begin(), objState.serializedShape.end()));
                 try {
@@ -429,8 +1814,8 @@ namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
                     obj->setGeometry(std::move(brepGeom));
                     this->UpdateObjectBoundary(obj);
                 } catch(...) { /* error */ }
-            } else if (dynamic_cast<BRepGeometry*>(obj->getGeometry())) {
-                // If the object in the state has no shape, remove BRep geometry from the live object.
+            } else if (obj->getGeometry()) {
+                // If the object in the state has no geometry data, remove geometry from the live object.
                 obj->setGeometry(nullptr);
             }
         }
@@ -844,10 +2229,248 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         return false;
     }
 
+    bool Scene::FindBestCycleForLine(
+        uint64_t newLineId,
+        std::vector<glm::vec3>& orderedVertices,
+        std::vector<uint64_t>& pathLineIDs) {
+        auto lineIt = lines_.find(newLineId);
+        if (lineIt == lines_.end() || lineIt->second.usedInFace) {
+            return false;
+        }
+
+        struct CycleCandidate {
+            std::vector<glm::vec3> vertices;
+            std::vector<uint64_t> pathLineIDs;
+            double area = 0.0;
+            double perimeter = 0.0;
+            int usedLineCount = 0;
+        };
+
+        const Line& newLine = lineIt->second;
+        const glm::vec3 pA = newLine.start;
+        const glm::vec3 pB = newLine.end;
+        const double newLineLength = std::max(1.0e-6, static_cast<double>(glm::distance(pA, pB)));
+        const size_t maxCandidates = 256;
+
+        std::vector<CycleCandidate> candidates;
+        std::vector<glm::vec3> currentPathVertices;
+        std::vector<uint64_t> currentPathLineIDs;
+        std::set<uint64_t> visitedLines;
+        visitedLines.insert(newLineId);
+
+        auto makeOrderedVertices = [&]() {
+            std::vector<glm::vec3> vertices;
+            vertices.reserve(currentPathVertices.size() + 2);
+            vertices.push_back(pA);
+            vertices.push_back(pB);
+            if (!currentPathVertices.empty()) {
+                for (size_t i = 0; i + 1 < currentPathVertices.size(); ++i) {
+                    vertices.push_back(currentPathVertices[i]);
+                }
+            }
+            return vertices;
+        };
+
+        auto loopHasSelfIntersection = [&](const std::vector<glm::vec3>& vertices) {
+            if (vertices.size() < 4) {
+                return false;
+            }
+
+            for (size_t i = 0; i < vertices.size(); ++i) {
+                const glm::vec3 a1 = vertices[i];
+                const glm::vec3 a2 = vertices[(i + 1) % vertices.size()];
+                for (size_t j = i + 1; j < vertices.size(); ++j) {
+                    if (j == i || j == i + 1) {
+                        continue;
+                    }
+                    if (i == 0 && j + 1 == vertices.size()) {
+                        continue;
+                    }
+
+                    const glm::vec3 b1 = vertices[j];
+                    const glm::vec3 b2 = vertices[(j + 1) % vertices.size()];
+                    glm::vec3 intersection;
+                    if (LineSegmentIntersection(a1, a2, b1, b2, intersection)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+
+        auto canRemainCoplanar = [&](const std::vector<glm::vec3>& vertices) {
+            if (!HasNonCollinearTriple(vertices)) {
+                return true;
+            }
+
+            gp_Pln tempPlane;
+            return ArePointsCoplanar(vertices, tempPlane);
+        };
+
+        auto addCandidate = [&]() {
+            std::vector<glm::vec3> vertices = makeOrderedVertices();
+            if (vertices.size() < 3 || !HasNonCollinearTriple(vertices)) {
+                return;
+            }
+
+            gp_Pln plane;
+            if (!ArePointsCoplanar(vertices, plane) || loopHasSelfIntersection(vertices)) {
+                return;
+            }
+
+            const double area = PolygonArea3D(vertices);
+            const double perimeter = PolygonPerimeter(vertices);
+            if (area <= 1.0e-10 || perimeter <= newLineLength) {
+                return;
+            }
+
+            int usedLineCount = 0;
+            for (uint64_t lineId : currentPathLineIDs) {
+                auto pathLineIt = lines_.find(lineId);
+                if (pathLineIt != lines_.end() && pathLineIt->second.usedInFace) {
+                    ++usedLineCount;
+                }
+            }
+
+            candidates.push_back({std::move(vertices), currentPathLineIDs, area, perimeter, usedLineCount});
+        };
+
+        std::function<void(const glm::vec3&, int, double)> search =
+            [&](const glm::vec3& currentNode, int depth, double pathLength) {
+                if (candidates.size() >= maxCandidates || depth > MAX_DFS_DEPTH) {
+                    return;
+                }
+
+                if (AreVec3Equal(currentNode, pA)) {
+                    if (currentPathVertices.size() >= 2) {
+                        addCandidate();
+                    }
+                    return;
+                }
+
+                auto adjacencyIt = vertexAdjacency_.find(currentNode);
+                if (adjacencyIt == vertexAdjacency_.end()) {
+                    return;
+                }
+
+                std::vector<uint64_t> incidentLines = adjacencyIt->second;
+                std::sort(incidentLines.begin(), incidentLines.end(), [&](uint64_t left, uint64_t right) {
+                    const auto leftIt = lines_.find(left);
+                    const auto rightIt = lines_.find(right);
+                    if (leftIt == lines_.end() || rightIt == lines_.end()) {
+                        return left < right;
+                    }
+
+                    if (leftIt->second.usedInFace != rightIt->second.usedInFace) {
+                        return !leftIt->second.usedInFace;
+                    }
+
+                    const glm::vec3 leftOther = AreVec3Equal(leftIt->second.start, currentNode) ? leftIt->second.end : leftIt->second.start;
+                    const glm::vec3 rightOther = AreVec3Equal(rightIt->second.start, currentNode) ? rightIt->second.end : rightIt->second.start;
+                    const float leftLength = glm::distance2(leftOther, currentNode);
+                    const float rightLength = glm::distance2(rightOther, currentNode);
+                    if (std::abs(leftLength - rightLength) > 1.0e-8f) {
+                        return leftLength < rightLength;
+                    }
+                    return left < right;
+                });
+
+                for (uint64_t lineId : incidentLines) {
+                    if (lineId == newLineId || visitedLines.count(lineId)) {
+                        continue;
+                    }
+
+                    auto candidateLineIt = lines_.find(lineId);
+                    if (candidateLineIt == lines_.end()) {
+                        continue;
+                    }
+
+                    const Line& candidateLine = candidateLineIt->second;
+                    const glm::vec3 nextNode = AreVec3Equal(candidateLine.start, currentNode) ? candidateLine.end : candidateLine.start;
+                    const double segmentLength = static_cast<double>(glm::distance(currentNode, nextNode));
+                    if (segmentLength <= SCENE_POINT_EQUALITY_TOLERANCE) {
+                        continue;
+                    }
+
+                    currentPathVertices.push_back(nextNode);
+                    currentPathLineIDs.push_back(lineId);
+                    visitedLines.insert(lineId);
+
+                    std::vector<glm::vec3> tentativeVertices = makeOrderedVertices();
+                    tentativeVertices.push_back(nextNode);
+
+                    if (canRemainCoplanar(tentativeVertices)) {
+                        search(nextNode, depth + 1, pathLength + segmentLength);
+                    }
+
+                    visitedLines.erase(lineId);
+                    currentPathLineIDs.pop_back();
+                    currentPathVertices.pop_back();
+                }
+            };
+
+        search(pB, 0, 0.0);
+
+        if (candidates.empty()) {
+            return false;
+        }
+
+        std::sort(candidates.begin(), candidates.end(), [&](const CycleCandidate& left, const CycleCandidate& right) {
+            const double areaTol = std::max(1.0e-8, std::min(left.area, right.area) * 1.0e-5);
+            if (std::abs(left.area - right.area) > areaTol) {
+                return left.area < right.area;
+            }
+
+            if (left.usedLineCount != right.usedLineCount) {
+                return left.usedLineCount < right.usedLineCount;
+            }
+
+            const double perimeterTol = std::max(1.0e-8, std::min(left.perimeter, right.perimeter) * 1.0e-5);
+            if (std::abs(left.perimeter - right.perimeter) > perimeterTol) {
+                return left.perimeter < right.perimeter;
+            }
+
+            return left.vertices.size() < right.vertices.size();
+        });
+
+        orderedVertices = candidates.front().vertices;
+        pathLineIDs = candidates.front().pathLineIDs;
+
+        std::cout << "FindAndCreateFaces: Chose local loop for line " << newLineId
+                  << " candidates=" << candidates.size()
+                  << " vertices=" << orderedVertices.size()
+                  << " area=" << candidates.front().area
+                  << " perimeter=" << candidates.front().perimeter
+                  << " usedLines=" << candidates.front().usedLineCount << std::endl;
+
+        return true;
+    }
+
 
     void Scene::CreateOCCTFace(const std::vector<glm::vec3>& orderedVertices, const gp_Pln& plane) {
         if (orderedVertices.size() < 3) return;
-        
+
+        // --- Mesh Mode: Create MeshGeometry face ---
+        if (geometryMode_ == GeometryMode::Mesh) {
+            gp_Dir normalDir = plane.Axis().Direction();
+            glm::vec3 normal(static_cast<float>(normalDir.X()),
+                             static_cast<float>(normalDir.Y()),
+                             static_cast<float>(normalDir.Z()));
+
+            auto meshGeom = MeshGeometry::createFromVertexLoop(orderedVertices, normal);
+            if (meshGeom) {
+                std::string face_name = "MeshFace_" + std::to_string(next_face_id_++);
+                SceneObject* new_face_obj = create_object(face_name);
+                if (new_face_obj) {
+                    new_face_obj->setGeometry(std::move(meshGeom));
+                    UpdateObjectBoundary(new_face_obj);
+                    std::cout << "Scene: Auto-created Mesh Face object: " << face_name << std::endl;
+                }
+            }
+            return;
+        }
+
+        // --- BRep Mode: Original OCCT logic ---
         BRepBuilderAPI_MakeWire wireMaker;
         try {
             for (size_t i = 0; i < orderedVertices.size(); ++i) {
@@ -888,31 +2511,20 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         const glm::vec3& pA = newLine.start;
         const glm::vec3& pB = newLine.end;
         
-        std::vector<glm::vec3> pathVerticesCollector;
         std::vector<uint64_t> pathLineIDsCollector;
-        std::set<uint64_t> visitedLinesInCurrentDFS;
-        visitedLinesInCurrentDFS.insert(newLineId);
-        int recursionDepth = 0;
-
-        if (!PerformDFS(pA, pB, pA, pathVerticesCollector, pathLineIDsCollector, visitedLinesInCurrentDFS, newLineId, recursionDepth)) {
+        std::vector<glm::vec3> finalOrderedVertices;
+        if (!FindBestCycleForLine(newLineId, finalOrderedVertices, pathLineIDsCollector)) {
             return;
         }
-        
-        std::vector<glm::vec3> finalOrderedVertices;
-        finalOrderedVertices.push_back(pA);
-        finalOrderedVertices.push_back(pB);
-        if (!pathVerticesCollector.empty()) {
-            for (size_t i = 0; i < pathVerticesCollector.size() - 1; ++i) {
-                finalOrderedVertices.push_back(pathVerticesCollector[i]);
-            }
-        }
+
         if (finalOrderedVertices.size() < 3) return;
 
         SceneObject* hostObject = nullptr;
         TopoDS_Face originalHostFace;
         
         gp_Pln cyclePlane;
-        if (ArePointsCoplanar(finalOrderedVertices, cyclePlane)) {
+        const bool loopIsCoplanar = ArePointsCoplanar(finalOrderedVertices, cyclePlane);
+        if (loopIsCoplanar) {
             gp_Dir normalDir = cyclePlane.Axis().Direction();
             glm::vec3 loopNormal(normalDir.X(), normalDir.Y(), normalDir.Z());
             
@@ -926,6 +2538,11 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                     }
                 }
             }
+        }
+
+        if (!loopIsCoplanar) {
+            std::cout << "FindAndCreateFaces: Loop detected but vertices are not coplanar; skipping face creation." << std::endl;
+            return;
         }
 
         if (hostObject && !originalHostFace.IsNull()) {
@@ -1085,61 +2702,46 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         const TopoDS_Shape* shape = brepGeom->getShape();
         if (!shape) return TopoDS_Face();
 
-        std::unordered_set<TopoDS_Vertex, TopTools_ShapeMapHasher> targetVertices;
-        for (const auto& pos : faceVertices) {
-            const TopoDS_Vertex* v = obj->findVertexAtLocation(pos);
-            if (v) {
-                targetVertices.insert(*v);
-            }
-        }
+        const double matchTolerance = ShapeMatchTolerance(*shape);
+        TopTools_IndexedMapOfShape targetVertices = FindVerticesNearPositions(*shape, faceVertices, matchTolerance);
 
         std::vector<TopoDS_Face> candidates;
-        if (!targetVertices.empty()) {
+        if (targetVertices.Extent() > 0) {
             TopExp_Explorer faceExplorer(*shape, TopAbs_FACE);
             for (; faceExplorer.More(); faceExplorer.Next()) {
                 TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
-                std::unordered_set<TopoDS_Vertex, TopTools_ShapeMapHasher> faceVerticesSet;
+                TopTools_IndexedMapOfShape faceVerticesSet;
                 TopExp_Explorer vertexExplorer(candidateFace, TopAbs_VERTEX);
                 for (; vertexExplorer.More(); vertexExplorer.Next()) {
-                    faceVerticesSet.insert(TopoDS::Vertex(vertexExplorer.Current()));
+                    faceVerticesSet.Add(TopoDS::Vertex(vertexExplorer.Current()));
                 }
 
                 bool contains_all_targets = true;
-                for (const auto& targetV : targetVertices) {
-                    if (faceVerticesSet.find(targetV) == faceVerticesSet.end()) {
+                for (int i = 1; i <= targetVertices.Extent(); ++i) {
+                    if (!MapContainsSameShape(faceVerticesSet, targetVertices(i))) {
                         contains_all_targets = false;
                         break;
                     }
                 }
                 if (contains_all_targets) {
-                    candidates.push_back(candidateFace);
+                    AddUniqueFaceCandidate(candidates, candidateFace);
                 }
             }
         }
-        
-        if (candidates.empty()) {
-            TopExp_Explorer faceExplorer(*shape, TopAbs_FACE);
-            for (; faceExplorer.More(); faceExplorer.Next()) {
-                TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
-                try {
-                    BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_False);
-                    if(surfaceAdaptor.GetType() != GeomAbs_Plane) continue;
-                    bool allPointsOnFace = true;
-                    for(const auto& v : faceVertices) {
-                        BRepClass_FaceClassifier classifier;
-                        classifier.Perform(candidateFace, gp_Pnt(v.x, v.y, v.z), 1e-4); 
-                        TopAbs_State state = classifier.State();
-                        if(state != TopAbs_ON && state != TopAbs_IN) {
-                            allPointsOnFace = false;
-                            break;
-                        }
-                    }
-                    if (allPointsOnFace) {
-                        candidates.push_back(candidateFace);
-                    }
-                } catch (const Standard_Failure&) {
+
+        TopExp_Explorer faceExplorer(*shape, TopAbs_FACE);
+        for (; faceExplorer.More(); faceExplorer.Next()) {
+            TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
+            try {
+                BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_False);
+                if (surfaceAdaptor.GetType() != GeomAbs_Plane) {
                     continue;
                 }
+                if (LoopLiesOnFaceByUV(candidateFace, faceVertices, matchTolerance)) {
+                    AddUniqueFaceCandidate(candidates, candidateFace);
+                }
+            } catch (const Standard_Failure&) {
+                continue;
             }
         }
         
@@ -1153,31 +2755,34 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         
         std::vector<TopoDS_Face> alignedCandidates;
         double maxDotAbs = -1.0;
-        gp_Dir targetDir(guideNormal.x, guideNormal.y, guideNormal.z);
-        for (const auto& candidateFace : candidates) {
-            try {
-                BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_True);
-                gp_Pln plane = surfaceAdaptor.Plane();
-                gp_Dir candidateDir = plane.Axis().Direction();
-                if (candidateFace.Orientation() == TopAbs_REVERSED) candidateDir.Reverse();
-                double dot = std::abs(targetDir.Dot(candidateDir));
-                if (dot > maxDotAbs) {
-                    maxDotAbs = dot;
-                }
-            } catch (const Standard_Failure&) { continue; }
-        }
-        const double NORMAL_ALIGNMENT_TOLERANCE = 1e-6;
-        if (maxDotAbs > (1.0 - NORMAL_ALIGNMENT_TOLERANCE)) {
+        const double guideNormalSq = static_cast<double>(glm::length2(guideNormal));
+        if (guideNormalSq > 1.0e-18) {
+            gp_Dir targetDir(guideNormal.x, guideNormal.y, guideNormal.z);
             for (const auto& candidateFace : candidates) {
                 try {
                     BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_True);
                     gp_Pln plane = surfaceAdaptor.Plane();
                     gp_Dir candidateDir = plane.Axis().Direction();
                     if (candidateFace.Orientation() == TopAbs_REVERSED) candidateDir.Reverse();
-                    if (std::abs(targetDir.Dot(candidateDir)) >= (maxDotAbs - NORMAL_ALIGNMENT_TOLERANCE)) {
-                        alignedCandidates.push_back(candidateFace);
+                    double dot = std::abs(targetDir.Dot(candidateDir));
+                    if (dot > maxDotAbs) {
+                        maxDotAbs = dot;
                     }
                 } catch (const Standard_Failure&) { continue; }
+            }
+            const double NORMAL_ALIGNMENT_TOLERANCE = 1e-6;
+            if (maxDotAbs > (1.0 - NORMAL_ALIGNMENT_TOLERANCE)) {
+                for (const auto& candidateFace : candidates) {
+                    try {
+                        BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_True);
+                        gp_Pln plane = surfaceAdaptor.Plane();
+                        gp_Dir candidateDir = plane.Axis().Direction();
+                        if (candidateFace.Orientation() == TopAbs_REVERSED) candidateDir.Reverse();
+                        if (std::abs(targetDir.Dot(candidateDir)) >= (maxDotAbs - NORMAL_ALIGNMENT_TOLERANCE)) {
+                            alignedCandidates.push_back(candidateFace);
+                        }
+                    } catch (const Standard_Failure&) { continue; }
+                }
             }
         }
         if (alignedCandidates.size() == 1) {
@@ -1292,10 +2897,83 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         if (!obj || !obj->hasGeometry() || faceVertices.empty()) {
             return false;
         }
-        
+
+        // --- Mesh Mode: Direct mesh extrusion ---
+        if (auto* meshGeom = dynamic_cast<MeshGeometry*>(obj->getGeometry())) {
+            if (std::abs(distance) < 1e-4f) return true;
+
+            // Find vertex indices from positions
+            const auto& mesh = meshGeom->getMesh();
+            std::set<unsigned int> faceIndices;
+            size_t numVertices = mesh.vertices.size() / 3;
+
+            for (const auto& faceVert : faceVertices) {
+                for (size_t i = 0; i < numVertices; ++i) {
+                    glm::vec3 meshVert(mesh.vertices[i * 3],
+                                       mesh.vertices[i * 3 + 1],
+                                       mesh.vertices[i * 3 + 2]);
+                    if (glm::distance(faceVert, meshVert) < SCENE_POINT_EQUALITY_TOLERANCE) {
+                        faceIndices.insert(static_cast<unsigned int>(i));
+                        break;
+                    }
+                }
+            }
+
+            if (faceIndices.empty()) {
+                std::cerr << "ExtrudeFace (Mesh): Could not find matching vertices." << std::endl;
+                return false;
+            }
+
+            // Calculate actual face normal from mesh triangles
+            glm::vec3 faceNormal(0.0f);
+            size_t numTriangles = mesh.indices.size() / 3;
+            int faceTriCount = 0;
+
+            for (size_t t = 0; t < numTriangles; ++t) {
+                unsigned int i0 = mesh.indices[t * 3 + 0];
+                unsigned int i1 = mesh.indices[t * 3 + 1];
+                unsigned int i2 = mesh.indices[t * 3 + 2];
+
+                // Check if all vertices of this triangle are in the face
+                if (faceIndices.count(i0) && faceIndices.count(i1) && faceIndices.count(i2)) {
+                    glm::vec3 v0(mesh.vertices[i0 * 3], mesh.vertices[i0 * 3 + 1], mesh.vertices[i0 * 3 + 2]);
+                    glm::vec3 v1(mesh.vertices[i1 * 3], mesh.vertices[i1 * 3 + 1], mesh.vertices[i1 * 3 + 2]);
+                    glm::vec3 v2(mesh.vertices[i2 * 3], mesh.vertices[i2 * 3 + 1], mesh.vertices[i2 * 3 + 2]);
+
+                    glm::vec3 triNormal = glm::cross(v1 - v0, v2 - v0);
+                    faceNormal += triNormal; // Accumulate (weighted by area)
+                    faceTriCount++;
+                }
+            }
+
+            if (faceTriCount == 0 || glm::length(faceNormal) < 1e-6f) {
+                std::cerr << "ExtrudeFace (Mesh): Could not calculate face normal." << std::endl;
+                return false;
+            }
+
+            faceNormal = glm::normalize(faceNormal);
+
+            // Determine extrusion direction based on user's direction hint
+            // If user direction aligns with face normal, extrude along normal
+            // If opposite, extrude in reverse
+            float dotProduct = glm::dot(faceNormal, glm::normalize(direction));
+            if (dotProduct < 0) {
+                faceNormal = -faceNormal;
+            }
+
+            bool success = meshGeom->extrudeFace(faceIndices, faceNormal, distance);
+            if (success) {
+                meshGeom->recalculateNormals();
+                obj->invalidateMeshCache();
+                MarkStaticGeometryDirty();
+            }
+            return success;
+        }
+
+        // --- BRep Mode: Original OCCT logic ---
         auto* brepGeom = dynamic_cast<BRepGeometry*>(obj->getGeometry());
         if (!brepGeom) {
-            std::cerr << "ExtrudeFace Error: Operation is only supported on B-Rep geometry." << std::endl;
+            std::cerr << "ExtrudeFace Error: Unsupported geometry type." << std::endl;
             return false;
         }
         const TopoDS_Shape* originalShape = brepGeom->getShape();
@@ -1636,104 +3314,165 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         return nullptr;
     }
 
-    void Scene::RebuildObjectByMovingVertices(
+    bool Scene::RebuildObjectByMovingVertices(
         uint64_t objectId,
         Engine::SubObjectType type,
         const std::vector<glm::vec3>& initialPositions,
-        const glm::vec3& translation
+        const glm::vec3& translation,
+        const SubObjectMovePreviewMesh* previewMesh
     ) {
         SceneObject* obj = get_object_by_id(objectId);
-        if (!obj || !obj->hasGeometry()) return;
-        
-        // This operation is only valid for B-Rep geometry.
+        if (!obj || !obj->hasGeometry()) return false;
+
+        // --- Mesh Mode: Direct vertex movement ---
+        if (auto* meshGeom = dynamic_cast<MeshGeometry*>(obj->getGeometry())) {
+            const auto& mesh = meshGeom->getMesh();
+            std::set<unsigned int> indicesToMove;
+            size_t numVertices = mesh.vertices.size() / 3;
+
+            // Find vertex indices from positions
+            for (const auto& pos : initialPositions) {
+                for (size_t i = 0; i < numVertices; ++i) {
+                    glm::vec3 meshVert(mesh.vertices[i * 3],
+                                       mesh.vertices[i * 3 + 1],
+                                       mesh.vertices[i * 3 + 2]);
+                    if (glm::distance(pos, meshVert) < SCENE_POINT_EQUALITY_TOLERANCE) {
+                        indicesToMove.insert(static_cast<unsigned int>(i));
+                        break;
+                    }
+                }
+            }
+
+            if (indicesToMove.empty()) {
+                return false;
+            }
+
+            meshGeom->moveVertices(indicesToMove, translation);
+            meshGeom->recalculateNormals();
+            obj->invalidateMeshCache();
+            UpdateObjectBoundary(obj);
+            MarkStaticGeometryDirty();
+            return true;
+        }
+
+        // --- BRep Mode: topology-aware SketchUp-style local move ---
         auto* brepGeom = dynamic_cast<BRepGeometry*>(obj->getGeometry());
         if (!brepGeom) {
-            std::cout << "Warning: Vertex move reconstruction is only supported for B-Rep objects." << std::endl;
-            return;
+            std::cout << "Warning: Vertex move reconstruction is only supported for B-Rep or Mesh objects." << std::endl;
+            return false;
         }
         const TopoDS_Shape* originalShape = brepGeom->getShape();
         if (!originalShape || originalShape->IsNull()) {
             std::cerr << "Rebuild Error: Object has no B-Rep shape." << std::endl;
-            return;
+            return false;
         }
 
+        if (glm::length2(translation) < 1.0e-12f) {
+            return false;
+        }
+
+        const double matchTolerance = ShapeMatchTolerance(*originalShape);
+        if (previewMesh &&
+            !previewMesh->mesh.isEmpty() &&
+            !previewMesh->movingVertexIndices.empty() &&
+            ShouldPreferPreviewTopologyMove(*originalShape, previewMesh->mesh)) {
+            bool previewChanged = false;
+            TopoDS_Shape previewMovedShape = BuildMovedShapeFromPreviewMesh(
+                previewMesh->mesh,
+                previewMesh->movingVertexIndices,
+                gp_Vec(translation.x, translation.y, translation.z),
+                previewChanged);
+            if (previewChanged && !previewMovedShape.IsNull()) {
+                TopoDS_Shape finalPreviewShape = HealMovedShape(previewMovedShape, *originalShape, matchTolerance);
+                if (!finalPreviewShape.IsNull() && BRepCheck_Analyzer(finalPreviewShape).IsValid()) {
+                    std::cout << "MoveSubObject: finalized from preview mesh topology. vertices="
+                              << (previewMesh->mesh.vertices.size() / 3)
+                              << ", triangles=" << (previewMesh->mesh.indices.size() / 3)
+                              << ", movedVertices=" << previewMesh->movingVertexIndices.size()
+                              << std::endl;
+                    brepGeom->setShape(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalPreviewShape)));
+                    obj->invalidateMeshCache();
+                    UpdateObjectBoundary(obj);
+                    MarkStaticGeometryDirty();
+                    return true;
+                }
+
+                std::cout << "MoveSubObject Warning: preview mesh topology rebuild was invalid; falling back to B-Rep topology rebuild." << std::endl;
+            }
+        }
+
+        TopTools_IndexedMapOfShape selectedVertices;
+        std::vector<glm::vec3> selectedTopologyPositions;
+
         if (type == SubObjectType::FACE) {
-            if (glm::length2(translation) < 1.0e-10f) return;
-
-            glm::vec3 v0 = initialPositions[0], v1 = initialPositions[1], v2 = initialPositions[2];
-            glm::vec3 faceNormal = glm::normalize(glm::cross(v1 - v0, v2 - v0));
-            float projection = glm::dot(translation, faceNormal);
-            if (std::fabs(projection) > 1.0e-5f) {
-                glm::vec3 direction = projection >= 0.0f ? faceNormal : -faceNormal;
-                float distance = std::fabs(projection);
-                if (ExtrudeFace(objectId, initialPositions, direction, distance, false)) return;
-                std::cerr << "MoveFace warning: ExtrudeFace fallback failed, trying direct reshape." << std::endl;
-            }
-            
             TopoDS_Face faceToMove = FindOriginalFace(obj, initialPositions, translation);
-            if (faceToMove.IsNull()) { std::cerr << "Rebuild Error: Could not locate face to move." << std::endl; return; }
-
-            gp_Trsf moveTransform;
-            moveTransform.SetTranslation(gp_Vec(translation.x, translation.y, translation.z));
-
-            Handle(ShapeBuild_ReShape) reshaper = new ShapeBuild_ReShape();
-
-            TopTools_IndexedMapOfShape vertexMap;
-            TopExp::MapShapes(faceToMove, TopAbs_VERTEX, vertexMap);
-            for (int i = 1; i <= vertexMap.Extent(); ++i) {
-                const TopoDS_Vertex& v = TopoDS::Vertex(vertexMap(i));
-                TopoDS_Shape transformedVertex = BRepBuilderAPI_Transform(v, moveTransform, Standard_True).Shape();
-                reshaper->Replace(v, transformedVertex);
+            if (faceToMove.IsNull()) {
+                std::cout << "MoveSubObject Error: Could not locate B-Rep face to move." << std::endl;
+                return false;
             }
 
-            TopTools_IndexedMapOfShape edgeMap;
-            TopExp::MapShapes(faceToMove, TopAbs_EDGE, edgeMap);
-            for (int i = 1; i <= edgeMap.Extent(); ++i) {
-                const TopoDS_Edge& e = TopoDS::Edge(edgeMap(i));
-                TopoDS_Shape transformedEdge = BRepBuilderAPI_Transform(e, moveTransform, Standard_True).Shape();
-                reshaper->Replace(e, transformedEdge);
+            TopExp::MapShapes(faceToMove, TopAbs_VERTEX, selectedVertices);
+            selectedTopologyPositions = VertexPositionsOfShape(faceToMove);
+            for (const glm::vec3& inputPosition : initialPositions) {
+                AddUniquePosition(selectedTopologyPositions, inputPosition, SCENE_POINT_EQUALITY_TOLERANCE);
             }
 
-            TopoDS_Shape transformedFace = BRepBuilderAPI_Transform(faceToMove, moveTransform, Standard_True).Shape();
-            reshaper->Replace(faceToMove, transformedFace);
+            TopTools_IndexedMapOfShape verticesNearFace = FindVerticesNearPositions(*originalShape, selectedTopologyPositions, matchTolerance);
+            AddVerticesFromMap(selectedVertices, verticesNearFace);
+        } else {
+            selectedTopologyPositions = initialPositions;
+            selectedVertices = FindVerticesNearPositions(*originalShape, initialPositions, matchTolerance);
+        }
 
-            TopoDS_Shape movedShape = reshaper->Apply(*originalShape);
+        std::cout << "MoveSubObject: type=" << SubObjectTypeName(type)
+                  << ", inputPositions=" << initialPositions.size()
+                  << ", topologyPositions=" << selectedTopologyPositions.size()
+                  << ", resolvedBRepVertices=" << selectedVertices.Extent()
+                  << ", tolerance=" << matchTolerance
+                  << std::endl;
 
-            Standard_Real diag = 1.0;
-            { Bnd_Box movedBox; BRepBndLib::Add(movedShape, movedBox); if (!movedBox.IsVoid()) { Standard_Real sqExtent = movedBox.SquareExtent(); if (sqExtent > gp::Resolution()) diag = std::sqrt(sqExtent); } }
-            Standard_Real scale = std::max(diag, 1.0);
-            const Standard_Real prec = std::max(1.0e-6, scale * 5.0e-8);
-            const Standard_Real sewTol = std::max(2.5e-4, scale * 2.5e-6);
-            const Standard_Real maxTol = std::max(1.0e-3, scale * 1.0e-5);
-            try { BRepLib::BuildCurves3d(movedShape); BRepLib::SameParameter(movedShape, prec, Standard_True); } catch (const Standard_Failure& e) { std::cerr << "Rebuild Warning: BRepLib preparation failed: " << e.GetMessageString() << std::endl; }
-            try { ShapeFix_Shape sfix(movedShape); sfix.SetPrecision(prec); sfix.SetMaxTolerance(maxTol); sfix.Perform(); movedShape = sfix.Shape(); } catch (const Standard_Failure& e) { std::cerr << "Rebuild Warning: ShapeFix_Shape failed: " << e.GetMessageString() << std::endl; }
-            TopoDS_Shape sewnShape = movedShape;
-            try { BRepBuilderAPI_Sewing sew(sewTol, Standard_True, Standard_True, Standard_True, Standard_True); sew.SetNonManifoldMode(Standard_False); sew.Add(movedShape); sew.Perform(); TopoDS_Shape sewed = sew.SewedShape(); if (!sewed.IsNull()) sewnShape = sewed; } catch (const Standard_Failure& e) { std::cerr << "Rebuild Warning: Sewing failed: " << e.GetMessageString() << std::endl; }
-            TopoDS_Shape solidShape = sewnShape;
-            try {
-                int shellCount = 0;
-                for (TopExp_Explorer ex(sewnShape, TopAbs_SHELL); ex.More(); ex.Next()) shellCount++;
-                if (shellCount >= 1) { TopoDS_Compound comp; BRep_Builder bb; bb.MakeCompound(comp); bool madeAny = false; for (TopExp_Explorer ex(sewnShape, TopAbs_SHELL); ex.More(); ex.Next()) { const TopoDS_Shell& sh = TopoDS::Shell(ex.Current()); BRepBuilderAPI_MakeSolid ms(sh); if (ms.IsDone()) { TopoDS_Solid sd = ms.Solid(); bb.Add(comp, sd); madeAny = true; } } if (madeAny) solidShape = comp; }
-            } catch (const Standard_Failure& e) { std::cerr << "Rebuild Warning: MakeSolid failed: " << e.GetMessageString() << std::endl; }
-            TopoDS_Shape finalShape = solidShape;
-            try {
-                ShapeFix_Shape finalFix(finalShape); finalFix.SetPrecision(prec); finalFix.SetMaxTolerance(maxTol); finalFix.Perform(); TopoDS_Shape healed = finalFix.Shape();
-                ShapeUpgrade_UnifySameDomain unif; unif.Initialize(healed); unif.SetLinearTolerance(1.0e-4); unif.SetAngularTolerance(1.0e-4); unif.AllowInternalEdges(Standard_True); unif.Build(); finalShape = unif.Shape();
-            } catch (const Standard_Failure& e) { std::cerr << "Rebuild Error: Final Heal/Unify failed: " << e.GetMessageString() << std::endl; return; }
-            BRepCheck_Analyzer analyzer(finalShape); if (!analyzer.IsValid()) { std::cerr << "Rebuild Error: Final shape invalid after face move." << std::endl; return; }
+        if (selectedVertices.Extent() == 0 && selectedTopologyPositions.empty()) {
+            std::cout << "MoveSubObject Error: Could not resolve selected render vertices to B-Rep vertices." << std::endl;
+            return false;
+        }
 
-            // NEW: Update geometry through the new system
+        gp_Vec occtTranslation(translation.x, translation.y, translation.z);
+        int matchedFaceCount = 0;
+        int changedFaceCount = 0;
+
+        try {
+            TopoDS_Shape movedShape = BuildMovedShapeFromFaces(*originalShape, selectedVertices, selectedTopologyPositions, occtTranslation, matchTolerance, matchedFaceCount, changedFaceCount);
+            if (changedFaceCount == 0) {
+                std::cout << "MoveSubObject Error: Selection did not affect any B-Rep faces. type="
+                          << SubObjectTypeName(type)
+                          << ", inputPositions=" << initialPositions.size()
+                          << ", topologyPositions=" << selectedTopologyPositions.size()
+                          << ", resolvedBRepVertices=" << selectedVertices.Extent()
+                          << ", matchedFaces=" << matchedFaceCount
+                          << std::endl;
+                return false;
+            }
+
+            if (movedShape.IsNull()) {
+                std::cout << "MoveSubObject Error: Could not rebuild moved B-Rep face compound." << std::endl;
+                return false;
+            }
+
+            TopoDS_Shape finalShape = HealMovedShape(movedShape, *originalShape, matchTolerance);
+            if (finalShape.IsNull() || !BRepCheck_Analyzer(finalShape).IsValid()) {
+                std::cout << "MoveSubObject Error: Final B-Rep shape is invalid after local move." << std::endl;
+                return false;
+            }
+
             brepGeom->setShape(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
             obj->invalidateMeshCache();
             UpdateObjectBoundary(obj);
             MarkStaticGeometryDirty();
-            return;
+            return true;
+        } catch (const Standard_Failure& e) {
+            std::cerr << "MoveSubObject Error: OCCT exception during local move: " << e.GetMessageString() << std::endl;
         }
-
-        if (type == SubObjectType::VERTEX || type == SubObjectType::EDGE) {
-            std::cout << "Warning: Vertex/Edge move reconstruction is currently not implemented." << std::endl;
-            return;
-        }
+        return false;
     }
 
     // --- NEW: Implementation of dirty flag methods ---

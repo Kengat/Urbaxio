@@ -1,5 +1,6 @@
 #include "snapping.h"
 #include "camera.h"
+#include <engine/geometry/BRepGeometry.h>
 #include <engine/scene.h>
 #include <engine/scene_object.h>
 #include <cad_kernel/MeshBuffers.h>
@@ -297,7 +298,8 @@ SnapResult SnappingSystem::FindSnapPoint(
     for (const auto* obj : objects) {
         if (processedObjects.count(obj->get_id())) {
             // --- FIX: Ignore non-exportable objects ---
-            if (obj && obj->hasMesh() && obj->isExportable()) {
+            if (obj && obj->hasMesh() && obj->isExportable() &&
+                dynamic_cast<const Engine::BRepGeometry*>(obj->getGeometry()) == nullptr) {
                 const auto& vertices_obj = obj->getMeshBuffers().vertices;
                 for (size_t i = 0; i < vertices_obj.size(); i += 3) {
                     glm::vec3 vertexPos(vertices_obj[i], vertices_obj[i+1], vertices_obj[i+2]);

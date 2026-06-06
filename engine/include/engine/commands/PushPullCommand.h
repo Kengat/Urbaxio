@@ -31,14 +31,23 @@ public:
 private:
     static std::vector<char> SerializeShape(const TopoDS_Shape& shape);
     void RestoreObjectShape(uint64_t objectId, const std::vector<char>& shapeData);
+    void RestoreMeshGeometry(uint64_t objectId, const std::vector<char>& meshData);
 
     Scene* scene_;
     std::vector<glm::vec3> faceVertices_;
     glm::vec3 faceNormal_;
     float distance_;
     bool disableMerge_;
+
+    // BRep mode state
     std::vector<char> shapeBefore_;
     std::vector<char> shapeAfter_;
+
+    // Mesh mode state
+    std::vector<char> meshBefore_;
+    std::vector<char> meshAfter_;
+    bool isMeshMode_ = false;
+
     uint64_t targetObjectId_ = 0;
     bool isExecuted_ = false;
 };

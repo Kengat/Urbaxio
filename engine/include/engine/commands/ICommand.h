@@ -26,6 +26,9 @@ public:
 
     // Returns the name of the command for UI or debugging purposes.
     virtual const char* GetName() const = 0;
+
+    // Commands that fail or turn out to be no-ops can opt out of undo history.
+    virtual bool ShouldStoreInHistory() const { return true; }
 };
 
 } // namespace Urbaxio::Engine 

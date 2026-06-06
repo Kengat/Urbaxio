@@ -97,6 +97,7 @@ extern "C" {
 
 #include <fstream>
 #include <charconv>
+#include <ctime>
 // --- ДОБАВЬ ЭТУ СТРОКУ ---
 #include <SDL2/SDL_keycode.h>
 // --- NEW: For File Dialogs on Windows ---
@@ -128,6 +129,101 @@ namespace { // Anonymous namespace for helpers
     int g_importUnitIndex = 0;
     float g_customImportScale = 1.0f;
     std::string g_pendingImportPathVR;
+    std::unique_ptr<std::ofstream> g_runLogOut;
+    std::unique_ptr<std::ofstream> g_runLogErr;
+
+    std::filesystem::path GetExecutableDirectory(const char* argv0) {
+#if defined(_WIN32)
+        wchar_t buffer[MAX_PATH] = {};
+        DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+        if (length > 0 && length < MAX_PATH) {
+            return std::filesystem::path(buffer).parent_path();
+        }
+#endif
+        try {
+            return std::filesystem::absolute(argv0).parent_path();
+        } catch (...) {
+            return std::filesystem::current_path();
+        }
+    }
+
+    void PruneRollingRunLogs(const std::filesystem::path& logDir, size_t keepCount) {
+        std::vector<std::filesystem::directory_entry> existingLogs;
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(logDir, ec)) {
+            if (!entry.is_regular_file(ec)) {
+                continue;
+            }
+            const std::string name = entry.path().filename().string();
+            if (name.rfind("urbaxio_run_", 0) == 0 && entry.path().extension() == ".log") {
+                existingLogs.push_back(entry);
+            }
+        }
+
+        std::sort(existingLogs.begin(), existingLogs.end(), [](const auto& a, const auto& b) {
+            return a.path().filename().string() > b.path().filename().string();
+        });
+
+        for (size_t i = keepCount; i < existingLogs.size(); ++i) {
+            ec.clear();
+            std::filesystem::remove(existingLogs[i].path(), ec);
+        }
+    }
+
+    void InitializeRollingRunLog(int argc, char* argv[]) {
+        (void)argc;
+        try {
+            const std::filesystem::path exeDir = GetExecutableDirectory(argv && argv[0] ? argv[0] : "");
+            const std::filesystem::path logDir = exeDir / "logs";
+            std::filesystem::create_directories(logDir);
+
+            std::error_code ec;
+            std::filesystem::remove(logDir / "urbaxio_latest.log", ec);
+
+            const std::time_t now = std::time(nullptr);
+            std::tm localTime{};
+#if defined(_WIN32)
+            localtime_s(&localTime, &now);
+#else
+            localtime_r(&now, &localTime);
+#endif
+            char timestamp[32] = {};
+            std::strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", &localTime);
+
+            unsigned long processId = 0;
+#if defined(_WIN32)
+            processId = GetCurrentProcessId();
+#else
+            processId = static_cast<unsigned long>(::getpid());
+#endif
+            const std::filesystem::path currentLog = logDir / ("urbaxio_run_" + std::string(timestamp) + "_" + std::to_string(processId) + ".log");
+
+            g_runLogOut = std::make_unique<std::ofstream>(currentLog, std::ios::out | std::ios::trunc);
+            g_runLogErr = std::make_unique<std::ofstream>(currentLog, std::ios::out | std::ios::app);
+            if (!g_runLogOut->is_open() || !g_runLogErr->is_open()) {
+                g_runLogOut.reset();
+                g_runLogErr.reset();
+                return;
+            }
+            std::cout.rdbuf(g_runLogOut->rdbuf());
+            std::cerr.rdbuf(g_runLogErr->rdbuf());
+            std::cout << std::unitbuf;
+            std::cerr << std::unitbuf;
+
+            try {
+                std::ofstream pointer(logDir / "latest_log_path.txt", std::ios::trunc);
+                pointer << currentLog.string() << std::endl;
+            } catch (...) {
+            }
+            PruneRollingRunLogs(logDir, 5);
+
+            std::cout << "UrbaxioLog: Writing this run to " << currentLog.string() << std::endl;
+            std::cout << "UrbaxioLog: Keeping at most 5 run logs in " << logDir.string() << std::endl;
+            std::cout << "UrbaxioLog: Started at " << std::ctime(&now);
+        } catch (...) {
+            std::cerr << "UrbaxioLog: Failed to initialize rolling log files." << std::endl;
+        }
+    }
     
     // --- START OF MODIFICATION: Replace the entire VRPanelRowWidget class with this ---
     class VRPanelRowWidget : public Urbaxio::UI::IVRWidget {
@@ -1631,6 +1727,7 @@ bool UploadMeshToGPU(Urbaxio::Engine::SceneObject& object) {
 }
 
 int main(int argc, char* argv[]) {
+    InitializeRollingRunLog(argc, argv);
 #if defined(_WIN32)
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 #endif
@@ -2424,7 +2521,23 @@ int main(int argc, char* argv[]) {
             if (ImGui::Button("Appearance Settings")) show_style_editor = true;
             ImGui::SameLine(); // <-- NEW
             if (ImGui::Button("Material Editor")) show_material_editor = true; // <-- NEW
-            
+
+            ImGui::Separator();
+            // --- Geometry Mode Toggle (visible in main panel) ---
+            {
+                bool meshMode = (scene_ptr->getGeometryMode() == Urbaxio::Engine::GeometryMode::Mesh);
+                const char* modeLabel = meshMode ? "Mode: MESH" : "Mode: BRep";
+                ImVec4 modeColor = meshMode ? ImVec4(0.2f, 0.8f, 0.4f, 1.0f) : ImVec4(0.4f, 0.6f, 1.0f, 1.0f);
+                ImGui::TextColored(modeColor, "%s", modeLabel);
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Mesh Mode", &meshMode)) {
+                    scene_ptr->setGeometryMode(meshMode ? Urbaxio::Engine::GeometryMode::Mesh : Urbaxio::Engine::GeometryMode::BRep);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Mesh: SketchUp-like, direct mesh editing\nBRep: Full parametric CAD (OpenCASCADE)");
+                }
+            }
+
             ImGui::Separator();
             ImGui::Text("Tools:");
             Urbaxio::Tools::ToolType activeToolType = toolManager.GetActiveToolType();
@@ -2517,7 +2630,19 @@ int main(int argc, char* argv[]) {
             }
             if (ImGui::CollapsingHeader("Grid & Axes")) { ImGui::Checkbox("Show Grid", &showGrid); ImGui::SameLine(); ImGui::Checkbox("Show Axes", &showAxes); ImGui::ColorEdit3("Grid Color", glm::value_ptr(gridColor)); ImGui::SeparatorText("Positive Axes"); ImGui::ColorEdit4("Axis X Color", glm::value_ptr(axisColorX)); ImGui::ColorEdit4("Axis Y Color", glm::value_ptr(axisColorY)); ImGui::ColorEdit4("Axis Z Color", glm::value_ptr(axisColorZ)); ImGui::ColorEdit4("Fade To Color##Positive", glm::value_ptr(positiveAxisFadeColor)); ImGui::SameLine(); ImGui::TextDisabled("(also used for axis markers)"); ImGui::SliderFloat("Width##Positive", &axisLineWidth, 1.0f, maxLineWidth); ImGui::SeparatorText("Negative Axes"); ImGui::ColorEdit4("Fade To Color##Negative", glm::value_ptr(negativeAxisFadeColor)); ImGui::SliderFloat("Width##Negative", &negAxisLineWidth, 1.0f, maxLineWidth); }
             if (ImGui::CollapsingHeader("Interactive Effects")) { ImGui::SliderFloat("Cursor Radius", &cursorRadius, 1.0f, 50.0f); ImGui::SliderFloat("Effect Intensity", &effectIntensity, 0.1f, 2.0f); }
-            
+
+            if (ImGui::CollapsingHeader("Geometry Mode", ImGuiTreeNodeFlags_DefaultOpen)) {
+                bool meshMode = (scene_ptr->getGeometryMode() == Urbaxio::Engine::GeometryMode::Mesh);
+                if (ImGui::Checkbox("Simplified Geometry (Mesh Mode)", &meshMode)) {
+                    scene_ptr->setGeometryMode(meshMode ? Urbaxio::Engine::GeometryMode::Mesh : Urbaxio::Engine::GeometryMode::BRep);
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(?)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Mesh Mode: SketchUp-like, faster operations\nBRep Mode: Full parametric CAD (default)");
+                }
+            }
+
             if (ImGui::CollapsingHeader("Markers")) {
                 bool radius_changed = ImGui::SliderFloat("Capsule Radius", &capsuleRadius, 0.1f, 2.0f);
                 bool height10m_changed = ImGui::SliderFloat("10m Capsule Height", &capsuleHeight10m, 0.2f, 5.0f);

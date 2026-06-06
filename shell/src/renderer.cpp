@@ -19,6 +19,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <map>
 #include <set>
 #include <utility>
@@ -102,6 +103,85 @@ namespace { // Anonymous namespace for utility functions
                 indices.push_back((r + 1) * sectors + s);
             }
         }
+    }
+
+    bool IsFiniteVec3Buffer(const std::vector<float>& values) {
+        if (values.empty() || values.size() % 3 != 0) {
+            return false;
+        }
+
+        for (float value : values) {
+            if (!std::isfinite(value)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool BuildValidatedGhostMesh(
+        const Urbaxio::CadKernel::MeshBuffers& source,
+        const std::vector<unsigned int>& sourceWireframeIndices,
+        Urbaxio::CadKernel::MeshBuffers& outMesh,
+        std::vector<unsigned int>& outWireframeIndices)
+    {
+        outMesh.clear();
+        outWireframeIndices.clear();
+
+        if (!IsFiniteVec3Buffer(source.vertices)) {
+            return false;
+        }
+
+        const size_t vertexCount = source.vertices.size() / 3;
+        if (vertexCount == 0 || vertexCount > static_cast<size_t>(std::numeric_limits<GLsizei>::max())) {
+            return false;
+        }
+
+        outMesh.vertices = source.vertices;
+
+        if (source.normals.size() == source.vertices.size() && IsFiniteVec3Buffer(source.normals)) {
+            outMesh.normals = source.normals;
+        } else {
+            outMesh.normals.resize(source.vertices.size(), 0.0f);
+            for (size_t i = 0; i < vertexCount; ++i) {
+                outMesh.normals[i * 3 + 2] = 1.0f;
+            }
+        }
+
+        outMesh.uvs = source.uvs;
+
+        outMesh.indices.reserve(source.indices.size());
+        for (size_t i = 0; i + 2 < source.indices.size(); i += 3) {
+            const unsigned int i0 = source.indices[i + 0];
+            const unsigned int i1 = source.indices[i + 1];
+            const unsigned int i2 = source.indices[i + 2];
+            if (i0 < vertexCount && i1 < vertexCount && i2 < vertexCount) {
+                outMesh.indices.push_back(i0);
+                outMesh.indices.push_back(i1);
+                outMesh.indices.push_back(i2);
+            }
+        }
+
+        if (outMesh.indices.empty() || outMesh.indices.size() > static_cast<size_t>(std::numeric_limits<GLsizei>::max())) {
+            outMesh.clear();
+            return false;
+        }
+
+        outWireframeIndices.reserve(sourceWireframeIndices.size());
+        for (size_t i = 0; i + 1 < sourceWireframeIndices.size(); i += 2) {
+            const unsigned int i0 = sourceWireframeIndices[i + 0];
+            const unsigned int i1 = sourceWireframeIndices[i + 1];
+            if (i0 < vertexCount && i1 < vertexCount) {
+                outWireframeIndices.push_back(i0);
+                outWireframeIndices.push_back(i1);
+            }
+        }
+
+        if (outWireframeIndices.size() > static_cast<size_t>(std::numeric_limits<GLsizei>::max())) {
+            outWireframeIndices.clear();
+        }
+
+        return true;
     }
 }
 
@@ -1011,6 +1091,7 @@ namespace Urbaxio {
 
         // --- MODIFIED: Draw static and moving lines separately ---
         if (simpleLineShaderProgram != 0) {
+            glDepthFunc(GL_LEQUAL);
             glLineWidth(2.0f);
             glUseProgram(simpleLineShaderProgram);
             glUniformMatrix4fv(simpleLineShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
@@ -1024,8 +1105,10 @@ namespace Urbaxio {
             
             glBindVertexArray(0);
             glLineWidth(1.0f);
+            glDepthFunc(GL_LESS);
         }
         if (previewLineEnabled && previewLineVAO != 0 && simpleLineShaderProgram != 0) {
+            glDepthFunc(GL_LEQUAL);
             glLineWidth(1.0f);
             glUseProgram(simpleLineShaderProgram);
             glUniformMatrix4fv(simpleLineShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
@@ -1034,6 +1117,7 @@ namespace Urbaxio {
             glBindVertexArray(previewLineVAO);
             glDrawArrays(GL_LINES, 0, 2);
             glBindVertexArray(0);
+            glDepthFunc(GL_LESS);
         }
 
         if (previewOutlineVertexCount > 0) {
@@ -2593,26 +2677,39 @@ namespace Urbaxio {
             return;
         }
 
+        CadKernel::MeshBuffers safeMesh;
+        std::vector<unsigned int> safeWireframeIndices;
+        if (!BuildValidatedGhostMesh(mesh, wireframeIndices, safeMesh, safeWireframeIndices)) {
+            std::cerr << "Renderer: rejected invalid MoveTool ghost mesh before OpenGL upload." << std::endl;
+            ClearGhostMesh();
+            return;
+        }
+
+        // Bind the ghost VAO so the GL_ELEMENT_ARRAY_BUFFER changes below are captured by
+        // this VAO and do not corrupt whichever VAO (e.g. the UI splatVAO) was left bound.
+        glBindVertexArray(ghostMeshVAO);
+
         // Update vertices
         glBindBuffer(GL_ARRAY_BUFFER, ghostMeshVBO_vertices);
-        glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(float), mesh.vertices.data(), GL_DYNAMIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, safeMesh.vertices.size() * sizeof(float), safeMesh.vertices.data(), GL_DYNAMIC_DRAW);
 
         // Update normals
         glBindBuffer(GL_ARRAY_BUFFER, ghostMeshVBO_normals);
-        glBufferData(GL_ARRAY_BUFFER, mesh.normals.size() * sizeof(float), mesh.normals.data(), GL_DYNAMIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, safeMesh.normals.size() * sizeof(float), safeMesh.normals.data(), GL_DYNAMIC_DRAW);
 
         // Update triangle indices
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO_triangles);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(unsigned int), mesh.indices.data(), GL_DYNAMIC_DRAW);
-        ghostMeshTriangleIndexCount = static_cast<GLsizei>(mesh.indices.size());
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, safeMesh.indices.size() * sizeof(unsigned int), safeMesh.indices.data(), GL_DYNAMIC_DRAW);
+        ghostMeshTriangleIndexCount = static_cast<GLsizei>(safeMesh.indices.size());
 
         // Update line indices
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ghostMeshEBO_lines);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireframeIndices.size() * sizeof(unsigned int), wireframeIndices.data(), GL_DYNAMIC_DRAW);
-        ghostMeshLineIndexCount = static_cast<GLsizei>(wireframeIndices.size());
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, safeWireframeIndices.size() * sizeof(unsigned int), safeWireframeIndices.data(), GL_DYNAMIC_DRAW);
+        ghostMeshLineIndexCount = static_cast<GLsizei>(safeWireframeIndices.size());
 
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
     }
 
     bool Renderer::CreatePanelOutlineResources() {

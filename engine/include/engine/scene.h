@@ -13,6 +13,8 @@
 #include <glm/glm.hpp>
 #include "engine/line.h"
 #include "engine/commands/CommandManager.h"
+#include "engine/GeometryMode.h"
+#include "engine/SubObjectMovePreviewMesh.h"
 // --- Material system ---
 #include "engine/MaterialManager.h"
 
@@ -57,7 +59,9 @@ namespace Urbaxio::Engine {
     struct ObjectState {
         uint64_t id;
         std::string name;
-        std::vector<char> serializedShape; // Empty if object has no shape
+        std::vector<char> serializedShape; // For BRep geometry (empty if not BRep)
+        std::vector<char> serializedMesh;  // For Mesh geometry (empty if not Mesh)
+        bool isMeshGeometry = false;       // True if this was a MeshGeometry object
     };
     
     struct SceneState {
@@ -127,12 +131,17 @@ namespace Urbaxio::Engine {
         void ClearStaticGeometryDirtyFlag();
 
         // --- NEW: B-Rep Reconstruction ---
-        void RebuildObjectByMovingVertices(
-            uint64_t objectId, 
+        bool RebuildObjectByMovingVertices(
+            uint64_t objectId,
             Engine::SubObjectType type, // <-- ADDED type
-            const std::vector<glm::vec3>& initialPositions, 
-            const glm::vec3& translation
+            const std::vector<glm::vec3>& initialPositions,
+            const glm::vec3& translation,
+            const SubObjectMovePreviewMesh* previewMesh = nullptr
         );
+
+        // --- Geometry Mode Toggle (BRep vs Mesh) ---
+        void setGeometryMode(GeometryMode mode);
+        GeometryMode getGeometryMode() const;
 
     private:
         std::unordered_map<uint64_t, std::unique_ptr<SceneObject>> objects_;
@@ -151,6 +160,9 @@ namespace Urbaxio::Engine {
         // --- NEW: Dirty flag for static geometry ---
         bool isStaticGeometryDirty_ = true;
 
+        // --- Geometry Mode (BRep vs Mesh) ---
+        GeometryMode geometryMode_ = GeometryMode::BRep;
+
         // --- NEW: Private helper for loading ---
         // Creates an object with a specific ID during file loading
         SceneObject* create_object_with_id(uint64_t id, const std::string& name);
@@ -168,6 +180,11 @@ namespace Urbaxio::Engine {
         );
         
         void FindAndCreateFaces(uint64_t newLineId);
+        bool FindBestCycleForLine(
+            uint64_t newLineId,
+            std::vector<glm::vec3>& orderedVertices,
+            std::vector<uint64_t>& pathLineIDs
+        );
         bool PerformDFS(
             const glm::vec3& startNode,
             const glm::vec3& currentNode,

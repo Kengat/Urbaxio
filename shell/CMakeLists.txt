@@ -44,8 +44,8 @@ set(SHELL_SOURCES
     src/ui/VRToggleWidget.cpp
     src/ui/VRTextureWidget.cpp
     # Add ImGui backend implementation files directly to the compilation
-    "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_sdl2.cpp"
-    "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends/imgui_impl_opengl3.cpp"
+    libs/imgui_backends/imgui_impl_sdl2.cpp
+    libs/imgui_backends/imgui_impl_opengl3.cpp
     # Add Windows resources
     ${RESOURCE_FILES}
 )
@@ -66,7 +66,7 @@ target_include_directories(Urbaxio PRIVATE
     include # Add the shell/include directory
     libs    # headers: stb_image.h, json.hpp
     # Also include the backends path for its internal includes
-    "C:/vcpkg/buildtrees/imgui/src/v1.91.9-afb09617a6.clean/backends"
+    libs/imgui_backends
 )
 
 # --- Find dependencies needed directly by shell ---
@@ -142,3 +142,25 @@ endif()
 if(TARGET imgui::imgui)
     message(STATUS "Found Dear ImGui library via vcpkg.")
 endif()
+
+add_executable(move_tool_path_smoke_test
+    tests/MoveToolPathSmokeTest.cpp
+    src/tools/MoveTool.cpp
+    src/snapping.cpp
+    src/camera.cpp
+)
+
+target_include_directories(move_tool_path_smoke_test PRIVATE
+    include
+    libs
+    libs/imgui_backends
+)
+
+target_link_libraries(move_tool_path_smoke_test PRIVATE
+    engine
+    cad_kernel
+    SDL2::SDL2
+    glad::glad
+    OpenGL::GL
+    imgui::imgui
+)

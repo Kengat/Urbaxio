@@ -16,10 +16,30 @@ MoveSubObjectCommand::MoveSubObjectCommand(
       translationVector_(translationVector) {
 }
 
+MoveSubObjectCommand::MoveSubObjectCommand(
+    Scene* scene,
+    uint64_t objectId,
+    SubObjectType type,
+    const std::vector<glm::vec3>& initialPositions,
+    const glm::vec3& translationVector,
+    const SubObjectMovePreviewMesh& previewMesh)
+    : scene_(scene),
+      objectId_(objectId),
+      type_(type),
+      initialPositions_(initialPositions),
+      translationVector_(translationVector),
+      hasPreviewMesh_(true),
+      previewMesh_(previewMesh) {
+}
+
 MoveSubObjectCommand::~MoveSubObjectCommand() = default;
 
 const char* MoveSubObjectCommand::GetName() const {
     return "Move Sub-Object";
+}
+
+bool MoveSubObjectCommand::ShouldStoreInHistory() const {
+    return operationSucceeded_;
 }
 
 void MoveSubObjectCommand::Execute() {
@@ -33,7 +53,18 @@ void MoveSubObjectCommand::Execute() {
     stateBefore_ = scene_->CaptureState();
 
     // Передаем тип в метод реконструкции
-    scene_->RebuildObjectByMovingVertices(objectId_, type_, initialPositions_, translationVector_);
+    operationSucceeded_ = scene_->RebuildObjectByMovingVertices(
+        objectId_,
+        type_,
+        initialPositions_,
+        translationVector_,
+        hasPreviewMesh_ ? &previewMesh_ : nullptr);
+    if (!operationSucceeded_) {
+        stateBefore_.reset();
+        stateAfter_.reset();
+        isExecuted_ = false;
+        return;
+    }
 
     stateAfter_ = scene_->CaptureState();
     isExecuted_ = true;

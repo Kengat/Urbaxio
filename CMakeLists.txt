@@ -22,7 +22,7 @@ set(OCCT_LIB_DIR_DEBUG "${OCCT_INSTALL_DIR}/debug/lib")
 
 # List of required modules for OCCT 7.9.1. TKBOP is now TKBool.
 # --- ИЗМЕНИТЬ ЭТУ СТРОКУ ---
-set(OCCT_MODULES TKernel TKMath TKPrim TKBRep TKTopAlgo TKG2d TKG3d TKMesh TKBO TKService TKShHealing TKBool TKOffset)
+set(OCCT_MODULES TKernel TKMath TKPrim TKBRep TKTopAlgo TKG2d TKG3d TKGeomAlgo TKMesh TKBO TKService TKShHealing TKBool TKOffset)
 set(OpenCASCADE_LIBRARIES "")
 foreach(module ${OCCT_MODULES})
     list(APPEND OpenCASCADE_LIBRARIES "optimized" "${OCCT_LIB_DIR_RELEASE}/${module}.lib" "debug" "${OCCT_LIB_DIR_DEBUG}/${module}.lib")
@@ -128,4 +128,4 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # --- Выводим информационные сообщения ---
 message(STATUS "Project Root: ${CMAKE_SOURCE_DIR}")
 message(STATUS "Build Directory: ${CMAKE_BINARY_DIR}")
-message(STATUS "Using C++ Standard: ${CMAKE_CXX_STANDARD}") 
+message(STATUS "Using C++ Standard: ${CMAKE_CXX_STANDARD}")

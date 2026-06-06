@@ -22,6 +22,7 @@
 #include <map>
 #include <set>
 #include <algorithm>
+#include <cmath>
 #include "engine/line.h" // For Line struct
 
 namespace { // Anonymous namespace for helpers
@@ -36,6 +37,70 @@ namespace { // Anonymous namespace for helpers
             return false;
         }
     };
+
+    bool IsValidVertexIndex(const Urbaxio::CadKernel::MeshBuffers& mesh, unsigned int index) {
+        return static_cast<size_t>(index) * 3 + 2 < mesh.vertices.size();
+    }
+
+    bool TryReadVertex(const Urbaxio::CadKernel::MeshBuffers& mesh, unsigned int index, glm::vec3& out) {
+        if (!IsValidVertexIndex(mesh, index)) {
+            return false;
+        }
+
+        out = {
+            mesh.vertices[index * 3 + 0],
+            mesh.vertices[index * 3 + 1],
+            mesh.vertices[index * 3 + 2]
+        };
+        return std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.z);
+    }
+
+    const char* MoveTargetTypeName(Urbaxio::Tools::MoveTarget::TargetType type) {
+        switch (type) {
+            case Urbaxio::Tools::MoveTarget::TargetType::OBJECT: return "OBJECT";
+            case Urbaxio::Tools::MoveTarget::TargetType::FACE: return "FACE";
+            case Urbaxio::Tools::MoveTarget::TargetType::EDGE: return "EDGE";
+            case Urbaxio::Tools::MoveTarget::TargetType::VERTEX: return "VERTEX";
+            case Urbaxio::Tools::MoveTarget::TargetType::NONE:
+            default: return "NONE";
+        }
+    }
+
+    float MeshPointMatchTolerance(const Urbaxio::CadKernel::MeshBuffers& mesh) {
+        const size_t vertexCount = mesh.vertices.size() / 3;
+        if (vertexCount == 0) {
+            return 1.0e-4f;
+        }
+
+        glm::vec3 minP(std::numeric_limits<float>::max());
+        glm::vec3 maxP(std::numeric_limits<float>::lowest());
+        float maxAbsCoord = 1.0f;
+        bool hasValidVertex = false;
+
+        for (size_t i = 0; i < vertexCount; ++i) {
+            glm::vec3 p;
+            if (!TryReadVertex(mesh, static_cast<unsigned int>(i), p)) {
+                continue;
+            }
+
+            hasValidVertex = true;
+            minP = glm::min(minP, p);
+            maxP = glm::max(maxP, p);
+            maxAbsCoord = std::max({
+                maxAbsCoord,
+                std::abs(p.x),
+                std::abs(p.y),
+                std::abs(p.z)
+            });
+        }
+
+        if (!hasValidVertex) {
+            return 1.0e-4f;
+        }
+
+        const float diag = glm::length(maxP - minP);
+        return std::max({1.0e-4f, diag * 1.0e-6f, maxAbsCoord * 1.0e-7f});
+    }
     
     // Helper to find all coplanar and adjacent triangles, starting from a given one.
     std::vector<size_t> FindCoplanarAdjacentTriangles(
@@ -49,6 +114,11 @@ namespace { // Anonymous namespace for helpers
         std::map<std::pair<unsigned int, unsigned int>, std::vector<size_t>> edgeToTriangles;
         for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
             unsigned int v_indices[3] = { mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2] };
+            if (!IsValidVertexIndex(mesh, v_indices[0]) ||
+                !IsValidVertexIndex(mesh, v_indices[1]) ||
+                !IsValidVertexIndex(mesh, v_indices[2])) {
+                continue;
+            }
             for (int j = 0; j < 3; ++j) {
                 unsigned int v1_idx = v_indices[j];
                 unsigned int v2_idx = v_indices[(j + 1) % 3];
@@ -60,8 +130,16 @@ namespace { // Anonymous namespace for helpers
         std::list<size_t> queue;
         std::set<size_t> visitedTriangles;
         unsigned int i0 = mesh.indices[startTriangleBaseIndex];
-        glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
+        glm::vec3 v0;
+        if (!TryReadVertex(mesh, i0, v0) || i0 * 3 + 2 >= mesh.normals.size()) {
+            return { startTriangleBaseIndex };
+        }
+
         glm::vec3 referenceNormal(mesh.normals[i0*3], mesh.normals[i0*3+1], mesh.normals[i0*3+2]);
+        if (glm::length2(referenceNormal) < 1.0e-12f) {
+            return { startTriangleBaseIndex };
+        }
+        referenceNormal = glm::normalize(referenceNormal);
         float referencePlaneD = -glm::dot(referenceNormal, v0);
         queue.push_back(startTriangleBaseIndex);
         visitedTriangles.insert(startTriangleBaseIndex);
@@ -70,18 +148,35 @@ namespace { // Anonymous namespace for helpers
             queue.pop_front();
             resultFaceTriangles.push_back(currentTriangleIndex);
             unsigned int current_v_indices[3] = { mesh.indices[currentTriangleIndex], mesh.indices[currentTriangleIndex + 1], mesh.indices[currentTriangleIndex + 2] };
+            if (!IsValidVertexIndex(mesh, current_v_indices[0]) ||
+                !IsValidVertexIndex(mesh, current_v_indices[1]) ||
+                !IsValidVertexIndex(mesh, current_v_indices[2])) {
+                continue;
+            }
             for (int j = 0; j < 3; ++j) {
                 unsigned int v1_idx = current_v_indices[j];
                 unsigned int v2_idx = current_v_indices[(j + 1) % 3];
                 if (v1_idx > v2_idx) std::swap(v1_idx, v2_idx);
-                const auto& potentialNeighbors = edgeToTriangles.at({v1_idx, v2_idx});
+                auto neighborIt = edgeToTriangles.find({v1_idx, v2_idx});
+                if (neighborIt == edgeToTriangles.end()) {
+                    continue;
+                }
+
+                const auto& potentialNeighbors = neighborIt->second;
                 for (size_t neighborIndex : potentialNeighbors) {
                     if (neighborIndex == currentTriangleIndex) continue;
                     if (visitedTriangles.find(neighborIndex) == visitedTriangles.end()) {
                         visitedTriangles.insert(neighborIndex);
                         unsigned int n_i0 = mesh.indices[neighborIndex];
-                        glm::vec3 n_v0(mesh.vertices[n_i0*3], mesh.vertices[n_i0*3+1], mesh.vertices[n_i0*3+2]);
+                        glm::vec3 n_v0;
+                        if (!TryReadVertex(mesh, n_i0, n_v0) || n_i0 * 3 + 2 >= mesh.normals.size()) {
+                            continue;
+                        }
                         glm::vec3 neighborNormal(mesh.normals[n_i0*3], mesh.normals[n_i0*3+1], mesh.normals[n_i0*3+2]);
+                        if (glm::length2(neighborNormal) < 1.0e-12f) {
+                            continue;
+                        }
+                        neighborNormal = glm::normalize(neighborNormal);
                         if (glm::abs(glm::dot(referenceNormal, neighborNormal)) > NORMAL_DOT_TOLERANCE) {
                             float dist = glm::abs(glm::dot(referenceNormal, n_v0) + referencePlaneD);
                             if (dist < PLANE_DIST_TOLERANCE) queue.push_back(neighborIndex);
@@ -154,9 +249,11 @@ void MoveTool::determineTargetFromSelection() {
         if (obj && obj->hasMesh()) {
             const auto& mesh = obj->getMeshBuffers();
             for (size_t triBaseIndex : *context.selectedTriangleIndices) {
-                currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
-                currentTarget.movingVertices.insert(mesh.indices[triBaseIndex + 1]);
-                currentTarget.movingVertices.insert(mesh.indices[triBaseIndex + 2]);
+                if (triBaseIndex + 2 < mesh.indices.size()) {
+                    currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
+                    currentTarget.movingVertices.insert(mesh.indices[triBaseIndex + 1]);
+                    currentTarget.movingVertices.insert(mesh.indices[triBaseIndex + 2]);
+                }
             }
         }
     } else if (*context.selectedObjId != 0) {
@@ -186,9 +283,12 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
             const auto& mesh = obj->getMeshBuffers();
             for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                 unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
-                glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
-                glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
-                glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+                glm::vec3 v0, v1, v2;
+                if (!TryReadVertex(mesh, i0, v0) ||
+                    !TryReadVertex(mesh, i1, v1) ||
+                    !TryReadVertex(mesh, i2, v2)) {
+                    continue;
+                }
                 float t;
                 if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDistance) {
                     closestHitDistance = t; hitObjectId = obj->get_id(); hitTriangleBaseIndex = i;
@@ -202,9 +302,11 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
             std::vector<size_t> faceTriangles = FindCoplanarAdjacentTriangles(*hitObject, hitTriangleBaseIndex);
             for(size_t triBaseIndex : faceTriangles) {
                 const auto& mesh = hitObject->getMeshBuffers();
-                currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
-                currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+1]);
-                currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+2]);
+                if (triBaseIndex + 2 < mesh.indices.size()) {
+                    currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
+                    currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+1]);
+                    currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+2]);
+                }
             }
         }
         return;
@@ -218,11 +320,14 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
         snappedObject = context.scene->get_object_by_id(snap.snappedEntityId);
         if (snappedObject) {
             // It's an object (likely a face snap)
+            if (!snappedObject->hasMesh() || !snappedObject->isExportable()) {
+                snappedObject = nullptr;
+            }
         } else {
             // It's a line, find its parent object
             snappedLineId = snap.snappedEntityId;
             for(auto* obj : context.scene->get_all_objects()) {
-                if (obj->boundaryLineIDs.count(snappedLineId)) {
+                if (obj && obj->hasMesh() && obj->isExportable() && obj->boundaryLineIDs.count(snappedLineId)) {
                     snappedObject = obj;
                     break;
                 }
@@ -231,12 +336,30 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
     }
 
     auto findVertexIndex = [&](const Engine::SceneObject& obj, const glm::vec3& pos) -> int {
-        const auto& mesh = obj.getMeshBuffers();
-        for (size_t i = 0; i < mesh.vertices.size() / 3; ++i) {
-            glm::vec3 v_pos(mesh.vertices[i*3], mesh.vertices[i*3+1], mesh.vertices[i*3+2]);
-            if (glm::distance2(v_pos, pos) < 1e-8f) { return static_cast<int>(i); }
+        if (!obj.hasMesh()) {
+            return -1;
         }
-        return -1;
+
+        const auto& mesh = obj.getMeshBuffers();
+        const float tolerance = MeshPointMatchTolerance(mesh);
+        const float toleranceSq = tolerance * tolerance;
+        float bestDistanceSq = std::numeric_limits<float>::max();
+        int bestIndex = -1;
+
+        for (size_t i = 0; i < mesh.vertices.size() / 3; ++i) {
+            glm::vec3 v_pos;
+            if (!TryReadVertex(mesh, static_cast<unsigned int>(i), v_pos)) {
+                continue;
+            }
+
+            const float distanceSq = glm::distance2(v_pos, pos);
+            if (distanceSq <= toleranceSq && distanceSq < bestDistanceSq) {
+                bestDistanceSq = distanceSq;
+                bestIndex = static_cast<int>(i);
+            }
+        }
+
+        return bestIndex;
     };
 
     switch (snap.type) {
@@ -244,13 +367,25 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
         case SnapType::ORIGIN: {
             if (!snappedObject) {
                  for (auto* obj : context.scene->get_all_objects()) {
-                    if (!obj || !obj->hasMesh()) continue;
+                    if (!obj || !obj->hasMesh() || !obj->isExportable()) continue;
                     int v_idx = findVertexIndex(*obj, snap.worldPoint);
                     if (v_idx != -1) { snappedObject = obj; break; }
                 }
             }
             if (snappedObject) {
                 int vertexIndex = findVertexIndex(*snappedObject, snap.worldPoint);
+                if (vertexIndex == -1) {
+                    for (auto* obj : context.scene->get_all_objects()) {
+                        if (!obj || obj == snappedObject || !obj->hasMesh() || !obj->isExportable()) continue;
+                        int fallbackIndex = findVertexIndex(*obj, snap.worldPoint);
+                        if (fallbackIndex != -1) {
+                            snappedObject = obj;
+                            vertexIndex = fallbackIndex;
+                            break;
+                        }
+                    }
+                }
+
                 if (vertexIndex != -1) {
                     currentTarget.type = MoveTarget::TargetType::VERTEX;
                     currentTarget.objectId = snappedObject->get_id();
@@ -263,14 +398,17 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
         case SnapType::MIDPOINT: // Midpoint now selects the whole edge
         case SnapType::ON_EDGE: {
             if (snappedObject && snappedLineId != 0) {
-                const auto& line = context.scene->GetAllLines().at(snappedLineId);
-                int idx1 = findVertexIndex(*snappedObject, line.start);
-                int idx2 = findVertexIndex(*snappedObject, line.end);
-                if (idx1 != -1 && idx2 != -1) {
-                    currentTarget.type = MoveTarget::TargetType::EDGE;
-                    currentTarget.objectId = snappedObject->get_id();
-                    currentTarget.movingVertices.insert(idx1);
-                    currentTarget.movingVertices.insert(idx2);
+                auto lineIt = context.scene->GetAllLines().find(snappedLineId);
+                if (lineIt != context.scene->GetAllLines().end()) {
+                    const auto& line = lineIt->second;
+                    int idx1 = findVertexIndex(*snappedObject, line.start);
+                    int idx2 = findVertexIndex(*snappedObject, line.end);
+                    if (idx1 != -1 && idx2 != -1) {
+                        currentTarget.type = MoveTarget::TargetType::EDGE;
+                        currentTarget.objectId = snappedObject->get_id();
+                        currentTarget.movingVertices.insert(idx1);
+                        currentTarget.movingVertices.insert(idx2);
+                    }
                 }
             }
             break;
@@ -285,9 +423,12 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
                 const auto& mesh = snappedObject->getMeshBuffers();
                 for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
                      unsigned int i0 = mesh.indices[i], i1 = mesh.indices[i+1], i2 = mesh.indices[i+2];
-                     glm::vec3 v0(mesh.vertices[i0*3], mesh.vertices[i0*3+1], mesh.vertices[i0*3+2]);
-                     glm::vec3 v1(mesh.vertices[i1*3], mesh.vertices[i1*3+1], mesh.vertices[i1*3+2]);
-                     glm::vec3 v2(mesh.vertices[i2*3], mesh.vertices[i2*3+1], mesh.vertices[i2*3+2]);
+                     glm::vec3 v0, v1, v2;
+                     if (!TryReadVertex(mesh, i0, v0) ||
+                         !TryReadVertex(mesh, i1, v1) ||
+                         !TryReadVertex(mesh, i2, v2)) {
+                         continue;
+                     }
                      float t;
                      if (SnappingSystem::RayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2, t) && t > 0 && t < closestHitDist) {
                          closestHitDist = t;
@@ -299,9 +440,11 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
                     currentTarget.objectId = snappedObject->get_id();
                     std::vector<size_t> faceTriangles = FindCoplanarAdjacentTriangles(*snappedObject, hitTriangle);
                     for(size_t triBaseIndex : faceTriangles) {
-                        currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
-                        currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+1]);
-                        currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+2]);
+                        if (triBaseIndex + 2 < mesh.indices.size()) {
+                            currentTarget.movingVertices.insert(mesh.indices[triBaseIndex]);
+                            currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+1]);
+                            currentTarget.movingVertices.insert(mesh.indices[triBaseIndex+2]);
+                        }
                     }
                 }
             }
@@ -315,26 +458,52 @@ void MoveTool::determineTargetFromPick(int mouseX, int mouseY) {
 void MoveTool::startMove(const SnapResult& snap) {
     if (currentTarget.type == MoveTarget::TargetType::NONE) return;
 
-        Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
-        if (!obj || !obj->hasMesh()) return;
+    Engine::SceneObject* obj = context.scene->get_object_by_id(currentTarget.objectId);
+    if (!obj || !obj->hasMesh()) {
+        reset();
+        return;
+    }
 
     const auto& originalMesh = obj->getMeshBuffers();
+    if (originalMesh.vertices.empty()) {
+        reset();
+        return;
+    }
 
     std::map<glm::vec3, std::vector<unsigned int>, Vec3Comparator> positionToIndices;
     for (size_t i = 0; i < originalMesh.vertices.size() / 3; ++i) {
-        glm::vec3 pos(originalMesh.vertices[i*3], originalMesh.vertices[i*3+1], originalMesh.vertices[i*3+2]);
+        glm::vec3 pos;
+        if (!TryReadVertex(originalMesh, static_cast<unsigned int>(i), pos)) {
+            continue;
+        }
         positionToIndices[pos].push_back(static_cast<unsigned int>(i));
     }
+
     std::set<glm::vec3, Vec3Comparator> movingPositions;
     for (unsigned int v_idx : currentTarget.movingVertices) {
-        glm::vec3 pos(originalMesh.vertices[v_idx*3], originalMesh.vertices[v_idx*3+1], originalMesh.vertices[v_idx*3+2]);
+        glm::vec3 pos;
+        if (!TryReadVertex(originalMesh, v_idx, pos)) {
+            continue;
+        }
         movingPositions.insert(pos);
     }
+
     std::set<unsigned int> expandedMovingVertices;
     for (const auto& pos : movingPositions) {
-        const auto& indices = positionToIndices.at(pos);
+        auto indicesIt = positionToIndices.find(pos);
+        if (indicesIt == positionToIndices.end()) {
+            continue;
+        }
+
+        const auto& indices = indicesIt->second;
         expandedMovingVertices.insert(indices.begin(), indices.end());
     }
+
+    if (expandedMovingVertices.empty()) {
+        reset();
+        return;
+    }
+
     currentTarget.movingVertices = expandedMovingVertices;
 
     basePoint = glm::dvec3(snap.worldPoint);
@@ -348,7 +517,11 @@ void MoveTool::startMove(const SnapResult& snap) {
     ghostWireframeIndices.clear();
     std::map<glm::vec3, unsigned int, Vec3Comparator> positionToIndexMap;
     for (size_t i = 0; i < originalMesh.vertices.size() / 3; ++i) {
-        glm::vec3 pos(originalMesh.vertices[i*3], originalMesh.vertices[i*3+1], originalMesh.vertices[i*3+2]);
+        glm::vec3 pos;
+        if (!TryReadVertex(originalMesh, static_cast<unsigned int>(i), pos)) {
+            continue;
+        }
+
         if (positionToIndexMap.find(pos) == positionToIndexMap.end()) {
             positionToIndexMap[pos] = static_cast<unsigned int>(i);
         }
@@ -367,7 +540,13 @@ void MoveTool::startMove(const SnapResult& snap) {
         }
     }
 
-    std::cout << "MoveTool: Started moving." << std::endl;
+    std::cout << "MoveTool: Started moving. target="
+              << MoveTargetTypeName(currentTarget.type)
+              << ", object=" << currentTarget.objectId
+              << ", renderVertices=" << currentTarget.movingVertices.size()
+              << ", snapType=" << static_cast<int>(snap.type)
+              << ", snapEntity=" << snap.snappedEntityId
+              << std::endl;
 }
 
 void MoveTool::OnLeftMouseDown(int mouseX, int mouseY, bool shift, bool ctrl, const glm::vec3& rayOrigin, const glm::vec3& rayDirection) {
@@ -510,6 +689,10 @@ void MoveTool::finalizeMove() {
                         });
                     }
                 }
+                if (initialPositions.empty()) {
+                    reset();
+                    return;
+                }
 
                 Engine::SubObjectType subObjType;
                 switch (currentTarget.type) {
@@ -519,12 +702,28 @@ void MoveTool::finalizeMove() {
                     default: reset(); return;
                 }
 
+                std::cout << "MoveTool: Finalizing sub-object move. target="
+                          << MoveTargetTypeName(currentTarget.type)
+                          << ", object=" << currentTarget.objectId
+                          << ", initialPositions=" << initialPositions.size()
+                          << ", translation=(" << static_cast<float>(currentTranslation.x)
+                          << ", " << static_cast<float>(currentTranslation.y)
+                          << ", " << static_cast<float>(currentTranslation.z) << ")"
+                          << std::endl;
+
+                Engine::SubObjectMovePreviewMesh previewMesh;
+                previewMesh.mesh = mesh;
+                previewMesh.movingVertexIndices.assign(
+                    currentTarget.movingVertices.begin(),
+                    currentTarget.movingVertices.end());
+
                 auto command = std::make_unique<Engine::MoveSubObjectCommand>(
                     context.scene,
                     currentTarget.objectId,
                     subObjType,
                     initialPositions,
-                    glm::vec3(currentTranslation)
+                    glm::vec3(currentTranslation),
+                    previewMesh
                 );
                 context.scene->getCommandManager()->ExecuteCommand(std::move(command));
             }

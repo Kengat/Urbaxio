@@ -20,6 +20,19 @@ add_library(engine STATIC
     # Geometry implementations
 )
 
+add_executable(move_subobject_smoke_test
+    tests/MoveSubObjectSmokeTest.cpp
+)
+
+find_package(glad CONFIG REQUIRED)
+target_link_libraries(move_subobject_smoke_test PRIVATE engine glad::glad)
+
+add_executable(face_split_smoke_test
+    tests/FaceSplitSmokeTest.cpp
+)
+
+target_link_libraries(face_split_smoke_test PRIVATE engine glad::glad)
+
 # Указываем, где находятся публичные заголовочные файлы
 target_include_directories(engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
