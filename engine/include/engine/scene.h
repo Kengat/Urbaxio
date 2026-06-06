@@ -72,6 +72,13 @@ namespace Urbaxio::Engine {
         uint64_t nextLineId;
     };
 
+    struct PlanarLineSegmentSnapshot {
+        glm::vec3 start;
+        glm::vec3 end;
+        glm::vec3 planeNormal;
+        float planeOffset = 0.0f;
+    };
+
     class Scene {
     public:
         Scene();
@@ -172,8 +179,8 @@ namespace Urbaxio::Engine {
         void RemoveLine(uint64_t lineId);
         glm::vec3 MergeOrAddVertex(const glm::vec3& p);
         void SplitLineAtPoints(uint64_t lineId, const std::vector<glm::vec3>& splitPoints);
-        std::vector<std::pair<glm::vec3, glm::vec3>> CaptureObjectPlanarLineGraph(const SceneObject* obj) const;
-        void RestoreObjectPlanarLineGraph(SceneObject* obj, const std::vector<std::pair<glm::vec3, glm::vec3>>& segments);
+        std::vector<PlanarLineSegmentSnapshot> CaptureObjectPlanarLineGraph(const SceneObject* obj) const;
+        void RestoreObjectPlanarLineGraph(SceneObject* obj, const std::vector<PlanarLineSegmentSnapshot>& segments);
         bool HasLineSegment(const glm::vec3& start, const glm::vec3& end) const;
         
         

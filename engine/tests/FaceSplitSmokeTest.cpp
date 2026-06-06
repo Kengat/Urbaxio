@@ -271,6 +271,19 @@ bool HasOrphanGeneratedLine(const Urbaxio::Engine::Scene& scene, const Urbaxio::
     return false;
 }
 
+bool HasUserLineEndpointLeftOf(const Urbaxio::Engine::Scene& scene, float xLimit)
+{
+    for (const auto& [id, line] : scene.GetAllLines()) {
+        if (!line.isUserDrawn) {
+            continue;
+        }
+        if (line.start.x < xLimit || line.end.x < xLimit) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool RunInteriorSquareSplitCase(const char* label, float zOffset)
 {
     Urbaxio::Engine::Scene scene;
@@ -693,6 +706,51 @@ bool RunSidePushPullDropsOldBoundaryLinesCase()
     return true;
 }
 
+bool RunInwardSidePushPullTrimsUserLinesCase()
+{
+    Urbaxio::Engine::Scene scene;
+    Urbaxio::Engine::SceneObject* box = scene.create_box_object("inward_side_trim_box", 2.0, 2.0, 2.0);
+    if (!box || !ValidateBRep(box, "inward_side_trim_setup")) {
+        return false;
+    }
+
+    const uint64_t boxId = box->get_id();
+    scene.AddUserLine({-1.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 1.0f});
+
+    box = scene.get_object_by_id(boxId);
+    if (!box || !ValidateBRep(box, "inward_side_trim_after_line")) {
+        return false;
+    }
+
+    const std::vector<glm::vec3> sideFace = CollectFaceVerticesNear(*box, glm::vec3(-1.0f, 0.0f, 0.0f));
+    if (sideFace.size() < 3) {
+        std::cerr << "inward_side_trim: could not collect side face vertices\n";
+        return false;
+    }
+
+    if (!scene.ExtrudeFace(boxId, sideFace, glm::vec3(1.0f, 0.0f, 0.0f), 0.35f, false)) {
+        std::cerr << "inward_side_trim: ExtrudeFace returned false\n";
+        return false;
+    }
+
+    box = scene.get_object_by_id(boxId);
+    if (!box || !ValidateBRep(box, "inward_side_trim_after_push")) {
+        return false;
+    }
+    if (CountUserDrawnLines(scene) == 0) {
+        std::cerr << "inward_side_trim: user line was deleted instead of trimmed\n";
+        return false;
+    }
+    if (HasUserLineEndpointLeftOf(scene, -0.6505f)) {
+        std::cerr << "inward_side_trim: user line still has a dangling endpoint in the cut-away region\n";
+        return false;
+    }
+
+    std::cout << "inward_side_pushpull_trims_user_lines passed: userLines="
+              << CountUserDrawnLines(scene) << ", faces=" << CountFaces(box) << "\n";
+    return true;
+}
+
 } // namespace
 
 int main()
@@ -706,10 +764,12 @@ int main()
     const bool partialEnvelopeOk = RunPartialEnvelopeKeepsTopFaceCase();
     const bool envelopePushPullOk = RunEnvelopePushPullPreservesGraphCase();
     const bool sidePushPullOk = RunSidePushPullDropsOldBoundaryLinesCase();
+    const bool inwardTrimOk = RunInwardSidePushPullTrimsUserLinesCase();
 
     if (!exactSplitOk || !nearSurfaceSplitOk || !moveSplitFaceOk ||
         !openSegmentOk || !overlapNodingOk || !envelopeGraphOk ||
-        !partialEnvelopeOk || !envelopePushPullOk || !sidePushPullOk) {
+        !partialEnvelopeOk || !envelopePushPullOk || !sidePushPullOk ||
+        !inwardTrimOk) {
         return 1;
     }
 

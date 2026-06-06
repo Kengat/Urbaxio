@@ -532,6 +532,53 @@ namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
                PointLiesOnFaceByUV(face, gp_Pnt(line.end.x, line.end.y, line.end.z), baseTolerance);
     }
 
+    static bool LineLiesOnFacePlane(
+        const TopoDS_Face& face,
+        const glm::vec3& start,
+        const glm::vec3& end,
+        const glm::vec3& planeNormal,
+        const float planeOffset,
+        const double baseTolerance) {
+        if (face.IsNull()) {
+            return false;
+        }
+
+        try {
+            BRepAdaptor_Surface adaptor(face, Standard_False);
+            if (adaptor.GetType() != GeomAbs_Plane) {
+                return false;
+            }
+
+            const gp_Pln plane = adaptor.Plane();
+            const gp_Dir faceDir = plane.Axis().Direction();
+            const glm::vec3 faceNormal(
+                static_cast<float>(faceDir.X()),
+                static_cast<float>(faceDir.Y()),
+                static_cast<float>(faceDir.Z()));
+            if (std::abs(glm::dot(glm::normalize(faceNormal), glm::normalize(planeNormal))) <
+                std::cos(1.0e-4f)) {
+                return false;
+            }
+
+            const gp_Pnt facePoint = plane.Location();
+            const glm::vec3 facePointGlm(
+                static_cast<float>(facePoint.X()),
+                static_cast<float>(facePoint.Y()),
+                static_cast<float>(facePoint.Z()));
+            if (std::abs(glm::dot(glm::normalize(planeNormal), facePointGlm) - planeOffset) >
+                static_cast<float>(std::max(baseTolerance * 50.0, 1.0e-4))) {
+                return false;
+            }
+
+            const gp_Pnt p0(start.x, start.y, start.z);
+            const gp_Pnt p1(end.x, end.y, end.z);
+            return plane.Distance(p0) <= std::max(baseTolerance * 50.0, 1.0e-4) &&
+                   plane.Distance(p1) <= std::max(baseTolerance * 50.0, 1.0e-4);
+        } catch (const Standard_Failure&) {
+            return false;
+        }
+    }
+
     static bool PointLiesOnFaceBoundary(
         const TopoDS_Face& face,
         const gp_Pnt& point,
@@ -2314,8 +2361,8 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         return false;
     }
 
-    std::vector<std::pair<glm::vec3, glm::vec3>> Scene::CaptureObjectPlanarLineGraph(const SceneObject* obj) const {
-        std::vector<std::pair<glm::vec3, glm::vec3>> segments;
+    std::vector<PlanarLineSegmentSnapshot> Scene::CaptureObjectPlanarLineGraph(const SceneObject* obj) const {
+        std::vector<PlanarLineSegmentSnapshot> segments;
         if (!obj) {
             return segments;
         }
@@ -2328,22 +2375,53 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         const TopoDS_Shape& shape = *brepGeom->getShape();
         const double matchTolerance = ShapeMatchTolerance(shape);
 
-        auto addUniqueSegment = [&](const glm::vec3& a, const glm::vec3& b) {
+        auto addUniqueSegment = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& normal, const float offset) {
             if (AreVec3Equal(a, b)) {
                 return;
             }
             for (const auto& existing : segments) {
-                if ((AreVec3Equal(existing.first, a) && AreVec3Equal(existing.second, b)) ||
-                    (AreVec3Equal(existing.first, b) && AreVec3Equal(existing.second, a))) {
+                const bool sameSegment =
+                    (AreVec3Equal(existing.start, a) && AreVec3Equal(existing.end, b)) ||
+                    (AreVec3Equal(existing.start, b) && AreVec3Equal(existing.end, a));
+                const bool samePlane =
+                    std::abs(glm::dot(glm::normalize(existing.planeNormal), glm::normalize(normal))) >
+                    std::cos(1.0e-4f) &&
+                    std::abs(existing.planeOffset - offset) <= 1.0e-4f;
+                if (sameSegment && samePlane) {
                     return;
                 }
             }
-            segments.push_back({a, b});
+            segments.push_back({a, b, normal, offset});
         };
 
         for (const auto& [lineId, line] : lines_) {
-            if (line.isUserDrawn && !FindPlanarFaceContainingLine(shape, line, matchTolerance).IsNull()) {
-                addUniqueSegment(line.start, line.end);
+            if (!line.isUserDrawn) {
+                continue;
+            }
+
+            TopoDS_Face hostFace = FindPlanarFaceContainingLine(shape, line, matchTolerance);
+            if (hostFace.IsNull()) {
+                continue;
+            }
+
+            try {
+                BRepAdaptor_Surface adaptor(hostFace, Standard_False);
+                if (adaptor.GetType() != GeomAbs_Plane) {
+                    continue;
+                }
+
+                const gp_Dir dir = adaptor.Plane().Axis().Direction();
+                glm::vec3 normal(
+                    static_cast<float>(dir.X()),
+                    static_cast<float>(dir.Y()),
+                    static_cast<float>(dir.Z()));
+                if (glm::length2(normal) <= 1.0e-12f) {
+                    continue;
+                }
+                normal = glm::normalize(normal);
+                const float offset = glm::dot(normal, line.start);
+                addUniqueSegment(line.start, line.end, normal, offset);
+            } catch (const Standard_Failure&) {
             }
         }
 
@@ -2352,7 +2430,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
 
     void Scene::RestoreObjectPlanarLineGraph(
         SceneObject* obj,
-        const std::vector<std::pair<glm::vec3, glm::vec3>>& segments) {
+        const std::vector<PlanarLineSegmentSnapshot>& segments) {
         if (!obj || segments.empty()) {
             return;
         }
@@ -2365,6 +2443,8 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         const TopoDS_Shape& shape = *brepGeom->getShape();
         const double matchTolerance = ShapeMatchTolerance(shape);
         std::vector<uint64_t> restoredLineIds;
+        std::vector<std::pair<glm::vec3, glm::vec3>> clippedSegments;
+        std::set<uint64_t> originalLineIdsToRemove;
 
         auto findLineSegmentId = [this](const glm::vec3& start, const glm::vec3& end) -> uint64_t {
             for (const auto& [id, line] : lines_) {
@@ -2376,21 +2456,119 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             return 0;
         };
 
-        for (const auto& [start, end] : segments) {
-            Line candidate{start, end, false, true};
-            if (FindPlanarFaceContainingLine(shape, candidate, matchTolerance).IsNull()) {
+        auto addUniqueT = [](std::vector<float>& values, const float t) {
+            if (t < -1.0e-4f || t > 1.0f + 1.0e-4f) {
+                return;
+            }
+            const float clamped = glm::clamp(t, 0.0f, 1.0f);
+            for (float existing : values) {
+                if (std::abs(existing - clamped) <= 1.0e-4f) {
+                    return;
+                }
+            }
+            values.push_back(clamped);
+        };
+
+        auto addUniqueClippedSegment = [&](const glm::vec3& a, const glm::vec3& b) {
+            if (AreVec3Equal(a, b)) {
+                return;
+            }
+            for (const auto& existing : clippedSegments) {
+                if ((AreVec3Equal(existing.first, a) && AreVec3Equal(existing.second, b)) ||
+                    (AreVec3Equal(existing.first, b) && AreVec3Equal(existing.second, a))) {
+                    return;
+                }
+            }
+            clippedSegments.push_back({a, b});
+        };
+
+        for (const PlanarLineSegmentSnapshot& segment : segments) {
+            const uint64_t existingLineId = findLineSegmentId(segment.start, segment.end);
+            if (existingLineId != 0) {
+                originalLineIdsToRemove.insert(existingLineId);
+            }
+
+            const glm::vec3 direction = segment.end - segment.start;
+            const float directionLenSq = glm::length2(direction);
+            if (directionLenSq <= 1.0e-12f || glm::length2(segment.planeNormal) <= 1.0e-12f) {
                 continue;
             }
 
-            uint64_t lineId = findLineSegmentId(start, end);
+            for (TopExp_Explorer faceExplorer(shape, TopAbs_FACE); faceExplorer.More(); faceExplorer.Next()) {
+                const TopoDS_Face face = TopoDS::Face(faceExplorer.Current());
+                if (!LineLiesOnFacePlane(
+                        face,
+                        segment.start,
+                        segment.end,
+                        segment.planeNormal,
+                        segment.planeOffset,
+                        matchTolerance)) {
+                    continue;
+                }
+
+                std::vector<float> splitParameters = {0.0f, 1.0f};
+
+                for (TopExp_Explorer edgeExplorer(face, TopAbs_EDGE); edgeExplorer.More(); edgeExplorer.Next()) {
+                    const TopoDS_Edge edge = TopoDS::Edge(edgeExplorer.Current());
+                    TopoDS_Vertex v1, v2;
+                    TopExp::Vertices(edge, v1, v2, Standard_True);
+                    if (v1.IsNull() || v2.IsNull()) {
+                        continue;
+                    }
+
+                    const gp_Pnt p1 = BRep_Tool::Pnt(v1);
+                    const gp_Pnt p2 = BRep_Tool::Pnt(v2);
+                    const glm::vec3 edgeStart(
+                        static_cast<float>(p1.X()),
+                        static_cast<float>(p1.Y()),
+                        static_cast<float>(p1.Z()));
+                    const glm::vec3 edgeEnd(
+                        static_cast<float>(p2.X()),
+                        static_cast<float>(p2.Y()),
+                        static_cast<float>(p2.Z()));
+
+                    glm::vec3 intersection;
+                    if (LineSegmentIntersection(segment.start, segment.end, edgeStart, edgeEnd, intersection)) {
+                        addUniqueT(splitParameters, glm::dot(intersection - segment.start, direction) / directionLenSq);
+                    }
+
+                    if (PointOnLineSegment(edgeStart, segment.start, segment.end)) {
+                        addUniqueT(splitParameters, glm::dot(edgeStart - segment.start, direction) / directionLenSq);
+                    }
+                    if (PointOnLineSegment(edgeEnd, segment.start, segment.end)) {
+                        addUniqueT(splitParameters, glm::dot(edgeEnd - segment.start, direction) / directionLenSq);
+                    }
+                }
+
+                std::sort(splitParameters.begin(), splitParameters.end());
+                for (size_t i = 0; i + 1 < splitParameters.size(); ++i) {
+                    const float t0 = splitParameters[i];
+                    const float t1 = splitParameters[i + 1];
+                    if (t1 - t0 <= 1.0e-4f) {
+                        continue;
+                    }
+
+                    const float tm = (t0 + t1) * 0.5f;
+                    const glm::vec3 midpoint = segment.start + direction * tm;
+                    if (!PointLiesOnFaceByUV(face, gp_Pnt(midpoint.x, midpoint.y, midpoint.z), matchTolerance)) {
+                        continue;
+                    }
+
+                    const glm::vec3 clippedStart = segment.start + direction * t0;
+                    const glm::vec3 clippedEnd = segment.start + direction * t1;
+                    addUniqueClippedSegment(clippedStart, clippedEnd);
+                }
+            }
+        }
+
+        for (uint64_t lineId : originalLineIdsToRemove) {
+            RemoveLine(lineId);
+        }
+
+        for (const auto& [start, end] : clippedSegments) {
+            uint64_t lineId = AddSingleLineSegment(start, end, true);
             if (lineId != 0) {
                 lines_[lineId].isUserDrawn = true;
-                restoredLineIds.push_back(lineId);
-                continue;
-            }
-
-            lineId = AddSingleLineSegment(start, end, true);
-            if (lineId != 0) {
                 restoredLineIds.push_back(lineId);
             }
         }
