@@ -3676,7 +3676,10 @@ int main(int argc, char* argv[]) {
                 }
 
                 // 4. Panel Manager: Center (Hidden by default, but needs correct transform)
-                resetPanel("PanelManager", glm::vec3(0.0f, 0.0f, 0.1f), desktopScale);
+                // Its base size (0.217 x 0.381) is much larger than the tool pills, so it would be
+                // enormous at the shared desktopScale. Give it a smaller dedicated scale.
+                float panelManagerDesktopScale = desktopScale * 0.55f;
+                resetPanel("PanelManager", glm::vec3(0.0f, 0.0f, 0.1f), panelManagerDesktopScale);
 
                 // 5. Numpad: Center (Hidden by default)
                 if (auto* numpad = vruiManager.GetPanel("NewNumpad")) {
@@ -3713,8 +3716,8 @@ int main(int argc, char* argv[]) {
                 // Ortho top-left is (-W/2, H/2)
                 glm::vec3 buttonPos(-uiWidth/2.0f + padding, uiHeight/2.0f - padding, 0.0f);
                 
-                // --- FIX: Increased scale significantly for 2D visibility ---
-                float buttonScale = 12.0f; 
+                // Scale for 2D visibility. Kept modest so the button isn't oversized on desktop.
+                float buttonScale = 7.0f;
 
                 // 2. Create Model Matrix (Flat facing screen)
                 glm::mat4 buttonModel = glm::translate(glm::mat4(1.0f), buttonPos) * 

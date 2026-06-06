@@ -25,6 +25,18 @@
 #include <utility>
 
 namespace { // Anonymous namespace for utility functions
+    // Lines (edges) must render on top of the faces they lie on, while still being occluded by
+    // geometry genuinely in front. The robust, depth-correct way (same as SketchUp) is to push the
+    // SOLID FILLS slightly back in the depth buffer with a slope-scaled polygon offset, then draw
+    // the lines at their true depth. Polygon offset scales with the depth slope and distance, so it
+    // works at any zoom level (unlike a constant NDC bias). Applied to every solid-fill pass.
+    constexpr float FILL_DEPTH_OFFSET_FACTOR = 1.0f; // slope-scaled term
+    constexpr float FILL_DEPTH_OFFSET_UNITS  = 1.0f; // constant term (in min-resolvable-depth units)
+
+    // Optional extra depth bias (in NDC units) for user/preview lines. Defaults to 0 so lines stay
+    // at their exact true depth; kept as a tunable safety knob if any residual z-fighting appears.
+    constexpr float LINE_DEPTH_BIAS = 0.0f;
+
     GLuint CompileShader(GLenum type, const char* source) { GLuint shader = glCreateShader(type); glShaderSource(shader, 1, &source, NULL); glCompileShader(shader); GLint success; GLchar infoLog[512]; glGetShaderiv(shader, GL_COMPILE_STATUS, &success); if (!success) { glGetShaderInfoLog(shader, 512, NULL, infoLog); std::cerr << "ERROR::SHADER::COMPILATION_FAILED\n" << (type == GL_VERTEX_SHADER ? "Vertex" : "Fragment") << "\n" << source << "\n" << infoLog << std::endl; glDeleteShader(shader); return 0; } return shader; }
     GLuint LinkShaderProgram(GLuint vertexShader, GLuint fragmentShader) { GLuint shaderProgram = glCreateProgram(); glAttachShader(shaderProgram, vertexShader); glAttachShader(shaderProgram, fragmentShader); glLinkProgram(shaderProgram); GLint success; GLchar infoLog[512]; glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success); if (!success) { glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog); std::cerr << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl; glDeleteProgram(shaderProgram); if (glIsShader(vertexShader)) glDeleteShader(vertexShader); if (glIsShader(fragmentShader)) glDeleteShader(fragmentShader); return 0; } glDeleteShader(vertexShader); glDeleteShader(fragmentShader); return shaderProgram; }
     // Modified to only generate geometry, color will be handled by shader
@@ -250,9 +262,11 @@ namespace Urbaxio {
             "uniform mat4 model;\n"
             "uniform mat4 view;\n"
             "uniform mat4 projection;\n"
+            "uniform float depthBias;\n" // Pulls line depth toward the camera (NDC units) so coplanar geometry doesn't occlude it
             "out vec4 fragmentColor;\n"
             "void main() {\n"
             "    gl_Position = projection * view * model * vec4(aPos, 1.0);\n"
+            "    gl_Position.z -= depthBias * gl_Position.w;\n" // Bias before perspective divide => uniform NDC offset
             "    fragmentColor = aBaseColorAlpha;\n"
             "}\n";
 
@@ -790,6 +804,10 @@ namespace Urbaxio {
                 glUniform3fv(objectShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
                 glUniform1f(objectShaderLocs.ambientStrength, ambientStrength);
                 glUniform1f(objectShaderLocs.overrideAlpha, 1.0f);
+                // Push solid fills slightly back so edges/lines drawn later stay on top (see note
+                // at FILL_DEPTH_OFFSET_FACTOR). Depth-correct; closer geometry still occludes.
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(FILL_DEPTH_OFFSET_FACTOR, FILL_DEPTH_OFFSET_UNITS);
                 glBindVertexArray(VAO_Static); // Bind the single static VAO once
                 for (const auto& [material, commands] : staticBatchQueue) {
                     // Bind material state once per material
@@ -828,9 +846,10 @@ namespace Urbaxio {
                         );
                     }
                 }
+                glDisable(GL_POLYGON_OFFSET_FILL);
                 glBindVertexArray(0); // Unbind the static VAO
             }
-            
+
             // --- Step 3: Collect and draw DYNAMIC objects (the old way) ---
             Frustum frustum;
             frustum.ExtractPlanes(projection * view);
@@ -907,6 +926,10 @@ namespace Urbaxio {
                 glUniform3fv(objectShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
                 glUniform1f(objectShaderLocs.ambientStrength, ambientStrength);
                 glUniform1f(objectShaderLocs.overrideAlpha, 1.0f);
+                // Push solid fills slightly back in depth so coplanar edges/lines win the depth
+                // test at any distance, while geometry genuinely in front still occludes them.
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(FILL_DEPTH_OFFSET_FACTOR, FILL_DEPTH_OFFSET_UNITS);
                 for (const auto& [material, commands] : opaqueQueue) {
                     // Set material state ONCE per material
                     if (material && material->diffuseTextureID != 0) {
@@ -950,6 +973,7 @@ namespace Urbaxio {
                         glDepthMask(GL_TRUE);
                     }
                 }
+                glDisable(GL_POLYGON_OFFSET_FILL);
                 glBindVertexArray(0);
             }
         }
@@ -1097,14 +1121,18 @@ namespace Urbaxio {
             glUniformMatrix4fv(simpleLineShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
             glUniformMatrix4fv(simpleLineShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(simpleLineShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
+            // Bias lines toward the camera so they win against coplanar geometry, while still being
+            // occluded by anything genuinely in front (depth test stays on via GL_LEQUAL).
+            glUniform1f(simpleLineShaderLocs.depthBias, LINE_DEPTH_BIAS);
 
             if (userLinesVAO != 0 && userLinesVertexCount > 0) {
                 glBindVertexArray(userLinesVAO);
                 glDrawArrays(GL_LINES, 0, userLinesVertexCount);
             }
-            
+
             glBindVertexArray(0);
             glLineWidth(1.0f);
+            glUniform1f(simpleLineShaderLocs.depthBias, 0.0f);
             glDepthFunc(GL_LESS);
         }
         if (previewLineEnabled && previewLineVAO != 0 && simpleLineShaderProgram != 0) {
@@ -1114,9 +1142,11 @@ namespace Urbaxio {
             glUniformMatrix4fv(simpleLineShaderLocs.model, 1, GL_FALSE, glm::value_ptr(identityModel));
             glUniformMatrix4fv(simpleLineShaderLocs.view, 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(simpleLineShaderLocs.projection, 1, GL_FALSE, glm::value_ptr(projection));
+            glUniform1f(simpleLineShaderLocs.depthBias, LINE_DEPTH_BIAS);
             glBindVertexArray(previewLineVAO);
             glDrawArrays(GL_LINES, 0, 2);
             glBindVertexArray(0);
+            glUniform1f(simpleLineShaderLocs.depthBias, 0.0f);
             glDepthFunc(GL_LESS);
         }
 
@@ -1330,6 +1360,8 @@ namespace Urbaxio {
                 glUniform3fv(objectMultiviewShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
                 glUniform1f(objectMultiviewShaderLocs.ambientStrength, ambientStrength);
                 glUniform1f(objectMultiviewShaderLocs.overrideAlpha, 1.0f);
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(FILL_DEPTH_OFFSET_FACTOR, FILL_DEPTH_OFFSET_UNITS);
                 glBindVertexArray(VAO_Static);
                 for (const auto& [material, commands] : staticBatchQueue) {
                     if (material && material->diffuseTextureID != 0) {
@@ -1356,9 +1388,10 @@ namespace Urbaxio {
                         glDrawElementsBaseVertex(GL_TRIANGLES, cmd.indexCount, GL_UNSIGNED_INT, (void*)(cmd.startIndexOffset), cmd.baseVertex);
                     }
                 }
+                glDisable(GL_POLYGON_OFFSET_FILL);
                 glBindVertexArray(0);
             }
-            
+
             // --- NEW: Draw DYNAMIC objects (Multiview) ---
             Frustum frustumLeft, frustumRight;
             frustumLeft.ExtractPlanes(projMatrices[0] * viewMatrices[0]);
@@ -1438,6 +1471,8 @@ namespace Urbaxio {
                 glUniform3fv(objectMultiviewShaderLocs.lightColor, 1, glm::value_ptr(lightColor));
                 glUniform1f(objectMultiviewShaderLocs.ambientStrength, ambientStrength);
                 glUniform1f(objectMultiviewShaderLocs.overrideAlpha, 1.0f);
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(FILL_DEPTH_OFFSET_FACTOR, FILL_DEPTH_OFFSET_UNITS);
                 for (const auto& [material, commands] : opaqueQueue) {
                     // Set material state ONCE per material
                     if (material && material->diffuseTextureID != 0) {
@@ -1466,10 +1501,11 @@ namespace Urbaxio {
                         glDrawElements(GL_TRIANGLES, cmd.indexCount, GL_UNSIGNED_INT, (void*)(cmd.startIndexOffset));
                     }
                 }
+                glDisable(GL_POLYGON_OFFSET_FILL);
                 glBindVertexArray(0);
             }
         }
-        
+
         // --- NEW: Draw Markers (Unlit Multiview) ---
         if (unlitMultiviewShaderProgram != 0 && scene) {
             glUseProgram(unlitMultiviewShaderProgram);
@@ -1588,7 +1624,7 @@ namespace Urbaxio {
         // Object Shader
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, objectVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, objectFragmentShaderSource); if (vs != 0 && fs != 0) objectShaderProgram = LinkShaderProgram(vs, fs); if (objectShaderProgram == 0) return false; objectShaderLocs.model = glGetUniformLocation(objectShaderProgram, "model"); objectShaderLocs.view = glGetUniformLocation(objectShaderProgram, "view"); objectShaderLocs.projection = glGetUniformLocation(objectShaderProgram, "projection"); objectShaderLocs.lightDir = glGetUniformLocation(objectShaderProgram, "lightDir"); objectShaderLocs.lightColor = glGetUniformLocation(objectShaderProgram, "lightColor"); objectShaderLocs.ambientStrength = glGetUniformLocation(objectShaderProgram, "ambientStrength"); objectShaderLocs.objectColor = glGetUniformLocation(objectShaderProgram, "objectColor"); objectShaderLocs.useTexture = glGetUniformLocation(objectShaderProgram, "u_useTexture"); objectShaderLocs.diffuseTexture = glGetUniformLocation(objectShaderProgram, "u_diffuseTexture"); objectShaderLocs.overrideAlpha = glGetUniformLocation(objectShaderProgram, "overrideAlpha"); objectShaderLocs.unlit = glGetUniformLocation(objectShaderProgram, "u_unlit"); std::cout << "Renderer: Object shader program created." << std::endl; }
         // Simple Line Shader
-        { GLuint vs = CompileShader(GL_VERTEX_SHADER, simpleLineVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, simpleLineFragmentShaderSource); if (vs != 0 && fs != 0) simpleLineShaderProgram = LinkShaderProgram(vs, fs); if (simpleLineShaderProgram == 0) return false; simpleLineShaderLocs.model = glGetUniformLocation(simpleLineShaderProgram, "model"); simpleLineShaderLocs.view = glGetUniformLocation(simpleLineShaderProgram, "view"); simpleLineShaderLocs.projection = glGetUniformLocation(simpleLineShaderProgram, "projection"); std::cout << "Renderer: Simple Line shader program created." << std::endl; }
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, simpleLineVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, simpleLineFragmentShaderSource); if (vs != 0 && fs != 0) simpleLineShaderProgram = LinkShaderProgram(vs, fs); if (simpleLineShaderProgram == 0) return false; simpleLineShaderLocs.model = glGetUniformLocation(simpleLineShaderProgram, "model"); simpleLineShaderLocs.view = glGetUniformLocation(simpleLineShaderProgram, "view"); simpleLineShaderLocs.projection = glGetUniformLocation(simpleLineShaderProgram, "projection"); simpleLineShaderLocs.depthBias = glGetUniformLocation(simpleLineShaderProgram, "depthBias"); std::cout << "Renderer: Simple Line shader program created." << std::endl; }
         // Grid Shader
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, gridVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, gridFragmentShaderSource); if (vs != 0 && fs != 0) gridShaderProgram = LinkShaderProgram(vs, fs); if (gridShaderProgram == 0) return false; gridShaderLocs.model = glGetUniformLocation(gridShaderProgram, "model"); gridShaderLocs.view = glGetUniformLocation(gridShaderProgram, "view"); gridShaderLocs.projection = glGetUniformLocation(gridShaderProgram, "projection"); gridShaderLocs.gridColor = glGetUniformLocation(gridShaderProgram, "u_gridColor"); gridShaderLocs.cursorWorldPos = glGetUniformLocation(gridShaderProgram, "u_cursorWorldPos"); gridShaderLocs.cursorRadius = glGetUniformLocation(gridShaderProgram, "u_cursorRadius"); gridShaderLocs.intensity = glGetUniformLocation(gridShaderProgram, "u_intensity"); gridShaderLocs.holeStart = glGetUniformLocation(gridShaderProgram, "u_holeStart"); gridShaderLocs.holeEnd = glGetUniformLocation(gridShaderProgram, "u_holeEnd"); std::cout << "Renderer: Grid shader program created." << std::endl; }
         // Axis Shader

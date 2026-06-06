@@ -193,7 +193,7 @@ namespace Urbaxio {
         } objectShaderLocs;
 
         struct SimpleLineShaderLocations {
-            GLuint model, view, projection;
+            GLuint model, view, projection, depthBias;
         } simpleLineShaderLocs;
 
         struct GridShaderLocations {

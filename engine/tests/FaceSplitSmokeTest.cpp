@@ -62,6 +62,13 @@ bool DrawLoop(Urbaxio::Engine::Scene& scene, const std::vector<glm::vec3>& point
     return true;
 }
 
+void DrawPolyline(Urbaxio::Engine::Scene& scene, const std::vector<glm::vec3>& points)
+{
+    for (size_t i = 1; i < points.size(); ++i) {
+        scene.AddUserLine(points[i - 1], points[i]);
+    }
+}
+
 bool RunInteriorSquareSplitCase(const char* label, float zOffset)
 {
     Urbaxio::Engine::Scene scene;
@@ -196,6 +203,128 @@ bool RunMoveNewSplitFaceCase()
     return true;
 }
 
+bool RunOpenSegmentSplitCase()
+{
+    Urbaxio::Engine::Scene scene;
+    Urbaxio::Engine::SceneObject* box = scene.create_box_object("open_segment_split_box", 2.0, 2.0, 2.0);
+    if (!box || !ValidateBRep(box, "open_segment_split_setup")) {
+        return false;
+    }
+
+    const uint64_t boxId = box->get_id();
+    const int beforeFaceCount = CountFaces(box);
+    const size_t beforeObjectCount = scene.get_all_objects().size();
+
+    scene.AddUserLine({-1.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 1.0f});
+
+    box = scene.get_object_by_id(boxId);
+    const int afterFaceCount = CountFaces(box);
+    if (scene.get_all_objects().size() != beforeObjectCount) {
+        std::cerr << "open_segment_split: expected split to stay on host object\n";
+        return false;
+    }
+    if (afterFaceCount <= beforeFaceCount) {
+        std::cerr << "open_segment_split: expected boundary-to-boundary line to split a face, face count "
+                  << beforeFaceCount << " -> " << afterFaceCount << "\n";
+        return false;
+    }
+    if (!ValidateBRep(box, "open_segment_split_after")) {
+        return false;
+    }
+
+    std::cout << "open_segment_split passed: faces " << beforeFaceCount
+              << " -> " << afterFaceCount << "\n";
+    return true;
+}
+
+bool RunOverlappingSegmentNodingCase()
+{
+    Urbaxio::Engine::Scene scene;
+    Urbaxio::Engine::SceneObject* box = scene.create_box_object("overlap_noding_box", 2.0, 2.0, 2.0);
+    if (!box || !ValidateBRep(box, "overlap_noding_setup")) {
+        return false;
+    }
+
+    const uint64_t boxId = box->get_id();
+    const int beforeFaceCount = CountFaces(box);
+    const size_t beforeObjectCount = scene.get_all_objects().size();
+
+    scene.AddUserLine({-1.0f, 0.0f, 1.0f}, { 1.0f, 0.0f, 1.0f});
+    scene.AddUserLine({-0.5f, 0.0f, 1.0f}, { 0.5f, 0.0f, 1.0f});
+    scene.AddUserLine({ 0.0f,-1.0f, 1.0f}, { 0.0f, 1.0f, 1.0f});
+
+    box = scene.get_object_by_id(boxId);
+    const int afterFaceCount = CountFaces(box);
+    if (scene.get_all_objects().size() != beforeObjectCount) {
+        std::cerr << "overlap_noding: expected all splits to stay on host object\n";
+        return false;
+    }
+    if (afterFaceCount < beforeFaceCount + 3) {
+        std::cerr << "overlap_noding: expected overlapped graph to remain noded and splittable, face count "
+                  << beforeFaceCount << " -> " << afterFaceCount << "\n";
+        return false;
+    }
+    if (!ValidateBRep(box, "overlap_noding_after")) {
+        return false;
+    }
+
+    std::cout << "overlap_noding passed: faces " << beforeFaceCount
+              << " -> " << afterFaceCount << "\n";
+    return true;
+}
+
+bool RunEnvelopeGraphSplitCase()
+{
+    Urbaxio::Engine::Scene scene;
+    Urbaxio::Engine::SceneObject* box = scene.create_box_object("envelope_graph_box", 2.0, 2.0, 2.0);
+    if (!box || !ValidateBRep(box, "envelope_graph_setup")) {
+        return false;
+    }
+
+    const uint64_t boxId = box->get_id();
+    const int beforeFaceCount = CountFaces(box);
+    const size_t beforeObjectCount = scene.get_all_objects().size();
+    const float z = 1.0f;
+
+    scene.AddUserLine({-1.0f, -1.0f, z}, { 1.0f,  1.0f, z});
+    scene.AddUserLine({-1.0f,  1.0f, z}, { 1.0f, -1.0f, z});
+
+    DrawLoop(scene, {
+        {-0.36f,  0.36f, z},
+        { 0.00f,  0.66f, z},
+        { 0.36f,  0.36f, z},
+        { 0.00f, -0.08f, z},
+    });
+
+    DrawPolyline(scene, {
+        {-1.0f, -1.0f, z},
+        { 0.00f, -0.08f, z},
+        { 1.0f, -1.0f, z},
+    });
+
+    box = scene.get_object_by_id(boxId);
+    const size_t afterObjectCount = scene.get_all_objects().size();
+    const int afterFaceCount = CountFaces(box);
+
+    if (afterObjectCount != beforeObjectCount) {
+        std::cerr << "envelope_graph: expected graph split to stay on host object, object count "
+                  << beforeObjectCount << " -> " << afterObjectCount << "\n";
+        return false;
+    }
+    if (afterFaceCount < beforeFaceCount + 5) {
+        std::cerr << "envelope_graph: expected a rich planar partition, face count "
+                  << beforeFaceCount << " -> " << afterFaceCount << "\n";
+        return false;
+    }
+    if (!ValidateBRep(box, "envelope_graph_after_split")) {
+        return false;
+    }
+
+    std::cout << "envelope_graph_split passed: faces " << beforeFaceCount
+              << " -> " << afterFaceCount << "\n";
+    return true;
+}
+
 } // namespace
 
 int main()
@@ -203,8 +332,12 @@ int main()
     const bool exactSplitOk = RunInteriorSquareSplitCase("interior_square_on_box_face", 0.0f);
     const bool nearSurfaceSplitOk = RunInteriorSquareSplitCase("near_surface_square_on_box_face", 3.0e-5f);
     const bool moveSplitFaceOk = RunMoveNewSplitFaceCase();
+    const bool openSegmentOk = RunOpenSegmentSplitCase();
+    const bool overlapNodingOk = RunOverlappingSegmentNodingCase();
+    const bool envelopeGraphOk = RunEnvelopeGraphSplitCase();
 
-    if (!exactSplitOk || !nearSurfaceSplitOk || !moveSplitFaceOk) {
+    if (!exactSplitOk || !nearSurfaceSplitOk || !moveSplitFaceOk ||
+        !openSegmentOk || !overlapNodingOk || !envelopeGraphOk) {
         return 1;
     }
 

@@ -517,6 +517,86 @@ namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
         return true;
     }
 
+    static bool LineLiesOnFaceByUV(
+        const TopoDS_Face& face,
+        const Line& line,
+        const double baseTolerance) {
+        if (face.IsNull()) {
+            return false;
+        }
+
+        const glm::vec3 midpoint = (line.start + line.end) * 0.5f;
+        return PointLiesOnFaceByUV(face, gp_Pnt(line.start.x, line.start.y, line.start.z), baseTolerance) &&
+               PointLiesOnFaceByUV(face, gp_Pnt(midpoint.x, midpoint.y, midpoint.z), baseTolerance) &&
+               PointLiesOnFaceByUV(face, gp_Pnt(line.end.x, line.end.y, line.end.z), baseTolerance);
+    }
+
+    static TopoDS_Face FindPlanarFaceContainingLine(
+        const TopoDS_Shape& shape,
+        const Line& line,
+        const double baseTolerance) {
+        for (TopExp_Explorer faceExplorer(shape, TopAbs_FACE); faceExplorer.More(); faceExplorer.Next()) {
+            TopoDS_Face candidateFace = TopoDS::Face(faceExplorer.Current());
+            try {
+                BRepAdaptor_Surface surfaceAdaptor(candidateFace, Standard_False);
+                if (surfaceAdaptor.GetType() != GeomAbs_Plane) {
+                    continue;
+                }
+                if (LineLiesOnFaceByUV(candidateFace, line, baseTolerance)) {
+                    return candidateFace;
+                }
+            } catch (const Standard_Failure&) {
+                continue;
+            }
+        }
+        return TopoDS_Face();
+    }
+
+    static bool MakeCuttingEdgeOnFace(
+        const TopoDS_Face& face,
+        const Line& line,
+        const double baseTolerance,
+        TopoDS_Edge& outEdge) {
+        if (face.IsNull() || glm::distance2(line.start, line.end) <=
+            SCENE_POINT_EQUALITY_TOLERANCE * SCENE_POINT_EQUALITY_TOLERANCE) {
+            return false;
+        }
+
+        try {
+            Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+            if (surface.IsNull()) {
+                return false;
+            }
+
+            Handle(ShapeAnalysis_Surface) analysis = new ShapeAnalysis_Surface(surface);
+            gp_Pnt startPoint(line.start.x, line.start.y, line.start.z);
+            gp_Pnt endPoint(line.end.x, line.end.y, line.end.z);
+            gp_Pnt2d uvStart = analysis->ValueOfUV(startPoint, baseTolerance);
+            gp_Pnt2d uvEnd = analysis->ValueOfUV(endPoint, baseTolerance);
+            const double uvDistance = uvStart.Distance(uvEnd);
+            if (uvDistance <= Precision::Confusion()) {
+                return false;
+            }
+
+            Handle(Geom2d_Line) pcurve = new Geom2d_Line(
+                uvStart,
+                gp_Dir2d(uvEnd.X() - uvStart.X(), uvEnd.Y() - uvStart.Y()));
+
+            BRepBuilderAPI_MakeEdge edgeMaker(pcurve, surface, 0.0, uvDistance);
+            if (!edgeMaker.IsDone() || edgeMaker.Edge().IsNull()) {
+                return false;
+            }
+
+            outEdge = edgeMaker.Edge();
+            BRepLib::BuildCurves3d(outEdge);
+            BRepLib::SameParameter(outEdge, std::max(1.0e-7, baseTolerance * 0.1), Standard_True);
+            return true;
+        } catch (const Standard_Failure& e) {
+            std::cerr << "MakeCuttingEdgeOnFace failed: " << e.GetMessageString() << std::endl;
+            return false;
+        }
+    }
+
     static void AddUniqueFaceCandidate(std::vector<TopoDS_Face>& candidates, const TopoDS_Face& face) {
         if (face.IsNull()) {
             return;
@@ -1931,32 +2011,38 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
 
         try {
             // 1. Proactively split existing lines at the new line's endpoints.
-            std::vector<std::pair<uint64_t, glm::vec3>> splits_to_perform;
+            std::map<uint64_t, std::vector<glm::vec3>> splits_to_perform;
+            std::vector<glm::vec3> split_points_on_new_line;
             for (const auto& [line_id, line] : lines_) {
                 if (PointOnLineSegment(start, line.start, line.end)) {
-                    splits_to_perform.push_back({line_id, start});
+                    splits_to_perform[line_id].push_back(start);
                 }
                 if (PointOnLineSegment(end, line.start, line.end)) {
-                    splits_to_perform.push_back({line_id, end});
+                    splits_to_perform[line_id].push_back(end);
+                }
+                if (PointOnLineSegment(line.start, start, end)) {
+                    split_points_on_new_line.push_back(line.start);
+                }
+                if (PointOnLineSegment(line.end, start, end)) {
+                    split_points_on_new_line.push_back(line.end);
                 }
             }
             for(const auto& split : splits_to_perform) {
-                SplitLineAtPoint(split.first, split.second);
+                SplitLineAtPoints(split.first, split.second);
             }
 
             // 2. Find T-junction intersections between the new line segment and existing lines.
-            std::map<uint64_t, glm::vec3> intersections_on_existing_lines;
-            std::vector<glm::vec3> split_points_on_new_line;
+            std::map<uint64_t, std::vector<glm::vec3>> intersections_on_existing_lines;
 
             for (const auto& [existing_id, existing_line] : lines_) {
                 glm::vec3 intersection_point;
                 if (LineSegmentIntersection(start, end, existing_line.start, existing_line.end, intersection_point)) {
-                    intersections_on_existing_lines[existing_id] = intersection_point;
+                    intersections_on_existing_lines[existing_id].push_back(intersection_point);
                     split_points_on_new_line.push_back(intersection_point);
                 }
             }
-            for (const auto& [line_id, point] : intersections_on_existing_lines) {
-                SplitLineAtPoint(line_id, point);
+            for (const auto& [line_id, points] : intersections_on_existing_lines) {
+                SplitLineAtPoints(line_id, points);
             }
             
             // 3. Add the new line, now potentially split by the T-junctions.
@@ -1981,8 +2067,11 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                 }
             }
             
-            for (uint64_t id : new_line_ids) {
-                FindAndCreateFaces(id);
+            const bool splitExistingBRep = TrySplitBRepFacesWithLineGraph(new_line_ids);
+            if (!splitExistingBRep) {
+                for (uint64_t id : new_line_ids) {
+                    FindAndCreateFaces(id);
+                }
             }
         } catch (...) {
             // --- TRANSACTION ROLLBACK ---
@@ -2018,6 +2107,143 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         vertexAdjacency_[canonicalEnd].push_back(newLineId);
         
         return newLineId;
+    }
+
+    bool Scene::TrySplitBRepFacesWithLineGraph(const std::vector<uint64_t>& seedLineIds) {
+        if (seedLineIds.empty() || geometryMode_ != GeometryMode::BRep) {
+            return false;
+        }
+
+        std::set<uint64_t> seedSet(seedLineIds.begin(), seedLineIds.end());
+        bool anyObjectSplit = false;
+
+        std::vector<SceneObject*> objectsSnapshot;
+        objectsSnapshot.reserve(objects_.size());
+        for (const auto& [id, obj] : objects_) {
+            if (obj && dynamic_cast<BRepGeometry*>(obj->getGeometry())) {
+                objectsSnapshot.push_back(obj.get());
+            }
+        }
+
+        for (SceneObject* hostObject : objectsSnapshot) {
+            if (!hostObject) {
+                continue;
+            }
+
+            auto* brepGeom = dynamic_cast<BRepGeometry*>(hostObject->getGeometry());
+            if (!brepGeom || !brepGeom->getShape() || brepGeom->getShape()->IsNull()) {
+                continue;
+            }
+
+            const TopoDS_Shape& originalShape = *brepGeom->getShape();
+            const double matchTolerance = ShapeMatchTolerance(originalShape);
+
+            ShapeFix_Shape shapeFixer(originalShape);
+            shapeFixer.SetPrecision(std::max(1.0e-7, matchTolerance * 0.1));
+            shapeFixer.SetMaxTolerance(std::max(1.0e-5, matchTolerance * 20.0));
+            shapeFixer.Perform();
+            TopoDS_Shape workingShape = shapeFixer.Shape();
+            if (workingShape.IsNull()) {
+                continue;
+            }
+
+            TopTools_ListOfShape tools;
+            std::vector<uint64_t> cuttingLineIds;
+            std::set<uint64_t> cuttingLineIdSet;
+            bool touchesSeedLine = false;
+
+            for (const auto& [lineId, line] : lines_) {
+                if (hostObject->boundaryLineIDs.count(lineId) > 0) {
+                    continue;
+                }
+                if (line.usedInFace && seedSet.count(lineId) == 0) {
+                    continue;
+                }
+
+                TopoDS_Face hostFace = FindPlanarFaceContainingLine(workingShape, line, matchTolerance);
+                if (hostFace.IsNull()) {
+                    continue;
+                }
+
+                TopoDS_Edge cuttingEdge;
+                if (!MakeCuttingEdgeOnFace(hostFace, line, matchTolerance, cuttingEdge)) {
+                    continue;
+                }
+
+                tools.Append(cuttingEdge);
+                cuttingLineIds.push_back(lineId);
+                cuttingLineIdSet.insert(lineId);
+                touchesSeedLine = touchesSeedLine || seedSet.count(lineId) > 0;
+            }
+
+            if (tools.IsEmpty() || !touchesSeedLine) {
+                continue;
+            }
+
+            try {
+                BOPAlgo_Splitter splitter;
+                TopTools_ListOfShape arguments;
+                arguments.Append(workingShape);
+                splitter.SetArguments(arguments);
+                splitter.SetTools(tools);
+
+                const int faceCountBefore = CountFaces(workingShape);
+                splitter.Perform();
+                if (splitter.HasErrors()) {
+                    splitter.GetReport()->Dump(std::cout);
+                    continue;
+                }
+
+                TopoDS_Shape splitShape = splitter.Shape();
+                if (splitShape.IsNull()) {
+                    continue;
+                }
+
+                ShapeFix_Shape finalFixer(splitShape);
+                finalFixer.SetPrecision(std::max(1.0e-7, matchTolerance * 0.1));
+                finalFixer.SetMaxTolerance(std::max(1.0e-5, matchTolerance * 20.0));
+                finalFixer.Perform();
+                TopoDS_Shape finalShape = finalFixer.Shape();
+                if (finalShape.IsNull()) {
+                    continue;
+                }
+
+                const int faceCountAfter = CountFaces(finalShape);
+                if (faceCountAfter <= faceCountBefore) {
+                    continue;
+                }
+
+                BRepCheck_Analyzer analyzer(finalShape);
+                if (!analyzer.IsValid()) {
+                    std::cerr << "Line graph split produced an invalid B-Rep; keeping original shape." << std::endl;
+                    continue;
+                }
+
+                brepGeom->setShape(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
+                hostObject->invalidateMeshCache();
+                UpdateObjectBoundary(hostObject);
+
+                for (uint64_t lineId : cuttingLineIds) {
+                    auto lineIt = lines_.find(lineId);
+                    if (lineIt != lines_.end()) {
+                        lineIt->second.usedInFace = true;
+                    }
+                }
+
+                anyObjectSplit = true;
+                std::cout << "Scene: Split object " << hostObject->get_id()
+                          << " with planar line graph. faces "
+                          << faceCountBefore << " -> " << faceCountAfter
+                          << ", cuttingLines=" << cuttingLineIdSet.size() << std::endl;
+            } catch (const Standard_Failure& e) {
+                std::cerr << "OCCT Exception during line graph split: " << e.GetMessageString() << std::endl;
+            }
+        }
+
+        if (anyObjectSplit) {
+            MarkStaticGeometryDirty();
+        }
+        return anyObjectSplit;
     }
 
     const std::map<uint64_t, Line>& Scene::GetAllLines() const {
@@ -2058,6 +2284,49 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         // Remove from the main map
         lines_.erase(it);
     }
+
+    void Scene::SplitLineAtPoints(uint64_t lineId, const std::vector<glm::vec3>& splitPoints) {
+        auto it = lines_.find(lineId);
+        if (it == lines_.end() || splitPoints.empty()) {
+            return;
+        }
+
+        Line originalLine = it->second;
+        const glm::vec3 dir = originalLine.end - originalLine.start;
+        if (glm::length2(dir) < 1.0e-12f) {
+            return;
+        }
+
+        std::vector<glm::vec3> orderedPoints;
+        orderedPoints.reserve(splitPoints.size() + 2);
+        orderedPoints.push_back(originalLine.start);
+        for (const glm::vec3& splitPoint : splitPoints) {
+            if (PointOnLineSegment(splitPoint, originalLine.start, originalLine.end)) {
+                orderedPoints.push_back(MergeOrAddVertex(splitPoint));
+            }
+        }
+        orderedPoints.push_back(originalLine.end);
+
+        std::sort(orderedPoints.begin(), orderedPoints.end(),
+            [&originalLine, &dir](const glm::vec3& a, const glm::vec3& b) {
+                return glm::dot(a - originalLine.start, dir) < glm::dot(b - originalLine.start, dir);
+            });
+        orderedPoints.erase(std::unique(orderedPoints.begin(), orderedPoints.end(), AreVec3Equal), orderedPoints.end());
+        if (orderedPoints.size() <= 2) {
+            return;
+        }
+
+        std::cout << "Scene: Splitting line " << lineId << " into "
+                  << (orderedPoints.size() - 1) << " segments" << std::endl;
+
+        RemoveLine(lineId);
+        for (size_t i = 0; i + 1 < orderedPoints.size(); ++i) {
+            uint64_t segmentId = AddSingleLineSegment(orderedPoints[i], orderedPoints[i + 1]);
+            if (originalLine.usedInFace && segmentId != 0 && lines_.count(segmentId)) {
+                lines_[segmentId].usedInFace = true;
+            }
+        }
+    }
     
     glm::vec3 Scene::SplitLineAtPoint(uint64_t lineId, const glm::vec3& splitPoint) {
         auto it = lines_.find(lineId);
@@ -2073,14 +2342,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             return canonicalSplitPoint; // No split needed, just return the merged vertex.
         }
 
-        std::cout << "Scene: Splitting line " << lineId << std::endl;
-
-        // 1. Remove the old line from existence
-        RemoveLine(lineId);
-
-        // 2. Add two new lines. Use internal function to avoid recursive intersection checks.
-        AddSingleLineSegment(originalLine.start, canonicalSplitPoint);
-        AddSingleLineSegment(canonicalSplitPoint, originalLine.end);
+        SplitLineAtPoints(lineId, {canonicalSplitPoint});
         
         // Return the canonical merged vertex for the split point
         return canonicalSplitPoint;

@@ -171,6 +171,7 @@ namespace Urbaxio::Engine {
         uint64_t AddSingleLineSegment(const glm::vec3& start, const glm::vec3& end);
         void RemoveLine(uint64_t lineId);
         glm::vec3 MergeOrAddVertex(const glm::vec3& p);
+        void SplitLineAtPoints(uint64_t lineId, const std::vector<glm::vec3>& splitPoints);
         
         
         static bool LineSegmentIntersection(
@@ -180,6 +181,7 @@ namespace Urbaxio::Engine {
         );
         
         void FindAndCreateFaces(uint64_t newLineId);
+        bool TrySplitBRepFacesWithLineGraph(const std::vector<uint64_t>& seedLineIds);
         bool FindBestCycleForLine(
             uint64_t newLineId,
             std::vector<glm::vec3>& orderedVertices,

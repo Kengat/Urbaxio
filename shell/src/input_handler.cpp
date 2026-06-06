@@ -104,6 +104,14 @@ namespace Urbaxio {
                             scene->getCommandManager()->Undo();
                         } else if (ctrlDown && event.key.keysym.sym == SDLK_y) {
                             scene->getCommandManager()->Redo();
+                        } else if (!ctrlDown && event.key.keysym.sym == SDLK_s) {
+                            toolManager.SetTool(Tools::ToolType::Select);    // S: Select
+                        } else if (!ctrlDown && event.key.keysym.sym == SDLK_l) {
+                            toolManager.SetTool(Tools::ToolType::Line);      // L: Line
+                        } else if (!ctrlDown && event.key.keysym.sym == SDLK_m) {
+                            toolManager.SetTool(Tools::ToolType::Move);      // M: Move
+                        } else if (!ctrlDown && event.key.keysym.sym == SDLK_p) {
+                            toolManager.SetTool(Tools::ToolType::PushPull);  // P: Push/Pull
                         } else {
                             // Forward other key presses to the active tool
                             toolManager.OnKeyDown(event.key.keysym.sym, shiftDown, ctrlDown);
