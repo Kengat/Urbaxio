@@ -59,6 +59,7 @@
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
 #include <ShapeFix_Shape.hxx>
 #include <Standard_Failure.hxx>
 #include <Bnd_Box.hxx>
@@ -529,6 +530,45 @@ namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
         return PointLiesOnFaceByUV(face, gp_Pnt(line.start.x, line.start.y, line.start.z), baseTolerance) &&
                PointLiesOnFaceByUV(face, gp_Pnt(midpoint.x, midpoint.y, midpoint.z), baseTolerance) &&
                PointLiesOnFaceByUV(face, gp_Pnt(line.end.x, line.end.y, line.end.z), baseTolerance);
+    }
+
+    static bool PointLiesOnFaceBoundary(
+        const TopoDS_Face& face,
+        const gp_Pnt& point,
+        const double baseTolerance) {
+        if (face.IsNull()) {
+            return false;
+        }
+
+        const double tolerance = std::max({FaceContainmentTolerance(face, baseTolerance) * 50.0, 1.0e-5, baseTolerance});
+        try {
+            TopoDS_Vertex pointVertex = BRepBuilderAPI_MakeVertex(point).Vertex();
+            for (TopExp_Explorer edgeExplorer(face, TopAbs_EDGE); edgeExplorer.More(); edgeExplorer.Next()) {
+                const TopoDS_Edge edge = TopoDS::Edge(edgeExplorer.Current());
+                if (edge.IsNull()) {
+                    continue;
+                }
+
+                BRepExtrema_DistShapeShape distance(pointVertex, edge);
+                distance.Perform();
+                if (distance.IsDone() && distance.Value() <= tolerance) {
+                    return true;
+                }
+            }
+        } catch (const Standard_Failure&) {
+        }
+
+        return false;
+    }
+
+    static bool LineLiesOnFaceBoundary(
+        const TopoDS_Face& face,
+        const Line& line,
+        const double baseTolerance) {
+        const glm::vec3 midpoint = (line.start + line.end) * 0.5f;
+        return PointLiesOnFaceBoundary(face, gp_Pnt(line.start.x, line.start.y, line.start.z), baseTolerance) &&
+               PointLiesOnFaceBoundary(face, gp_Pnt(midpoint.x, midpoint.y, midpoint.z), baseTolerance) &&
+               PointLiesOnFaceBoundary(face, gp_Pnt(line.end.x, line.end.y, line.end.z), baseTolerance);
     }
 
     static TopoDS_Face FindPlanarFaceContainingLine(
@@ -1564,6 +1604,35 @@ namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
         return faceCount;
     }
 
+    static TopoDS_Shape OrientClosedSolids(const TopoDS_Shape& shape) {
+        if (shape.IsNull()) {
+            return shape;
+        }
+
+        try {
+            if (shape.ShapeType() == TopAbs_SOLID) {
+                TopoDS_Solid solid = TopoDS::Solid(shape);
+                BRepLib::OrientClosedSolid(solid);
+                return solid;
+            }
+
+            Handle(ShapeBuild_ReShape) reshaper = new ShapeBuild_ReShape();
+            bool modified = false;
+
+            for (TopExp_Explorer solidExp(shape, TopAbs_SOLID); solidExp.More(); solidExp.Next()) {
+                TopoDS_Solid solid = TopoDS::Solid(solidExp.Current());
+                BRepLib::OrientClosedSolid(solid);
+                reshaper->Replace(solidExp.Current(), solid);
+                modified = true;
+            }
+
+            return modified ? reshaper->Apply(shape) : shape;
+        } catch (const Standard_Failure& e) {
+            std::cerr << "Warning: failed to orient closed solid: " << e.GetMessageString() << std::endl;
+            return shape;
+        }
+    }
+
     static bool ShouldPreferPreviewTopologyMove(
         const TopoDS_Shape& originalShape,
         const Urbaxio::CadKernel::MeshBuffers& previewMesh) {
@@ -1724,6 +1793,129 @@ namespace Urbaxio::Engine { // начало namespace Urbaxio::Engine
 
     bool AreVec3Equal(const glm::vec3& a, const glm::vec3& b) {
         return glm::all(glm::epsilonEqual(a, b, Urbaxio::SCENE_POINT_EQUALITY_TOLERANCE));
+    }
+
+    struct FaceCutCandidate {
+        uint64_t lineId = 0;
+        Line line;
+        int startVertex = -1;
+        int endVertex = -1;
+    };
+
+    static int FindOrAddGraphVertex(std::vector<glm::vec3>& vertices, const glm::vec3& point) {
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            if (AreVec3Equal(vertices[i], point)) {
+                return static_cast<int>(i);
+            }
+        }
+        vertices.push_back(point);
+        return static_cast<int>(vertices.size() - 1);
+    }
+
+    static std::set<uint64_t> SelectSplittingLineIdsForFace(
+        const TopoDS_Face& face,
+        const std::vector<std::pair<uint64_t, Line>>& candidateLines,
+        const double baseTolerance) {
+        std::set<uint64_t> selectedIds;
+        if (face.IsNull() || candidateLines.empty()) {
+            return selectedIds;
+        }
+
+        std::vector<glm::vec3> vertices;
+        std::vector<FaceCutCandidate> candidates;
+        candidates.reserve(candidateLines.size());
+
+        for (const auto& [lineId, line] : candidateLines) {
+            if (LineLiesOnFaceBoundary(face, line, baseTolerance)) {
+                continue;
+            }
+
+            FaceCutCandidate candidate;
+            candidate.lineId = lineId;
+            candidate.line = line;
+            candidate.startVertex = FindOrAddGraphVertex(vertices, line.start);
+            candidate.endVertex = FindOrAddGraphVertex(vertices, line.end);
+            if (candidate.startVertex == candidate.endVertex) {
+                continue;
+            }
+            candidates.push_back(candidate);
+        }
+
+        if (candidates.empty()) {
+            return selectedIds;
+        }
+
+        std::vector<std::vector<int>> vertexToLines(vertices.size());
+        for (int i = 0; i < static_cast<int>(candidates.size()); ++i) {
+            vertexToLines[candidates[i].startVertex].push_back(i);
+            vertexToLines[candidates[i].endVertex].push_back(i);
+        }
+
+        std::vector<bool> vertexOnBoundary(vertices.size(), false);
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            vertexOnBoundary[i] = PointLiesOnFaceBoundary(
+                face,
+                gp_Pnt(vertices[i].x, vertices[i].y, vertices[i].z),
+                baseTolerance);
+        }
+
+        std::vector<bool> visited(candidates.size(), false);
+        for (int startLine = 0; startLine < static_cast<int>(candidates.size()); ++startLine) {
+            if (visited[startLine]) {
+                continue;
+            }
+
+            std::vector<int> componentLines;
+            std::set<int> componentVertices;
+            std::deque<int> queue;
+            queue.push_back(startLine);
+            visited[startLine] = true;
+
+            while (!queue.empty()) {
+                const int lineIndex = queue.front();
+                queue.pop_front();
+                componentLines.push_back(lineIndex);
+
+                const int a = candidates[lineIndex].startVertex;
+                const int b = candidates[lineIndex].endVertex;
+                componentVertices.insert(a);
+                componentVertices.insert(b);
+
+                for (const int vertexIndex : {a, b}) {
+                    for (int neighborLine : vertexToLines[vertexIndex]) {
+                        if (!visited[neighborLine]) {
+                            visited[neighborLine] = true;
+                            queue.push_back(neighborLine);
+                        }
+                    }
+                }
+            }
+
+            std::map<int, int> componentDegree;
+            for (int lineIndex : componentLines) {
+                ++componentDegree[candidates[lineIndex].startVertex];
+                ++componentDegree[candidates[lineIndex].endVertex];
+            }
+
+            bool hasDanglingInteriorEnd = false;
+            for (const int vertexIndex : componentVertices) {
+                const int degree = componentDegree[vertexIndex];
+                if (degree <= 1 && !vertexOnBoundary[vertexIndex]) {
+                    hasDanglingInteriorEnd = true;
+                    break;
+                }
+            }
+
+            if (hasDanglingInteriorEnd) {
+                continue;
+            }
+
+            for (int lineIndex : componentLines) {
+                selectedIds.insert(candidates[lineIndex].lineId);
+            }
+        }
+
+        return selectedIds;
     }
 
     static bool HasNonCollinearTriple(const std::vector<glm::vec3>& points) {
@@ -2109,6 +2301,90 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         return newLineId;
     }
 
+    bool Scene::HasLineSegment(const glm::vec3& start, const glm::vec3& end) const {
+        for (const auto& [id, line] : lines_) {
+            if ((AreVec3Equal(line.start, start) && AreVec3Equal(line.end, end)) ||
+                (AreVec3Equal(line.start, end) && AreVec3Equal(line.end, start))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::vector<std::pair<glm::vec3, glm::vec3>> Scene::CaptureObjectPlanarLineGraph(const SceneObject* obj) const {
+        std::vector<std::pair<glm::vec3, glm::vec3>> segments;
+        if (!obj) {
+            return segments;
+        }
+
+        auto* brepGeom = dynamic_cast<BRepGeometry*>(obj->getGeometry());
+        if (!brepGeom || !brepGeom->getShape() || brepGeom->getShape()->IsNull()) {
+            return segments;
+        }
+
+        const TopoDS_Shape& shape = *brepGeom->getShape();
+        const double matchTolerance = ShapeMatchTolerance(shape);
+
+        auto addUniqueSegment = [&](const glm::vec3& a, const glm::vec3& b) {
+            if (AreVec3Equal(a, b)) {
+                return;
+            }
+            for (const auto& existing : segments) {
+                if ((AreVec3Equal(existing.first, a) && AreVec3Equal(existing.second, b)) ||
+                    (AreVec3Equal(existing.first, b) && AreVec3Equal(existing.second, a))) {
+                    return;
+                }
+            }
+            segments.push_back({a, b});
+        };
+
+        for (const auto& [lineId, line] : lines_) {
+            if (!FindPlanarFaceContainingLine(shape, line, matchTolerance).IsNull()) {
+                addUniqueSegment(line.start, line.end);
+            }
+        }
+
+        return segments;
+    }
+
+    void Scene::RestoreObjectPlanarLineGraph(
+        SceneObject* obj,
+        const std::vector<std::pair<glm::vec3, glm::vec3>>& segments) {
+        if (!obj || segments.empty()) {
+            return;
+        }
+
+        auto* brepGeom = dynamic_cast<BRepGeometry*>(obj->getGeometry());
+        if (!brepGeom || !brepGeom->getShape() || brepGeom->getShape()->IsNull()) {
+            return;
+        }
+
+        const TopoDS_Shape& shape = *brepGeom->getShape();
+        const double matchTolerance = ShapeMatchTolerance(shape);
+        std::vector<uint64_t> restoredLineIds;
+
+        for (const auto& [start, end] : segments) {
+            Line candidate{start, end, false};
+            if (FindPlanarFaceContainingLine(shape, candidate, matchTolerance).IsNull()) {
+                continue;
+            }
+            if (HasLineSegment(start, end)) {
+                continue;
+            }
+
+            uint64_t lineId = AddSingleLineSegment(start, end);
+            if (lineId != 0) {
+                restoredLineIds.push_back(lineId);
+            }
+        }
+
+        if (!restoredLineIds.empty()) {
+            std::cout << "Scene: Restoring planar line graph on object " << obj->get_id()
+                      << " with " << restoredLineIds.size() << " segments." << std::endl;
+            TrySplitBRepFacesWithLineGraph(restoredLineIds);
+        }
+    }
+
     bool Scene::TrySplitBRepFacesWithLineGraph(const std::vector<uint64_t>& seedLineIds) {
         if (seedLineIds.empty() || geometryMode_ != GeometryMode::BRep) {
             return false;
@@ -2152,28 +2428,50 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             std::set<uint64_t> cuttingLineIdSet;
             bool touchesSeedLine = false;
 
-            for (const auto& [lineId, line] : lines_) {
-                if (hostObject->boundaryLineIDs.count(lineId) > 0) {
-                    continue;
-                }
-                if (line.usedInFace && seedSet.count(lineId) == 0) {
-                    continue;
-                }
-
-                TopoDS_Face hostFace = FindPlanarFaceContainingLine(workingShape, line, matchTolerance);
-                if (hostFace.IsNull()) {
-                    continue;
-                }
-
-                TopoDS_Edge cuttingEdge;
-                if (!MakeCuttingEdgeOnFace(hostFace, line, matchTolerance, cuttingEdge)) {
+            for (TopExp_Explorer faceExplorer(workingShape, TopAbs_FACE); faceExplorer.More(); faceExplorer.Next()) {
+                TopoDS_Face hostFace = TopoDS::Face(faceExplorer.Current());
+                try {
+                    BRepAdaptor_Surface surfaceAdaptor(hostFace, Standard_False);
+                    if (surfaceAdaptor.GetType() != GeomAbs_Plane) {
+                        continue;
+                    }
+                } catch (const Standard_Failure&) {
                     continue;
                 }
 
-                tools.Append(cuttingEdge);
-                cuttingLineIds.push_back(lineId);
-                cuttingLineIdSet.insert(lineId);
-                touchesSeedLine = touchesSeedLine || seedSet.count(lineId) > 0;
+                std::vector<std::pair<uint64_t, Line>> candidateLines;
+                for (const auto& [lineId, line] : lines_) {
+                    if (hostObject->boundaryLineIDs.count(lineId) > 0) {
+                        continue;
+                    }
+                    if (line.usedInFace && seedSet.count(lineId) == 0) {
+                        continue;
+                    }
+                    if (!LineLiesOnFaceByUV(hostFace, line, matchTolerance)) {
+                        continue;
+                    }
+                    candidateLines.push_back({lineId, line});
+                }
+
+                const std::set<uint64_t> selectedFaceLineIds =
+                    SelectSplittingLineIdsForFace(hostFace, candidateLines, matchTolerance);
+
+                for (uint64_t lineId : selectedFaceLineIds) {
+                    const auto lineIt = lines_.find(lineId);
+                    if (lineIt == lines_.end()) {
+                        continue;
+                    }
+
+                    TopoDS_Edge cuttingEdge;
+                    if (!MakeCuttingEdgeOnFace(hostFace, lineIt->second, matchTolerance, cuttingEdge)) {
+                        continue;
+                    }
+
+                    tools.Append(cuttingEdge);
+                    cuttingLineIds.push_back(lineId);
+                    cuttingLineIdSet.insert(lineId);
+                    touchesSeedLine = touchesSeedLine || seedSet.count(lineId) > 0;
+                }
             }
 
             if (tools.IsEmpty() || !touchesSeedLine) {
@@ -2204,6 +2502,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                 finalFixer.SetMaxTolerance(std::max(1.0e-5, matchTolerance * 20.0));
                 finalFixer.Perform();
                 TopoDS_Shape finalShape = finalFixer.Shape();
+                finalShape = OrientClosedSolids(finalShape);
                 if (finalShape.IsNull()) {
                     continue;
                 }
@@ -3244,6 +3543,8 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         if (std::abs(distance) < 1e-4) {
             return true;
         }
+
+        const auto preservedLineGraph = CaptureObjectPlanarLineGraph(obj);
         
         TopoDS_Face faceToExtrude = FindOriginalFace(obj, faceVertices, direction);
         if (faceToExtrude.IsNull()) {
@@ -3313,6 +3614,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         brepGeom->setShape(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(healedShape)));
         obj->invalidateMeshCache();
         UpdateObjectBoundary(obj);
+        RestoreObjectPlanarLineGraph(obj, preservedLineGraph);
         
         } catch (const Standard_Failure& e) {
             std::cerr << "OCCT Exception during ExtrudeFace: " << e.GetMessageString() << std::endl;
@@ -3634,7 +3936,10 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         }
 
         const double matchTolerance = ShapeMatchTolerance(*originalShape);
-        if (previewMesh &&
+        const auto preservedLineGraph = CaptureObjectPlanarLineGraph(obj);
+
+        if (type != SubObjectType::FACE &&
+            previewMesh &&
             !previewMesh->mesh.isEmpty() &&
             !previewMesh->movingVertexIndices.empty() &&
             ShouldPreferPreviewTopologyMove(*originalShape, previewMesh->mesh)) {
@@ -3655,6 +3960,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                     brepGeom->setShape(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalPreviewShape)));
                     obj->invalidateMeshCache();
                     UpdateObjectBoundary(obj);
+                    RestoreObjectPlanarLineGraph(obj, preservedLineGraph);
                     MarkStaticGeometryDirty();
                     return true;
                 }
@@ -3729,6 +4035,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             brepGeom->setShape(CadKernel::OCCT_ShapeUniquePtr(new TopoDS_Shape(finalShape)));
             obj->invalidateMeshCache();
             UpdateObjectBoundary(obj);
+            RestoreObjectPlanarLineGraph(obj, preservedLineGraph);
             MarkStaticGeometryDirty();
             return true;
         } catch (const Standard_Failure& e) {

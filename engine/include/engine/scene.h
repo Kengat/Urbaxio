@@ -172,6 +172,9 @@ namespace Urbaxio::Engine {
         void RemoveLine(uint64_t lineId);
         glm::vec3 MergeOrAddVertex(const glm::vec3& p);
         void SplitLineAtPoints(uint64_t lineId, const std::vector<glm::vec3>& splitPoints);
+        std::vector<std::pair<glm::vec3, glm::vec3>> CaptureObjectPlanarLineGraph(const SceneObject* obj) const;
+        void RestoreObjectPlanarLineGraph(SceneObject* obj, const std::vector<std::pair<glm::vec3, glm::vec3>>& segments);
+        bool HasLineSegment(const glm::vec3& start, const glm::vec3& end) const;
         
         
         static bool LineSegmentIntersection(

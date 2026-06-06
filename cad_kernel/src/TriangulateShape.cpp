@@ -9,7 +9,11 @@
 #include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepGProp.hxx>
 #include <Bnd_Box.hxx>
+#include <GeomAbs_SurfaceType.hxx>
+#include <GProp_GProps.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -45,6 +49,23 @@ namespace Urbaxio::CadKernel {
     {
         MeshBuffers out;
         if (shape.IsNull()) { /*...*/ return out; }
+
+        gp_Pnt shapeCenter(0.0, 0.0, 0.0);
+        bool hasShapeCenter = false;
+        {
+            Bnd_Box shapeBounds;
+            try { BRepBndLib::Add(shape, shapeBounds, false); }
+            catch (...) {
+                try { BRepBndLib::Add(shape, shapeBounds, true); }
+                catch (...) {}
+            }
+            if (!shapeBounds.IsVoid()) {
+                double xmin, ymin, zmin, xmax, ymax, zmax;
+                shapeBounds.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+                shapeCenter.SetCoord((xmin + xmax) * 0.5, (ymin + ymax) * 0.5, (zmin + zmax) * 0.5);
+                hasShapeCenter = true;
+            }
+        }
 
         // --- 1.                             ---
         if (linDefl <= 0.0) { /* ... (            linDefl        ) ... */ }
@@ -97,6 +118,34 @@ namespace Urbaxio::CadKernel {
             Handle(ShapeAnalysis_Surface) sas;
             if (!surface.IsNull()) {
                 sas = new ShapeAnalysis_Surface(surface);
+            }
+
+            gp_Vec planarRenderNormal;
+            bool hasPlanarRenderNormal = false;
+            try {
+                BRepAdaptor_Surface adaptor(face, Standard_True);
+                if (adaptor.GetType() == GeomAbs_Plane) {
+                    gp_Dir normalDir = adaptor.Plane().Axis().Direction();
+                    if (face.Orientation() == TopAbs_REVERSED) {
+                        normalDir.Reverse();
+                    }
+                    planarRenderNormal = gp_Vec(normalDir);
+
+                    if (hasShapeCenter) {
+                        GProp_GProps props;
+                        BRepGProp::SurfaceProperties(face, props);
+                        const gp_Pnt faceCenter = props.CentreOfMass();
+                        gp_Vec outwardHint(shapeCenter, faceCenter);
+                        if (outwardHint.SquareMagnitude() > 1.0e-14 &&
+                            planarRenderNormal.Dot(outwardHint) < 0.0) {
+                            planarRenderNormal.Reverse();
+                        }
+                    }
+                    hasPlanarRenderNormal = planarRenderNormal.SquareMagnitude() > 1.0e-18;
+                }
+            }
+            catch (...) {
+                hasPlanarRenderNormal = false;
             }
 
             // --- 4.          /                 ---
@@ -166,6 +215,9 @@ namespace Urbaxio::CadKernel {
                 if (face.Orientation() == TopAbs_REVERSED) {
                     normal.Reverse();
                 }
+                if (hasPlanarRenderNormal) {
+                    normal = gp_Dir(planarRenderNormal);
+                }
                 // --- END FIX ---
                 // -- END OF MODIFICATION --
 
@@ -188,6 +240,30 @@ namespace Urbaxio::CadKernel {
                 unsigned int max_index = baseVertexIndex + nodes.Length() - 1;
                 if (idx1 > max_index || idx2 > max_index || idx3 > max_index) { continue; }
                 if (reversed) { std::swap(idx2, idx3); }
+
+                auto readVertex = [&](unsigned int idx) {
+                    const size_t base = static_cast<size_t>(idx) * 3;
+                    return gp_Pnt(out.vertices[base + 0], out.vertices[base + 1], out.vertices[base + 2]);
+                };
+                auto readNormal = [&](unsigned int idx) {
+                    const size_t base = static_cast<size_t>(idx) * 3;
+                    return gp_Vec(out.normals[base + 0], out.normals[base + 1], out.normals[base + 2]);
+                };
+
+                const gp_Pnt p1 = readVertex(idx1);
+                const gp_Pnt p2 = readVertex(idx2);
+                const gp_Pnt p3 = readVertex(idx3);
+                gp_Vec geometricNormal = gp_Vec(p1, p2).Crossed(gp_Vec(p1, p3));
+                gp_Vec shadingNormal = readNormal(idx1) + readNormal(idx2) + readNormal(idx3);
+                if (hasPlanarRenderNormal) {
+                    shadingNormal = planarRenderNormal;
+                }
+                if (geometricNormal.SquareMagnitude() > 1.0e-18 &&
+                    shadingNormal.SquareMagnitude() > 1.0e-18 &&
+                    geometricNormal.Dot(shadingNormal) < 0.0) {
+                    std::swap(idx2, idx3);
+                }
+
                 out.indices.push_back(idx1);
                 out.indices.push_back(idx2);
                 out.indices.push_back(idx3);
@@ -200,4 +276,4 @@ namespace Urbaxio::CadKernel {
         return out;
     }
 
-} // namespace Urbaxio::CadKernel 
+} // namespace Urbaxio::CadKernel
