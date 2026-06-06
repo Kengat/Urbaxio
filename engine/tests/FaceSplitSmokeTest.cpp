@@ -250,6 +250,27 @@ void DrawPolyline(Urbaxio::Engine::Scene& scene, const std::vector<glm::vec3>& p
     }
 }
 
+size_t CountUserDrawnLines(const Urbaxio::Engine::Scene& scene)
+{
+    size_t count = 0;
+    for (const auto& [id, line] : scene.GetAllLines()) {
+        if (line.isUserDrawn) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool HasOrphanGeneratedLine(const Urbaxio::Engine::Scene& scene, const Urbaxio::Engine::SceneObject& object)
+{
+    for (const auto& [id, line] : scene.GetAllLines()) {
+        if (!line.isUserDrawn && object.boundaryLineIDs.count(id) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool RunInteriorSquareSplitCase(const char* label, float zOffset)
 {
     Urbaxio::Engine::Scene scene;
@@ -577,6 +598,7 @@ bool RunEnvelopePushPullPreservesGraphCase()
 
     box = scene.get_object_by_id(boxId);
     const int beforeExtrudeFaces = CountFaces(box);
+    const size_t beforeExtrudeUserLines = CountUserDrawnLines(scene);
     if (beforeExtrudeFaces < 12 || !ValidateBRep(box, "envelope_pushpull_before_extrude")) {
         std::cerr << "envelope_pushpull: envelope graph setup did not create enough faces\n";
         return false;
@@ -595,9 +617,15 @@ bool RunEnvelopePushPullPreservesGraphCase()
 
     box = scene.get_object_by_id(boxId);
     const int afterExtrudeFaces = CountFaces(box);
+    const size_t afterExtrudeUserLines = CountUserDrawnLines(scene);
     if (afterExtrudeFaces < beforeExtrudeFaces) {
         std::cerr << "envelope_pushpull: expected existing graph faces to survive extrusion, face count "
                   << beforeExtrudeFaces << " -> " << afterExtrudeFaces << "\n";
+        return false;
+    }
+    if (afterExtrudeUserLines < beforeExtrudeUserLines) {
+        std::cerr << "envelope_pushpull: user line graph lost segments after central extrusion, lines "
+                  << beforeExtrudeUserLines << " -> " << afterExtrudeUserLines << "\n";
         return false;
     }
     if (!ValidateBRep(box, "envelope_pushpull_after_extrude")) {
@@ -606,6 +634,62 @@ bool RunEnvelopePushPullPreservesGraphCase()
 
     std::cout << "envelope_pushpull_preserves_graph passed: faces "
               << beforeExtrudeFaces << " -> " << afterExtrudeFaces << "\n";
+    return true;
+}
+
+bool RunSidePushPullDropsOldBoundaryLinesCase()
+{
+    Urbaxio::Engine::Scene scene;
+    Urbaxio::Engine::SceneObject* box = scene.create_box_object("side_pushpull_box", 2.0, 2.0, 2.0);
+    if (!box || !ValidateBRep(box, "side_pushpull_setup")) {
+        return false;
+    }
+
+    const uint64_t boxId = box->get_id();
+    const float z = 1.0f;
+
+    scene.AddUserLine({-1.0f, -1.0f, z}, { 1.0f,  1.0f, z});
+    scene.AddUserLine({-1.0f,  1.0f, z}, { 1.0f, -1.0f, z});
+    DrawLoop(scene, {
+        {-0.36f,  0.36f, z},
+        { 0.00f,  0.66f, z},
+        { 0.36f,  0.36f, z},
+        { 0.00f, -0.08f, z},
+    });
+    DrawPolyline(scene, {
+        {-1.0f, -1.0f, z},
+        { 0.00f, -0.08f, z},
+        { 1.0f, -1.0f, z},
+    });
+
+    box = scene.get_object_by_id(boxId);
+    if (!box || CountFaces(box) < 12 || !ValidateBRep(box, "side_pushpull_before_extrude")) {
+        std::cerr << "side_pushpull: envelope graph setup failed\n";
+        return false;
+    }
+
+    const std::vector<glm::vec3> faceToExtrude = CollectFaceVerticesNear(*box, glm::vec3(0.64f, 0.22f, z));
+    if (faceToExtrude.size() < 3) {
+        std::cerr << "side_pushpull: could not collect side graph face vertices\n";
+        return false;
+    }
+
+    if (!scene.ExtrudeFace(boxId, faceToExtrude, glm::vec3(0.0f, 0.0f, 1.0f), 0.35f, false)) {
+        std::cerr << "side_pushpull: ExtrudeFace returned false\n";
+        return false;
+    }
+
+    box = scene.get_object_by_id(boxId);
+    if (!box || !ValidateBRep(box, "side_pushpull_after_extrude")) {
+        return false;
+    }
+    if (HasOrphanGeneratedLine(scene, *box)) {
+        std::cerr << "side_pushpull: generated boundary line survived outside current object boundary\n";
+        return false;
+    }
+
+    std::cout << "side_pushpull_drops_old_boundary_lines passed: faces="
+              << CountFaces(box) << ", userLines=" << CountUserDrawnLines(scene) << "\n";
     return true;
 }
 
@@ -621,10 +705,11 @@ int main()
     const bool envelopeGraphOk = RunEnvelopeGraphSplitCase();
     const bool partialEnvelopeOk = RunPartialEnvelopeKeepsTopFaceCase();
     const bool envelopePushPullOk = RunEnvelopePushPullPreservesGraphCase();
+    const bool sidePushPullOk = RunSidePushPullDropsOldBoundaryLinesCase();
 
     if (!exactSplitOk || !nearSurfaceSplitOk || !moveSplitFaceOk ||
         !openSegmentOk || !overlapNodingOk || !envelopeGraphOk ||
-        !partialEnvelopeOk || !envelopePushPullOk) {
+        !partialEnvelopeOk || !envelopePushPullOk || !sidePushPullOk) {
         return 1;
     }
 

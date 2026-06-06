@@ -2253,7 +2253,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             // 4. Add the new segments and check for new faces for each one.
             std::vector<uint64_t> new_line_ids;
             for (size_t i = 0; i < all_points.size() - 1; ++i) {
-                uint64_t new_id = AddSingleLineSegment(all_points[i], all_points[i+1]);
+                uint64_t new_id = AddSingleLineSegment(all_points[i], all_points[i+1], true);
                 if (new_id != 0) {
                     new_line_ids.push_back(new_id);
                 }
@@ -2276,7 +2276,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
 
     // This is the internal, "dumb" version of AddUserLine. It only adds a segment and updates adjacency.
     // It does NOT trigger face finding.
-    uint64_t Scene::AddSingleLineSegment(const glm::vec3& start, const glm::vec3& end) {
+    uint64_t Scene::AddSingleLineSegment(const glm::vec3& start, const glm::vec3& end, bool userDrawn) {
         glm::vec3 canonicalStart = MergeOrAddVertex(start);
         glm::vec3 canonicalEnd = MergeOrAddVertex(end);
 
@@ -2288,12 +2288,15 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         for(const auto& [id, line] : lines_) {
             if ((AreVec3Equal(line.start, canonicalStart) && AreVec3Equal(line.end, canonicalEnd)) ||
                 (AreVec3Equal(line.start, canonicalEnd) && AreVec3Equal(line.end, canonicalStart))) {
+                if (userDrawn) {
+                    lines_[id].isUserDrawn = true;
+                }
                 return id; // Duplicate line, return existing ID
             }
         }
         
         uint64_t newLineId = next_line_id_++;
-        lines_[newLineId] = {canonicalStart, canonicalEnd, false};
+        lines_[newLineId] = {canonicalStart, canonicalEnd, false, userDrawn};
 
         vertexAdjacency_[canonicalStart].push_back(newLineId);
         vertexAdjacency_[canonicalEnd].push_back(newLineId);
@@ -2339,7 +2342,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         };
 
         for (const auto& [lineId, line] : lines_) {
-            if (!FindPlanarFaceContainingLine(shape, line, matchTolerance).IsNull()) {
+            if (line.isUserDrawn && !FindPlanarFaceContainingLine(shape, line, matchTolerance).IsNull()) {
                 addUniqueSegment(line.start, line.end);
             }
         }
@@ -2363,16 +2366,30 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         const double matchTolerance = ShapeMatchTolerance(shape);
         std::vector<uint64_t> restoredLineIds;
 
+        auto findLineSegmentId = [this](const glm::vec3& start, const glm::vec3& end) -> uint64_t {
+            for (const auto& [id, line] : lines_) {
+                if ((AreVec3Equal(line.start, start) && AreVec3Equal(line.end, end)) ||
+                    (AreVec3Equal(line.start, end) && AreVec3Equal(line.end, start))) {
+                    return id;
+                }
+            }
+            return 0;
+        };
+
         for (const auto& [start, end] : segments) {
-            Line candidate{start, end, false};
+            Line candidate{start, end, false, true};
             if (FindPlanarFaceContainingLine(shape, candidate, matchTolerance).IsNull()) {
                 continue;
             }
-            if (HasLineSegment(start, end)) {
+
+            uint64_t lineId = findLineSegmentId(start, end);
+            if (lineId != 0) {
+                lines_[lineId].isUserDrawn = true;
+                restoredLineIds.push_back(lineId);
                 continue;
             }
 
-            uint64_t lineId = AddSingleLineSegment(start, end);
+            lineId = AddSingleLineSegment(start, end, true);
             if (lineId != 0) {
                 restoredLineIds.push_back(lineId);
             }
@@ -2620,7 +2637,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
 
         RemoveLine(lineId);
         for (size_t i = 0; i + 1 < orderedPoints.size(); ++i) {
-            uint64_t segmentId = AddSingleLineSegment(orderedPoints[i], orderedPoints[i + 1]);
+            uint64_t segmentId = AddSingleLineSegment(orderedPoints[i], orderedPoints[i + 1], originalLine.isUserDrawn);
             if (originalLine.usedInFace && segmentId != 0 && lines_.count(segmentId)) {
                 lines_[segmentId].usedInFace = true;
             }
@@ -3228,7 +3245,10 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         
         // 1. Remove all old lines associated with this object.
         for (uint64_t oldLineId : obj->boundaryLineIDs) {
-            RemoveLine(oldLineId);
+            auto lineIt = lines_.find(oldLineId);
+            if (lineIt != lines_.end() && !lineIt->second.isUserDrawn) {
+                RemoveLine(oldLineId);
+            }
         }
         obj->boundaryLineIDs.clear();
         
@@ -3243,7 +3263,9 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                     uint64_t line_id = AddSingleLineSegment(edge.first, edge.second);
                     if (line_id != 0) {
                         lines_[line_id].usedInFace = true;
-                        obj->boundaryLineIDs.insert(line_id);
+                        if (!lines_[line_id].isUserDrawn) {
+                            obj->boundaryLineIDs.insert(line_id);
+                        }
                     }
                 }
             }

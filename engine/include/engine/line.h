@@ -9,7 +9,8 @@ namespace Urbaxio::Engine {
         glm::vec3 start;
         glm::vec3 end;
         bool usedInFace = false;
+        bool isUserDrawn = false;
         // Other properties like layer, style, etc. can be added later.
     };
 
-} // namespace Urbaxio::Engine 
+} // namespace Urbaxio::Engine

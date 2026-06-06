@@ -168,7 +168,7 @@ namespace Urbaxio::Engine {
         SceneObject* create_object_with_id(uint64_t id, const std::string& name);
         void ClearScene(); // The actual implementation remains private
 
-        uint64_t AddSingleLineSegment(const glm::vec3& start, const glm::vec3& end);
+        uint64_t AddSingleLineSegment(const glm::vec3& start, const glm::vec3& end, bool userDrawn = false);
         void RemoveLine(uint64_t lineId);
         glm::vec3 MergeOrAddVertex(const glm::vec3& p);
         void SplitLineAtPoints(uint64_t lineId, const std::vector<glm::vec3>& splitPoints);
