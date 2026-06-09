@@ -43,6 +43,8 @@ set(SHELL_SOURCES
     src/ui/VRSliderWidget.cpp
     src/ui/VRToggleWidget.cpp
     src/ui/VRTextureWidget.cpp
+    # Native HTML/CSS UI layer (RmlUi)
+    src/ui/UrbaxioUI.cpp
     # Add ImGui backend implementation files directly to the compilation
     libs/imgui_backends/imgui_impl_sdl2.cpp
     libs/imgui_backends/imgui_impl_opengl3.cpp
@@ -74,6 +76,7 @@ find_package(SDL2 CONFIG REQUIRED)
 find_package(glad CONFIG REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(imgui CONFIG REQUIRED)
+find_package(RmlUi CONFIG REQUIRED)
 find_package(OpenXR CONFIG REQUIRED)
 find_package(Eigen3 CONFIG REQUIRED)
 find_package(libigl CONFIG REQUIRED)
@@ -89,6 +92,7 @@ target_link_libraries(Urbaxio PRIVATE
     glad::glad
     OpenGL::GL
     imgui::imgui
+    RmlUi::Core
     OpenXR::openxr_loader
     Eigen3::Eigen
     igl::igl_core

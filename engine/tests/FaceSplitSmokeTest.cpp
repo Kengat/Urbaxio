@@ -243,6 +243,42 @@ std::vector<glm::vec3> CollectFaceVerticesNear(
     return vertices;
 }
 
+int FaceIdNear(const Urbaxio::Engine::SceneObject& object, const glm::vec3& target)
+{
+    const auto& mesh = object.getMeshBuffers();
+    int bestFaceId = -1;
+    float bestDistanceSq = std::numeric_limits<float>::max();
+
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        glm::vec3 center(0.0f);
+        bool valid = true;
+        for (int corner = 0; corner < 3; ++corner) {
+            const unsigned int index = mesh.indices[i + corner];
+            if (static_cast<size_t>(index) * 3 + 2 >= mesh.vertices.size()) {
+                valid = false;
+                break;
+            }
+            center += glm::vec3(
+                mesh.vertices[index * 3 + 0],
+                mesh.vertices[index * 3 + 1],
+                mesh.vertices[index * 3 + 2]);
+        }
+        if (!valid) {
+            continue;
+        }
+        center /= 3.0f;
+
+        const glm::vec3 delta = center - target;
+        const float distanceSq = glm::dot(delta, delta);
+        if (distanceSq < bestDistanceSq) {
+            bestDistanceSq = distanceSq;
+            bestFaceId = object.getFaceIdForTriangle(i);
+        }
+    }
+
+    return bestFaceId;
+}
+
 void DrawPolyline(Urbaxio::Engine::Scene& scene, const std::vector<glm::vec3>& points)
 {
     for (size_t i = 1; i < points.size(); ++i) {
@@ -282,6 +318,88 @@ bool HasUserLineEndpointLeftOf(const Urbaxio::Engine::Scene& scene, float xLimit
         }
     }
     return false;
+}
+
+bool PointOnSegmentInclusive(const glm::vec3& point, const glm::vec3& start, const glm::vec3& end)
+{
+    const float tolerance = Urbaxio::SCENE_POINT_EQUALITY_TOLERANCE;
+    const glm::vec3 direction = end - start;
+    const float lengthSq = glm::dot(direction, direction);
+    if (lengthSq <= tolerance * tolerance) {
+        return glm::distance(point, start) <= tolerance;
+    }
+
+    const float t = glm::dot(point - start, direction) / lengthSq;
+    if (t < -tolerance || t > 1.0f + tolerance) {
+        return false;
+    }
+
+    const glm::vec3 closest = start + glm::clamp(t, 0.0f, 1.0f) * direction;
+    return glm::distance(point, closest) <= tolerance;
+}
+
+int CountDanglingInteriorUserEndpoints(
+    const Urbaxio::Engine::Scene& scene,
+    const Urbaxio::Engine::SceneObject& object)
+{
+    int dangling = 0;
+    const auto& lines = scene.GetAllLines();
+
+    auto userEndpointDegree = [&](const glm::vec3& point) {
+        int degree = 0;
+        for (const auto& [id, line] : lines) {
+            if (!line.isUserDrawn) {
+                continue;
+            }
+            if (glm::distance(point, line.start) <= Urbaxio::SCENE_POINT_EQUALITY_TOLERANCE) {
+                ++degree;
+            }
+            if (glm::distance(point, line.end) <= Urbaxio::SCENE_POINT_EQUALITY_TOLERANCE) {
+                ++degree;
+            }
+        }
+        return degree;
+    };
+
+    auto onObjectBoundary = [&](const glm::vec3& point) {
+        for (uint64_t boundaryLineId : object.boundaryLineIDs) {
+            const auto lineIt = lines.find(boundaryLineId);
+            if (lineIt == lines.end()) {
+                continue;
+            }
+            if (PointOnSegmentInclusive(point, lineIt->second.start, lineIt->second.end)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    std::vector<glm::vec3> checkedEndpoints;
+    auto addIfUnique = [&](const glm::vec3& point) {
+        for (const glm::vec3& existing : checkedEndpoints) {
+            if (glm::distance(point, existing) <= Urbaxio::SCENE_POINT_EQUALITY_TOLERANCE) {
+                return false;
+            }
+        }
+        checkedEndpoints.push_back(point);
+        return true;
+    };
+
+    for (const auto& [id, line] : lines) {
+        if (!line.isUserDrawn) {
+            continue;
+        }
+        for (const glm::vec3& endpoint : {line.start, line.end}) {
+            if (!addIfUnique(endpoint)) {
+                continue;
+            }
+            if (userEndpointDegree(endpoint) <= 1 && !onObjectBoundary(endpoint)) {
+                ++dangling;
+            }
+        }
+    }
+
+    return dangling;
 }
 
 bool RunInteriorSquareSplitCase(const char* label, float zOffset)
@@ -700,6 +818,21 @@ bool RunSidePushPullDropsOldBoundaryLinesCase()
         std::cerr << "side_pushpull: generated boundary line survived outside current object boundary\n";
         return false;
     }
+    if (CountDanglingInteriorUserEndpoints(scene, *box) != 0) {
+        std::cerr << "side_pushpull: user line graph has dangling interior endpoints after trim\n";
+        return false;
+    }
+    const int upperLeftFaceId = FaceIdNear(*box, glm::vec3(-0.70f, 0.55f, z));
+    const int lowerLeftFaceId = FaceIdNear(*box, glm::vec3(-0.65f, -0.45f, z));
+    const int rightFaceId = FaceIdNear(*box, glm::vec3(0.55f, -0.15f, z));
+    if (upperLeftFaceId < 0 || lowerLeftFaceId < 0 || rightFaceId < 0 ||
+        upperLeftFaceId == lowerLeftFaceId ||
+        upperLeftFaceId == rightFaceId ||
+        lowerLeftFaceId == rightFaceId) {
+        std::cerr << "side_pushpull: trimmed user graph is visible but did not split the marked regions, faceIds="
+                  << upperLeftFaceId << ", " << lowerLeftFaceId << ", " << rightFaceId << "\n";
+        return false;
+    }
 
     std::cout << "side_pushpull_drops_old_boundary_lines passed: faces="
               << CountFaces(box) << ", userLines=" << CountUserDrawnLines(scene) << "\n";
@@ -743,6 +876,10 @@ bool RunInwardSidePushPullTrimsUserLinesCase()
     }
     if (HasUserLineEndpointLeftOf(scene, -0.6505f)) {
         std::cerr << "inward_side_trim: user line still has a dangling endpoint in the cut-away region\n";
+        return false;
+    }
+    if (CountDanglingInteriorUserEndpoints(scene, *box) != 0) {
+        std::cerr << "inward_side_trim: user line graph has dangling interior endpoints after trim\n";
         return false;
     }
 

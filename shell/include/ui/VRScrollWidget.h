@@ -31,6 +31,7 @@ public:
     const glm::vec3& GetLocalPosition() const override;
     void SetSize(const glm::vec2& size) override;
     glm::vec2 GetSize() const override;
+    void OnDock(float t) override; // reflow children into a vertical column when docked into the water
 
     void SetLayout(std::unique_ptr<ILayout> layout);
 
@@ -52,6 +53,9 @@ private:
     float scrollOffsetAtDragStart_ = 0.0f;
     IVRWidget* clickedWidget_ = nullptr;
     std::unique_ptr<ILayout> layout_;
+
+    // Natural (undocked) child positions captured after layout, for dock reflow lerp.
+    std::vector<glm::vec3> naturalPositions_;
 };
 
 } // namespace Urbaxio::UI

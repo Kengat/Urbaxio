@@ -219,13 +219,13 @@ void VRUIManager::UpdateWithHeadTransform(const Ray& worldRay, const glm::mat4& 
 }
 
 // --- NEW: Desktop Implementation ---
-void VRUIManager::UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHeld, bool isCtrlHeld, float scrollY) {
+void VRUIManager::UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHeld, bool isCtrlHeld, float scrollY, float uiHalfW, float uiHalfH, float dockCenterX) {
     // Simple iteration, order doesn't matter much for update logic as panels track grab state independently
     // Reverse iterator might be better for click occlusion, but CheckIntersection handles depth in Panels
-    
+
     for (auto& [name, panel] : panels_) {
         // In desktop mode, we assume panels are top-level or parented to each other, not controllers
-        panel.UpdateDesktop(mouseRay, isLeftClick, isLeftHeld, isCtrlHeld, scrollY);
+        panel.UpdateDesktop(mouseRay, isLeftClick, isLeftHeld, isCtrlHeld, scrollY, uiHalfW, uiHalfH, dockCenterX);
     }
 }
 

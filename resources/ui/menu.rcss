@@ -1,0 +1,240 @@
+/* Urbaxio top menu bar — fully restyle this file freely (HTML/CSS via RmlUi). */
+
+body {
+    font-family: Outfit;
+    /* transparent: only the bar should be visible over the 3D scene */
+    background-color: transparent;
+    /* Fill the whole context; otherwise the body shrinks to its content width. */
+    width: 100%;
+    height: 100%;
+    margin: 0px;
+}
+
+#ui {
+    /* The bar lives at the very top; the rest of the body stays transparent
+       and click-through (handled in C++ via the #ui hover test). */
+    width: 100%;
+}
+
+.bar {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    height: 34px;
+    padding: 0px 6px;
+    box-sizing: border-box;
+    background-color: #050505;
+    border-bottom: 1px #ffffff14;
+    align-items: center;
+}
+
+.logo {
+    width: 18px;
+    height: 18px;
+    margin: 0px 8px 0px 6px;
+}
+
+.brand {
+    color: #E4E4E7;
+    font-size: 13px;
+    font-weight: 700;
+    margin-right: 16px;
+}
+
+/* --- Top-level menu triggers --- */
+.menu {
+    position: relative;
+    height: 100%;
+    display: inline-block;
+}
+
+.trigger {
+    display: inline-block;
+    color: #A1A1AA;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 10px;
+    margin: 5px 2px;
+    border-radius: 6px;
+}
+
+.menu:hover .trigger {
+    color: #FFFFFF;
+    background-color: #ffffff19;
+}
+
+/* --- Dropdown card --- */
+.dropdown {
+    display: none;
+    position: absolute;
+    top: 34px;
+    left: 0px;
+    width: 268px;
+    padding: 6px;
+    background-color: rgba(14, 14, 18, 247);
+    border: 1px #ffffff1a;
+    border-radius: 12px;
+}
+
+.menu:hover .dropdown {
+    display: block;
+}
+
+.item {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    height: 28px;
+    padding: 0px 12px;
+    border-radius: 6px;
+}
+
+.item .label {
+    color: #D4D4D8;
+    font-size: 12px;
+    font-weight: 500;
+    flex: 1 1 auto;
+}
+
+.item .sc {
+    color: #71717A;
+    font-family: "JetBrains Mono";
+    font-size: 9px;
+}
+
+.item:hover {
+    background-color: #ffffff14;
+}
+
+.item:hover .label {
+    color: #FFFFFF;
+}
+
+.item.disabled .label {
+    color: #52525B;
+}
+
+.item.disabled .sc {
+    color: #3F3F46;
+}
+
+.item.disabled:hover {
+    background-color: transparent;
+}
+
+.sep {
+    display: block;
+    height: 1px;
+    margin: 6px 12px;
+    background-color: #ffffff1a;
+}
+
+/* --- Nested submenus (open to the side, support submenu-in-submenu) --- */
+.item.has-sub {
+    position: relative;
+}
+
+.item .chev {
+    color: #71717A;
+    font-size: 14px;
+    margin-left: 8px;
+}
+
+.item.has-sub:hover .chev {
+    color: #FFFFFF;
+}
+
+.submenu {
+    display: none;
+    position: absolute;
+    left: 100%;
+    top: -7px;
+    width: 220px;
+    padding: 6px;
+    background-color: rgba(14, 14, 18, 247);
+    border: 1px #ffffff1a;
+    border-radius: 12px;
+}
+
+.item.has-sub:hover > .submenu {
+    display: block;
+}
+
+/* --- Right side --- */
+.spacer {
+    flex-grow: 1;
+    flex-shrink: 1;
+    flex-basis: 0px;
+    height: 1px;
+}
+
+.pill {
+    display: inline-block;
+    padding: 5px 12px;
+    margin-right: 6px;
+    border-radius: 6px;
+    background-color: rgba(0, 240, 255, 26);
+    border: 1px rgba(0, 240, 255, 51);
+}
+
+.pill .pill-label {
+    color: #00F0FF;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.pill:hover {
+    background-color: rgba(0, 240, 255, 46);
+}
+
+/* --- Custom window controls --- */
+.winbtn {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 34px;
+}
+
+.winbtn:hover {
+    background-color: #ffffff19;
+}
+
+.winbtn.close:hover {
+    background-color: #E81123;
+}
+
+.ico-min {
+    display: block;
+    width: 11px;
+    height: 1px;
+    background-color: #A1A1AA;
+}
+
+.ico-max {
+    display: block;
+    width: 9px;
+    height: 9px;
+    background-color: transparent;
+    border: 1px #A1A1AA;
+}
+
+.ico-close {
+    color: #A1A1AA;
+    font-size: 16px;
+}
+
+.winbtn:hover .ico-min,
+.winbtn:hover .ico-max {
+    background-color: #FFFFFF;
+}
+
+.winbtn:hover .ico-max {
+    background-color: transparent;
+    border: 1px #FFFFFF;
+}
+
+.winbtn:hover .ico-close {
+    color: #FFFFFF;
+}

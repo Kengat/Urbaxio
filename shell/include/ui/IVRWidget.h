@@ -49,6 +49,9 @@ public:
     virtual void SetSize(const glm::vec2& size) {}
     virtual glm::vec2 GetSize() const = 0;
 
+    // Optional: dock progress (0..1) — containers may reflow children into a vertical column. No-op by default.
+    virtual void OnDock(float t) {}
+
     // --- NEW: Visibility control ---
     virtual void SetVisible(bool visible) { isVisible_ = visible; }
     virtual bool IsVisible() const { return isVisible_; }

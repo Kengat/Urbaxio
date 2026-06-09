@@ -8,6 +8,7 @@
 
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
+#include "UrbaxioUI.h"
 #include <SDL2/SDL.h>
 #include <iostream>
 #include <cmath>
@@ -60,9 +61,10 @@ namespace Urbaxio {
         ctrlDown = keyboardState[SDL_SCANCODE_LCTRL] || keyboardState[SDL_SCANCODE_RCTRL] || keyboardState[SDL_SCANCODE_LGUI] || keyboardState[SDL_SCANCODE_RGUI];
 
         while (SDL_PollEvent(&event)) { 
-            ImGui_ImplSDL2_ProcessEvent(&event); 
-            bool wantCaptureMouse = io.WantCaptureMouse; 
-            bool wantCaptureKeyboard = io.WantCaptureKeyboard; 
+            ImGui_ImplSDL2_ProcessEvent(&event);
+            bool rmlOverUI = Urbaxio::UI::ProcessRmlEvent(event); // native HTML/CSS UI
+            bool wantCaptureMouse = io.WantCaptureMouse || rmlOverUI;
+            bool wantCaptureKeyboard = io.WantCaptureKeyboard;
             
             switch (event.type) { 
                 case SDL_QUIT: 

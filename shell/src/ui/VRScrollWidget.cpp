@@ -47,7 +47,12 @@ void VRScrollWidget::RecalculateContentLayout() {
     if (layout_) {
         // Use layout to position children
         layout_->Apply(children_, size_);
-        
+
+        // Capture the natural (undocked) positions for dock reflow interpolation.
+        naturalPositions_.clear();
+        naturalPositions_.reserve(children_.size());
+        for (const auto& child : children_) naturalPositions_.push_back(child->GetLocalPosition());
+
         // Calculate total content size from positioned widgets
         if (children_.empty()) {
             totalContentHeight_ = 0.0f;
@@ -352,6 +357,26 @@ glm::vec2 VRScrollWidget::GetSize() const { return size_; }
 
 void VRScrollWidget::SetLayout(std::unique_ptr<ILayout> layout) {
     layout_ = std::move(layout);
+}
+
+void VRScrollWidget::OnDock(float t) {
+    // t=0 -> natural layout; t=1 -> single centered vertical column (fits the narrow water strip).
+    if (children_.empty() || naturalPositions_.size() != children_.size()) return;
+    t = std::clamp(t, 0.0f, 1.0f);
+
+    // Build target column positions (centered horizontally, stacked top-to-bottom).
+    const float spacing = 0.006f;
+    float totalH = 0.0f;
+    for (const auto& child : children_) totalH += child->GetSize().y + spacing;
+    if (totalH > 0.0f) totalH -= spacing;
+
+    float y = totalH * 0.5f;
+    for (size_t i = 0; i < children_.size(); ++i) {
+        float h = children_[i]->GetSize().y;
+        glm::vec3 colPos(0.0f, y - h * 0.5f, naturalPositions_[i].z);
+        y -= (h + spacing);
+        children_[i]->SetLocalPosition(glm::mix(naturalPositions_[i], colPos, t));
+    }
 }
 
 } // namespace Urbaxio::UI

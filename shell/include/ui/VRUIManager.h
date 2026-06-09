@@ -27,7 +27,7 @@ public:
     void UpdateWithHeadTransform(const Ray& worldRay, const glm::mat4& leftControllerTransform, const glm::mat4& headTransform, const glm::mat4& rightControllerTransform, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, bool aButtonHeld, bool bButtonIsPressed, float leftStickY, bool isLeftTriggerPressed);
     
     // --- NEW: Desktop methods ---
-    void UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHeld, bool isCtrlHeld, float scrollY);
+    void UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHeld, bool isCtrlHeld, float scrollY, float uiHalfW = 0.0f, float uiHalfH = 0.0f, float dockCenterX = -9999.0f);
     void RenderDesktop(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& orthoProjection);
     bool IsRayBlockedByPanelDesktop(const Ray& mouseRay) const;
     // ----------------------------

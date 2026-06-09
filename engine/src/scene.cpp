@@ -141,6 +141,70 @@ namespace { // Anonymous namespace for utility functions
         return true;
     }
 
+    static bool PointOnLineSegmentInclusive(
+        const glm::vec3& p,
+        const glm::vec3& a,
+        const glm::vec3& b,
+        float tolerance = Urbaxio::SCENE_POINT_EQUALITY_TOLERANCE) {
+        const glm::vec3 ab = b - a;
+        const float abLenSq = glm::length2(ab);
+        if (abLenSq <= tolerance * tolerance) {
+            return glm::distance2(p, a) <= tolerance * tolerance;
+        }
+
+        const float t = glm::dot(p - a, ab) / abLenSq;
+        if (t < -tolerance || t > 1.0f + tolerance) {
+            return false;
+        }
+
+        const glm::vec3 closest = a + glm::clamp(t, 0.0f, 1.0f) * ab;
+        return glm::distance2(p, closest) <= tolerance * tolerance;
+    }
+
+    static bool LineSegmentIntersectionInclusive(
+        const glm::vec3& p1,
+        const glm::vec3& p2,
+        const glm::vec3& p3,
+        const glm::vec3& p4,
+        glm::vec3& outIntersectionPoint,
+        float tolerance = Urbaxio::SCENE_POINT_EQUALITY_TOLERANCE) {
+        const glm::vec3 d1 = p2 - p1;
+        const glm::vec3 d2 = p4 - p3;
+        const float d1LenSq = glm::length2(d1);
+        const float d2LenSq = glm::length2(d2);
+        if (d1LenSq <= tolerance * tolerance || d2LenSq <= tolerance * tolerance) {
+            return false;
+        }
+
+        const glm::vec3 cross = glm::cross(d1, d2);
+        const float denom = glm::length2(cross);
+        if (denom <= tolerance * tolerance) {
+            return false;
+        }
+
+        const glm::vec3 delta = p3 - p1;
+        const float coplanarDistance = std::abs(glm::dot(delta, glm::normalize(cross)));
+        if (coplanarDistance > tolerance) {
+            return false;
+        }
+
+        const float t = glm::dot(glm::cross(delta, d2), cross) / denom;
+        const float u = glm::dot(glm::cross(delta, d1), cross) / denom;
+        if (t < -tolerance || t > 1.0f + tolerance ||
+            u < -tolerance || u > 1.0f + tolerance) {
+            return false;
+        }
+
+        const glm::vec3 onFirst = p1 + glm::clamp(t, 0.0f, 1.0f) * d1;
+        const glm::vec3 onSecond = p3 + glm::clamp(u, 0.0f, 1.0f) * d2;
+        if (glm::distance2(onFirst, onSecond) > tolerance * tolerance) {
+            return false;
+        }
+
+        outIntersectionPoint = (onFirst + onSecond) * 0.5f;
+        return true;
+    }
+
     // --- NEW: Helpers for coplanar region detection and boundary extraction ---
     static bool IsPlanar(const TopoDS_Face& f, gp_Pln& out) {
         BRepAdaptor_Surface sa(f, Standard_True);
@@ -2482,6 +2546,76 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
             clippedSegments.push_back({a, b});
         };
 
+        auto addUniquePoint = [](std::vector<glm::vec3>& points, const glm::vec3& point) {
+            for (const glm::vec3& existing : points) {
+                if (AreVec3Equal(existing, point)) {
+                    return;
+                }
+            }
+            points.push_back(point);
+        };
+
+        auto addNodedUserSegment = [&](const glm::vec3& start, const glm::vec3& end) {
+            if (AreVec3Equal(start, end)) {
+                return;
+            }
+
+            std::map<uint64_t, std::vector<glm::vec3>> splitsToPerform;
+            std::vector<glm::vec3> splitPointsOnNewLine;
+
+            std::vector<std::pair<uint64_t, Line>> lineSnapshot;
+            lineSnapshot.reserve(lines_.size());
+            for (const auto& [lineId, line] : lines_) {
+                lineSnapshot.push_back({lineId, line});
+            }
+
+            for (const auto& [lineId, line] : lineSnapshot) {
+                if (PointOnLineSegmentInclusive(start, line.start, line.end)) {
+                    splitsToPerform[lineId].push_back(start);
+                }
+                if (PointOnLineSegmentInclusive(end, line.start, line.end)) {
+                    splitsToPerform[lineId].push_back(end);
+                }
+                if (PointOnLineSegmentInclusive(line.start, start, end)) {
+                    addUniquePoint(splitPointsOnNewLine, line.start);
+                }
+                if (PointOnLineSegmentInclusive(line.end, start, end)) {
+                    addUniquePoint(splitPointsOnNewLine, line.end);
+                }
+
+                glm::vec3 intersection;
+                if (LineSegmentIntersectionInclusive(start, end, line.start, line.end, intersection)) {
+                    splitsToPerform[lineId].push_back(intersection);
+                    addUniquePoint(splitPointsOnNewLine, intersection);
+                }
+            }
+
+            for (const auto& [lineId, splitPoints] : splitsToPerform) {
+                SplitLineAtPoints(lineId, splitPoints);
+            }
+
+            std::vector<glm::vec3> allPoints = {start};
+            allPoints.insert(allPoints.end(), splitPointsOnNewLine.begin(), splitPointsOnNewLine.end());
+            allPoints.push_back(end);
+
+            const glm::vec3 direction = end - start;
+            std::sort(allPoints.begin(), allPoints.end(), [&start, &direction](const glm::vec3& a, const glm::vec3& b) {
+                if (glm::length2(direction) < 1.0e-9f) {
+                    return false;
+                }
+                return glm::dot(a - start, direction) < glm::dot(b - start, direction);
+            });
+            allPoints.erase(std::unique(allPoints.begin(), allPoints.end(), AreVec3Equal), allPoints.end());
+
+            for (size_t i = 0; i + 1 < allPoints.size(); ++i) {
+                uint64_t lineId = AddSingleLineSegment(allPoints[i], allPoints[i + 1], true);
+                if (lineId != 0) {
+                    lines_[lineId].isUserDrawn = true;
+                    restoredLineIds.push_back(lineId);
+                }
+            }
+        };
+
         for (const PlanarLineSegmentSnapshot& segment : segments) {
             const uint64_t existingLineId = findLineSegmentId(segment.start, segment.end);
             if (existingLineId != 0) {
@@ -2528,14 +2662,14 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                         static_cast<float>(p2.Z()));
 
                     glm::vec3 intersection;
-                    if (LineSegmentIntersection(segment.start, segment.end, edgeStart, edgeEnd, intersection)) {
+                    if (LineSegmentIntersectionInclusive(segment.start, segment.end, edgeStart, edgeEnd, intersection)) {
                         addUniqueT(splitParameters, glm::dot(intersection - segment.start, direction) / directionLenSq);
                     }
 
-                    if (PointOnLineSegment(edgeStart, segment.start, segment.end)) {
+                    if (PointOnLineSegmentInclusive(edgeStart, segment.start, segment.end)) {
                         addUniqueT(splitParameters, glm::dot(edgeStart - segment.start, direction) / directionLenSq);
                     }
-                    if (PointOnLineSegment(edgeEnd, segment.start, segment.end)) {
+                    if (PointOnLineSegmentInclusive(edgeEnd, segment.start, segment.end)) {
                         addUniqueT(splitParameters, glm::dot(edgeEnd - segment.start, direction) / directionLenSq);
                     }
                 }
@@ -2566,11 +2700,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
         }
 
         for (const auto& [start, end] : clippedSegments) {
-            uint64_t lineId = AddSingleLineSegment(start, end, true);
-            if (lineId != 0) {
-                lines_[lineId].isUserDrawn = true;
-                restoredLineIds.push_back(lineId);
-            }
+            addNodedUserSegment(start, end);
         }
 
         if (!restoredLineIds.empty()) {
@@ -2639,7 +2769,7 @@ SceneObject* Scene::create_object_with_id(uint64_t id, const std::string& name) 
                     if (hostObject->boundaryLineIDs.count(lineId) > 0) {
                         continue;
                     }
-                    if (line.usedInFace && seedSet.count(lineId) == 0) {
+                    if (line.usedInFace && seedSet.count(lineId) == 0 && !line.isUserDrawn) {
                         continue;
                     }
                     if (!LineLiesOnFaceByUV(hostFace, line, matchTolerance)) {

@@ -43,6 +43,21 @@ namespace Urbaxio {
         uint64_t objectId = 0; // NEW: ID of the source object for this command
     };
 
+    // --- NEW: Procedural cloud/sky background settings (configurable in Appearance Settings) ---
+    struct SkyParams {
+        bool  enabled     = true;
+        glm::vec3 skyTop      = glm::vec3(7.0f/255.0f, 15.0f/255.0f, 18.0f/255.0f); // zenith
+        glm::vec3 skyBottom   = glm::vec3(18.0f/255.0f, 18.0f/255.0f, 21.0f/255.0f); // horizon
+        glm::vec3 cloudColor  = glm::vec3(10.0f/255.0f, 43.0f/255.0f, 51.0f/255.0f); // cloud highlight
+        glm::vec3 cloudShadow = glm::vec3(31.0f/255.0f, 3.0f/255.0f, 38.0f/255.0f); // cloud shadow
+        float coverage  = 0.280f; // lower = more, denser clouds (0..1)
+        float softness  = 0.469f; // edge softness of the clouds
+        float scale     = 1.767f; // cloud feature size
+        float density   = 0.739f; // thick, lush cloud cover
+        float painterly = 0.890f; // Dreams-like brush-stroke / fleck strength (0..1)
+        float swirl     = 1.316f; // swirling flow / vortices strength (0..1.5)
+    };
+
     class Renderer {
     public:
         Renderer();
@@ -102,6 +117,12 @@ namespace Urbaxio {
         // -- END OF MODIFICATION --
         void SetViewport(int x, int y, int width, int height);
         float GetMaxLineWidth() const { return maxLineWidth; }
+
+        // --- NEW: Draw the procedural cloud/sky background (fullscreen, depth-less). ---
+        // Call right after clearing the framebuffer and before any scene geometry.
+        void RenderSkyBackground(
+            const glm::mat4& view, const glm::mat4& projection,
+            const glm::vec3& camPos, const SkyParams& params);
 
         // Buffer updaters for tools and scene state
         void UpdateUserLinesBuffer(
@@ -232,6 +253,11 @@ namespace Urbaxio {
             GLuint model, view, projection;
             GLuint color, viewPos;
         } bubbleShaderLocs;
+        struct SkyShaderLocations {
+            GLuint faceF, faceR, faceU; // cube-face basis for baking
+            GLuint skyTop, skyBottom, cloudColor, cloudShadow;
+            GLuint coverage, softness, scale, density, painterly, swirl;
+        } skyShaderLocs;
 
         GLuint objectShaderProgram = 0;
         // --- NEW SHADERS ---
@@ -252,6 +278,16 @@ namespace Urbaxio {
         
         GLuint splatShaderProgram = 0;
         GLuint markerShaderProgram = 0;
+        GLuint skyShaderProgram = 0;       // <-- NEW: procedural cloud background
+        GLuint skyVAO = 0;                 // <-- NEW: empty VAO for fullscreen triangle
+        // --- Baked-sky cache: render the clouds once into a CUBEMAP, then sample it per frame. ---
+        // Cheap like a static image, but still rotates with the camera.
+        GLuint skyBlitShaderProgram = 0;   // skybox: samples the baked cubemap by ray direction
+        GLint  skyBlitTexLoc = -1, skyBlitInvVP = -1, skyBlitCamPos = -1;
+        GLuint skyFBO = 0;
+        GLuint skyCubemap = 0;
+        bool   skyBaked = false;
+        SkyParams skyBakedParams;
 
         // --- NEW: Buffers for batched highlighting ---
         std::vector<GLsizei> highlightCounts;
@@ -389,6 +425,8 @@ namespace Urbaxio {
         const char* selectionBoxVertexShaderSource; const char* selectionBoxFragmentShaderSource;
         const char* vrMenuWidgetVertexShaderSource; const char* vrMenuWidgetFragmentShaderSource;
         const char* bubbleVertexShaderSource; const char* bubbleFragmentShaderSource;
+        const char* skyVertexShaderSource; const char* skyFragmentShaderSource;
+        const char* skyBlitFragmentShaderSource;
 
         // -- START OF MODIFICATION --
         GLuint blitFBO_ = 0; // Temporary FBO for multiview blitting

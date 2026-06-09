@@ -313,7 +313,102 @@ namespace Urbaxio {
             "    float holeVisibility = smoothstep(u_holeStart, u_holeEnd, distFromOrigin);\n"
             "    FragColor = vec4(u_gridColor, finalAlpha * holeVisibility);\n"
             "}\n";
-        
+
+        // --- Procedural cloud/sky background (cheap FBM value noise, "Dreams"-like) ---
+        skyVertexShaderSource =
+            "#version 330 core\n"
+            "out vec2 vUV;\n"
+            "void main() {\n"
+            "    // Fullscreen triangle from gl_VertexID (no VBO needed)\n"
+            "    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
+            "    vUV = p;\n"
+            "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+            "}\n";
+
+        skyFragmentShaderSource =
+            "#version 330 core\n"
+            "out vec4 FragColor;\n"
+            "in vec2 vUV;\n"
+            "uniform vec3 u_faceF;\n"
+            "uniform vec3 u_faceR;\n"
+            "uniform vec3 u_faceU;\n"
+            "uniform vec3 u_skyTop;\n"
+            "uniform vec3 u_skyBottom;\n"
+            "uniform vec3 u_cloudColor;\n"
+            "uniform vec3 u_cloudShadow;\n"
+            "uniform float u_coverage;\n"
+            "uniform float u_softness;\n"
+            "uniform float u_scale;\n"
+            "uniform float u_density;\n"
+            "uniform float u_painterly;\n"
+            "uniform float u_swirl;\n"
+            "// --- 3D value noise: gives a true spherical (dome) cloud field, no horizon stretch ---\n"
+            "float hash(vec3 p) {\n"
+            "    p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));\n"
+            "    p *= 17.0;\n"
+            "    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));\n"
+            "}\n"
+            "float noise(vec3 x) {\n"
+            "    vec3 i = floor(x); vec3 f = fract(x);\n"
+            "    f = f * f * (3.0 - 2.0 * f);\n"
+            "    return mix(mix(mix(hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),\n"
+            "                   mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),\n"
+            "               mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),\n"
+            "                   mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);\n"
+            "}\n"
+            "float fbm(vec3 p) {\n"
+            "    float v = 0.0; float amp = 0.5;\n"
+            "    for (int i = 0; i < 3; i++) { v += amp * noise(p); p *= 2.02; amp *= 0.5; }\n"
+            "    return v;\n"
+            "}\n"
+            "void main() {\n"
+            "    // Direction for this cube-face texel (baked into a cubemap).\n"
+            "    vec2 fp = vUV * 2.0 - 1.0;\n"
+            "    vec3 dir = normalize(u_faceF + fp.x * u_faceR + fp.y * u_faceU);\n"
+            "    // Z-up: vertical gradient from horizon to zenith.\n"
+            "    float h = clamp(dir.z * 0.5 + 0.5, 0.0, 1.0);\n"
+            "    vec3 sky = mix(u_skyBottom, u_skyTop, h);\n"
+            "    // Sample the cloud field directly along the 3D direction -> spherical mapping (static, no animation).\n"
+            "    vec3 p = dir * (u_scale * 3.0);\n"
+            "    // --- Swirls: a 2-component flow field warps the sampling coords (cheap domain warp) ---\n"
+            "    vec2 q = vec2(fbm(p), fbm(p + vec3(3.1, 1.7, 4.2)));\n"
+            "    vec3 ps = p + u_swirl * vec3(q - 0.5, 0.0) * 2.4;\n"
+            "    float base = fbm(ps);\n"
+            "    float n = fbm(ps + base * 0.6);\n"
+            "    float clouds = smoothstep(u_coverage, u_coverage + u_softness, n);\n"
+            "    // Soft glowing cores for a deep, calming look.\n"
+            "    float glow = smoothstep(u_coverage + u_softness * 0.5, 1.0, n);\n"
+            "    // Self-shadowing from the height difference of the warped field.\n"
+            "    float shade = clamp((n - base) * 1.6 + 0.55, 0.0, 1.0);\n"
+            "    vec3 cloudCol = mix(u_cloudShadow, u_cloudColor, shade);\n"
+            "    // Subtle iridescent shimmer driven by the flow field (beauty on close inspection).\n"
+            "    cloudCol = mix(cloudCol, cloudCol.bgr, clamp((q.x - 0.5) * 0.7 + 0.22, 0.0, 0.45));\n"
+            "    cloudCol += u_cloudColor * glow * 0.45; // gentle inner glow\n"
+            "    // --- Dreams-like painterly 'flecks': high-frequency dabs break the cloud into brush strokes ---\n"
+            "    float dab = fbm(dir * (u_scale * 26.0) + n * 4.0);\n"
+            "    cloudCol *= mix(1.0, 0.6 + 0.8 * dab, u_painterly);\n"
+            "    // A faint painterly speckle also dusts the open sky.\n"
+            "    sky *= mix(1.0, 0.92 + 0.16 * dab, u_painterly * 0.5);\n"
+            "    float a = clouds * u_density;\n"
+            "    vec3 col = mix(sky, cloudCol, a);\n"
+            "    FragColor = vec4(col, 1.0);\n"
+            "}\n";
+
+        // Cheap skybox: reconstruct the world ray and sample the baked cubemap (rotates with camera).
+        skyBlitFragmentShaderSource =
+            "#version 330 core\n"
+            "out vec4 FragColor;\n"
+            "in vec2 vUV;\n"
+            "uniform samplerCube u_sky;\n"
+            "uniform mat4 u_invViewProj;\n"
+            "uniform vec3 u_camPos;\n"
+            "void main() {\n"
+            "    vec4 clip = vec4(vUV * 2.0 - 1.0, 1.0, 1.0);\n"
+            "    vec4 world = u_invViewProj * clip;\n"
+            "    vec3 dir = normalize(world.xyz / world.w - u_camPos);\n"
+            "    FragColor = texture(u_sky, dir);\n"
+            "}\n";
+
         axisVertexShaderSource =
             "#version 330 core\n"
             "layout (location = 0) in vec3 aPos;\n"
@@ -744,6 +839,107 @@ namespace Urbaxio {
     // --- NEW: Method to invalidate the static batch, forcing a re-compile ---
     void Renderer::InvalidateStaticBatch() {
         isStaticBatchValid_ = false;
+    }
+
+    // --- Cloud/sky background: baked ONCE into a texture, then blitted cheaply every frame. ---
+    // The expensive FBM only runs when the look (params) or the framebuffer size changes.
+    void Renderer::RenderSkyBackground(
+        const glm::mat4& view, const glm::mat4& projection,
+        const glm::vec3& camPos, const SkyParams& params)
+    {
+        if (!params.enabled || skyShaderProgram == 0 || skyVAO == 0) return;
+
+        GLint vp[4] = {0, 0, 1, 1};
+        glGetIntegerv(GL_VIEWPORT, vp);
+        int W = vp[2] > 0 ? vp[2] : 1;
+        int H = vp[3] > 0 ? vp[3] : 1;
+
+        auto paramsEqual = [](const SkyParams& a, const SkyParams& b) {
+            return a.enabled == b.enabled && a.skyTop == b.skyTop && a.skyBottom == b.skyBottom &&
+                   a.cloudColor == b.cloudColor && a.cloudShadow == b.cloudShadow &&
+                   a.coverage == b.coverage && a.softness == b.softness && a.scale == b.scale &&
+                   a.density == b.density && a.painterly == b.painterly && a.swirl == b.swirl;
+        };
+
+        // The cubemap is resolution-independent: only re-bake when the look changes.
+        bool needBake = !skyBaked || skyCubemap == 0 || !paramsEqual(params, skyBakedParams);
+
+        if (needBake) {
+            const int S = 1024; // per-face resolution
+            struct Face { GLenum target; glm::vec3 f, r, u; };
+            const Face faces[6] = {
+                { GL_TEXTURE_CUBE_MAP_POSITIVE_X, { 1, 0, 0}, {0, 0,-1}, {0,-1, 0} },
+                { GL_TEXTURE_CUBE_MAP_NEGATIVE_X, {-1, 0, 0}, {0, 0, 1}, {0,-1, 0} },
+                { GL_TEXTURE_CUBE_MAP_POSITIVE_Y, { 0, 1, 0}, {1, 0, 0}, {0, 0, 1} },
+                { GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, { 0,-1, 0}, {1, 0, 0}, {0, 0,-1} },
+                { GL_TEXTURE_CUBE_MAP_POSITIVE_Z, { 0, 0, 1}, {1, 0, 0}, {0,-1, 0} },
+                { GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, { 0, 0,-1}, {-1,0, 0}, {0,-1, 0} },
+            };
+
+            if (skyCubemap == 0) glGenTextures(1, &skyCubemap);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, skyCubemap);
+            for (int i = 0; i < 6; ++i)
+                glTexImage2D(faces[i].target, 0, GL_RGBA8, S, S, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+            GLint prevFBO = 0; glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFBO);
+            glBindFramebuffer(GL_FRAMEBUFFER, skyFBO);
+            glViewport(0, 0, S, S);
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_BLEND);
+
+            glUseProgram(skyShaderProgram);
+            glUniform3fv(skyShaderLocs.skyTop, 1, glm::value_ptr(params.skyTop));
+            glUniform3fv(skyShaderLocs.skyBottom, 1, glm::value_ptr(params.skyBottom));
+            glUniform3fv(skyShaderLocs.cloudColor, 1, glm::value_ptr(params.cloudColor));
+            glUniform3fv(skyShaderLocs.cloudShadow, 1, glm::value_ptr(params.cloudShadow));
+            glUniform1f(skyShaderLocs.coverage, params.coverage);
+            glUniform1f(skyShaderLocs.softness, params.softness);
+            glUniform1f(skyShaderLocs.scale, params.scale);
+            glUniform1f(skyShaderLocs.density, params.density);
+            glUniform1f(skyShaderLocs.painterly, params.painterly);
+            glUniform1f(skyShaderLocs.swirl, params.swirl);
+            glBindVertexArray(skyVAO);
+            for (int i = 0; i < 6; ++i) {
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, faces[i].target, skyCubemap, 0);
+                glUniform3fv(skyShaderLocs.faceF, 1, glm::value_ptr(faces[i].f));
+                glUniform3fv(skyShaderLocs.faceR, 1, glm::value_ptr(faces[i].r));
+                glUniform3fv(skyShaderLocs.faceU, 1, glm::value_ptr(faces[i].u));
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+            }
+            glBindVertexArray(0);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFBO);
+            glViewport(0, 0, W, H);
+            skyBaked = true; skyBakedParams = params;
+        }
+
+        // Cheap path every frame: sample the cubemap by the world ray (rotates with the camera).
+        GLboolean depthTestWas = glIsEnabled(GL_DEPTH_TEST);
+        GLboolean blendWas = glIsEnabled(GL_BLEND);
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_BLEND);
+
+        glm::mat4 invViewProj = glm::inverse(projection * view);
+        glUseProgram(skyBlitShaderProgram);
+        glUniformMatrix4fv(skyBlitInvVP, 1, GL_FALSE, glm::value_ptr(invViewProj));
+        glUniform3fv(skyBlitCamPos, 1, glm::value_ptr(camPos));
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, skyCubemap);
+        glUniform1i(skyBlitTexLoc, 0);
+        glBindVertexArray(skyVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+        glUseProgram(0);
+
+        glDepthMask(GL_TRUE);
+        if (depthTestWas) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+        if (blendWas) glEnable(GL_BLEND); else glDisable(GL_BLEND);
     }
     
     void Renderer::RenderFrame(
@@ -1641,6 +1837,10 @@ namespace Urbaxio {
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, selectionBoxVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, selectionBoxFragmentShaderSource); if (vs != 0 && fs != 0) selectionBoxShaderProgram = LinkShaderProgram(vs, fs); if (selectionBoxShaderProgram == 0) return false; std::cout << "Renderer: Selection Box shader program created." << std::endl; }
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, vrMenuWidgetVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, vrMenuWidgetFragmentShaderSource); if (vs != 0 && fs != 0) vrMenuWidgetShaderProgram = LinkShaderProgram(vs, fs); if (vrMenuWidgetShaderProgram == 0) return false; std::cout << "Renderer: VR Menu Widget shader program created." << std::endl; }
         { GLuint vs = CompileShader(GL_VERTEX_SHADER, bubbleVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, bubbleFragmentShaderSource); if (vs != 0 && fs != 0) bubbleShaderProgram = LinkShaderProgram(vs, fs); if (bubbleShaderProgram == 0) return false; bubbleShaderLocs.model = glGetUniformLocation(bubbleShaderProgram, "model"); bubbleShaderLocs.view = glGetUniformLocation(bubbleShaderProgram, "view"); bubbleShaderLocs.projection = glGetUniformLocation(bubbleShaderProgram, "projection"); bubbleShaderLocs.color = glGetUniformLocation(bubbleShaderProgram, "u_Color"); bubbleShaderLocs.viewPos = glGetUniformLocation(bubbleShaderProgram, "u_ViewPos"); std::cout << "Renderer: Bubble shader created." << std::endl; }
+        // Sky / Clouds background shader
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, skyVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, skyFragmentShaderSource); if (vs != 0 && fs != 0) skyShaderProgram = LinkShaderProgram(vs, fs); if (skyShaderProgram == 0) return false; skyShaderLocs.faceF = glGetUniformLocation(skyShaderProgram, "u_faceF"); skyShaderLocs.faceR = glGetUniformLocation(skyShaderProgram, "u_faceR"); skyShaderLocs.faceU = glGetUniformLocation(skyShaderProgram, "u_faceU"); skyShaderLocs.skyTop = glGetUniformLocation(skyShaderProgram, "u_skyTop"); skyShaderLocs.skyBottom = glGetUniformLocation(skyShaderProgram, "u_skyBottom"); skyShaderLocs.cloudColor = glGetUniformLocation(skyShaderProgram, "u_cloudColor"); skyShaderLocs.cloudShadow = glGetUniformLocation(skyShaderProgram, "u_cloudShadow"); skyShaderLocs.coverage = glGetUniformLocation(skyShaderProgram, "u_coverage"); skyShaderLocs.softness = glGetUniformLocation(skyShaderProgram, "u_softness"); skyShaderLocs.scale = glGetUniformLocation(skyShaderProgram, "u_scale"); skyShaderLocs.density = glGetUniformLocation(skyShaderProgram, "u_density"); skyShaderLocs.painterly = glGetUniformLocation(skyShaderProgram, "u_painterly"); skyShaderLocs.swirl = glGetUniformLocation(skyShaderProgram, "u_swirl"); glGenVertexArrays(1, &skyVAO); std::cout << "Renderer: Sky/Clouds shader program created." << std::endl; }
+        // Sky blit shader (samples the baked sky texture)
+        { GLuint vs = CompileShader(GL_VERTEX_SHADER, skyVertexShaderSource); GLuint fs = CompileShader(GL_FRAGMENT_SHADER, skyBlitFragmentShaderSource); if (vs != 0 && fs != 0) skyBlitShaderProgram = LinkShaderProgram(vs, fs); if (skyBlitShaderProgram == 0) return false; skyBlitTexLoc = glGetUniformLocation(skyBlitShaderProgram, "u_sky"); skyBlitInvVP = glGetUniformLocation(skyBlitShaderProgram, "u_invViewProj"); skyBlitCamPos = glGetUniformLocation(skyBlitShaderProgram, "u_camPos"); glGenFramebuffers(1, &skyFBO); glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS); std::cout << "Renderer: Sky blit shader created." << std::endl; }
         return true;
     }
     // -- START OF MODIFICATION --
@@ -2102,6 +2302,11 @@ namespace Urbaxio {
         if (selectionBoxShaderProgram != 0) glDeleteProgram(selectionBoxShaderProgram); selectionBoxShaderProgram = 0;
         if (vrMenuWidgetShaderProgram != 0) glDeleteProgram(vrMenuWidgetShaderProgram); vrMenuWidgetShaderProgram = 0;
         if (bubbleShaderProgram != 0) glDeleteProgram(bubbleShaderProgram); bubbleShaderProgram = 0;
+        if (skyShaderProgram != 0) glDeleteProgram(skyShaderProgram); skyShaderProgram = 0;
+        if (skyVAO != 0) glDeleteVertexArrays(1, &skyVAO); skyVAO = 0;
+        if (skyBlitShaderProgram != 0) glDeleteProgram(skyBlitShaderProgram); skyBlitShaderProgram = 0;
+        if (skyFBO != 0) glDeleteFramebuffers(1, &skyFBO); skyFBO = 0;
+        if (skyCubemap != 0) glDeleteTextures(1, &skyCubemap); skyCubemap = 0;
         if (selectionBoxVAO != 0) glDeleteVertexArrays(1, &selectionBoxVAO); selectionBoxVAO = 0; if (selectionBoxVBO != 0) glDeleteBuffers(1, &selectionBoxVBO); selectionBoxVBO = 0;
         if (previewBoxVAO != 0) glDeleteVertexArrays(1, &previewBoxVAO); previewBoxVAO = 0;
         if (previewBoxVBO != 0) glDeleteBuffers(1, &previewBoxVBO); previewBoxVBO = 0;

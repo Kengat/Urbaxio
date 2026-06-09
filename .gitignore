@@ -3,6 +3,13 @@
 /install/
 CMakeUserPresets.json
 
+# Python virtual environment (generated, ~250MB)
+/.venv/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
 # Visual Studio
 .vs/
 *.VC.db

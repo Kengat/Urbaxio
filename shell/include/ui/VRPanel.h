@@ -46,7 +46,11 @@ public:
     void Update(const Ray& worldRay, const glm::mat4& parentTransform, const glm::mat4& interactionTransform, bool triggerPressed, bool triggerReleased, bool triggerHeld, bool aButtonPressed, bool aButtonHeld, bool bButtonIsPressed, float stickY, bool isLeftTriggerPressed);
 
     // --- NEW: Desktop Update ---
-    void UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHeld, bool isCtrlHeld, float scrollY);
+    // uiHalfW/uiHalfH: half-extents of the desktop UI space (kept on-screen).
+    // dockCenterX: X of the left "water" dock strip; panels magnetize/dissolve into it. -9999 = no dock.
+    void UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHeld, bool isCtrlHeld, float scrollY,
+                       float uiHalfW = 0.0f, float uiHalfH = 0.0f, float dockCenterX = -9999.0f);
+    bool IsDocked() const { return isDocked_; }
     // ---------------------------
 
     void Render(Renderer& renderer, TextRenderer& textRenderer, const glm::mat4& view, const glm::mat4& projection) const;
@@ -98,6 +102,20 @@ private:
     bool isExternallyToggled_ = false;
     std::unique_ptr<ILayout> layout_;
     
+    // --- Desktop "liquid" droplet deformation + edge-snap state ---
+    glm::vec2 lastCenter_{0.0f, 0.0f};
+    bool hasLastCenter_ = false;
+    glm::vec2 deformVel_{0.0f, 0.0f};
+    glm::vec2 stretchDir_{1.0f, 0.0f};
+    float springStretch_ = 0.0f;
+    float springStretchVel_ = 0.0f;
+    bool hasSnap_ = false;
+    glm::vec3 snappedCenter_{0.0f};
+    // Docking into the left "water" strip: panel chrome dissolves, only buttons + 2 lines remain.
+    bool isDocked_ = false;   // target state (near the strip)
+    float dockT_ = 0.0f;      // animated 0..1 dissolve amount
+    // -------------------------------------------------------------
+
     std::unique_ptr<VRConfirmButtonWidget> grabHandle_;
     std::unique_ptr<VRConfirmButtonWidget> resizeHandle_;
     std::unique_ptr<VRConfirmButtonWidget> minimizeHandle_;

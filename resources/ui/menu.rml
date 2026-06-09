@@ -1,0 +1,113 @@
+<rml>
+<head>
+    <link type="text/rcss" href="menu.rcss"/>
+    <title>Urbaxio</title>
+</head>
+<body>
+    <div id="ui">
+        <div class="bar drag">
+            <img class="logo" src="../urbaxio_logo.png"/>
+            <span class="brand">Urbaxio</span>
+
+            <div class="menu">
+                <span class="trigger">File</span>
+                <div class="dropdown">
+                    <div class="item" act="new"><span class="label">New Project...</span><span class="sc">Ctrl+N</span></div>
+                    <div class="item" act="open"><span class="label">Open Project...</span><span class="sc">Ctrl+O</span></div>
+                    <div class="sep"/>
+                    <div class="item" act="save"><span class="label">Save</span><span class="sc">Ctrl+S</span></div>
+                    <div class="item disabled"><span class="label">Save As...</span><span class="sc">Ctrl+Shift+S</span></div>
+                    <div class="sep"/>
+                    <div class="item has-sub"><span class="label">Export</span><span class="chev">&#8250;</span>
+                        <div class="submenu">
+                            <div class="item" act="export_ply"><span class="label">Export as .ply</span></div>
+                            <div class="item" act="export_sketchup"><span class="label">Export to SketchUp</span></div>
+                            <div class="sep"/>
+                            <div class="item has-sub"><span class="label">Image Sequence</span><span class="chev">&#8250;</span>
+                                <div class="submenu">
+                                    <div class="item" act="export_png"><span class="label">PNG</span></div>
+                                    <div class="item" act="export_jpg"><span class="label">JPG</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="sep"/>
+                    <div class="item" act="exit"><span class="label">Exit</span><span class="sc">Alt+F4</span></div>
+                </div>
+            </div>
+
+            <div class="menu">
+                <span class="trigger">Edit</span>
+                <div class="dropdown">
+                    <div class="item" act="undo"><span class="label">Undo</span><span class="sc">Ctrl+Z</span></div>
+                    <div class="item" act="redo"><span class="label">Redo</span><span class="sc">Ctrl+Y</span></div>
+                    <div class="sep"/>
+                    <div class="item disabled"><span class="label">Cut</span><span class="sc">Ctrl+X</span></div>
+                    <div class="item disabled"><span class="label">Copy</span><span class="sc">Ctrl+C</span></div>
+                    <div class="item disabled"><span class="label">Paste</span><span class="sc">Ctrl+V</span></div>
+                    <div class="sep"/>
+                    <div class="item" act="preferences"><span class="label">Preferences</span><span class="sc">Ctrl+,</span></div>
+                </div>
+            </div>
+
+            <div class="menu">
+                <span class="trigger">View</span>
+                <div class="dropdown">
+                    <div class="item" act="reset_view"><span class="label">Reset Viewport</span><span class="sc">Space</span></div>
+                    <div class="sep"/>
+                    <div class="item" act="toggle_grid"><span class="label">Show grid</span></div>
+                    <div class="item" act="toggle_axes"><span class="label">Show axes</span></div>
+                </div>
+            </div>
+
+            <div class="menu">
+                <span class="trigger">Tools</span>
+                <div class="dropdown">
+                    <div class="item has-sub"><span class="label">Camera</span><span class="chev">&#8250;</span>
+                        <div class="submenu">
+                            <div class="item disabled"><span class="label">Fly Mode</span></div>
+                            <div class="item" act="reset_view"><span class="label">Orbit Mode</span></div>
+                            <div class="item disabled"><span class="label">Walk Mode</span></div>
+                        </div>
+                    </div>
+                    <div class="sep"/>
+                    <div class="item" act="tool_select"><span class="label">Point Selection</span></div>
+                    <div class="item" act="tool_move"><span class="label">Move</span></div>
+                    <div class="item" act="tool_line"><span class="label">Line</span></div>
+                    <div class="item" act="tool_pushpull"><span class="label">Push / Pull</span></div>
+                </div>
+            </div>
+
+            <div class="menu">
+                <span class="trigger">Window</span>
+                <div class="dropdown">
+                    <div class="item" act="material_editor"><span class="label">Material Editor</span></div>
+                    <div class="item" act="appearance"><span class="label">Appearance Settings</span></div>
+                    <div class="item disabled"><span class="label">Console</span></div>
+                </div>
+            </div>
+
+            <div class="menu">
+                <span class="trigger">Help</span>
+                <div class="dropdown">
+                    <div class="item disabled"><span class="label">Documentation</span></div>
+                    <div class="item disabled"><span class="label">Tutorials</span></div>
+                    <div class="sep"/>
+                    <div class="item" act="about"><span class="label">About Urbaxio</span></div>
+                </div>
+            </div>
+
+            <div class="spacer drag"/>
+
+            <div class="pill" act="signin">
+                <span class="pill-label">Sign In</span>
+            </div>
+
+            <!-- Custom window controls (frameless window) -->
+            <div class="winbtn" act="minimize"><div class="ico-min"/></div>
+            <div class="winbtn" act="maximize"><div class="ico-max"/></div>
+            <div class="winbtn close" act="close"><span class="ico-close">&#215;</span></div>
+        </div>
+    </div>
+</body>
+</rml>

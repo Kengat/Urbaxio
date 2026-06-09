@@ -38,6 +38,7 @@ extern "C" {
 #include "camera.h"
 #include "input_handler.h"
 #include "renderer.h"
+#include "UrbaxioUI.h"
 #include "VRManager.h"
 
 #include <SDL2/SDL.h>
@@ -1733,7 +1734,7 @@ int main(int argc, char* argv[]) {
 #endif
     std::cout << "Shell: Starting Urbaxio Application..." << std::endl;
     // --- Initialization ---
-    initialize_engine(); Urbaxio::Engine::Scene* scene_ptr = reinterpret_cast<Urbaxio::Engine::Scene*>(get_engine_scene()); if (!scene_ptr) return 1; if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1; const char* glsl_version = "#version 430 core"; SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE); SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8); SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN); SDL_Window* window = SDL_CreateWindow("Urbaxio", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags); if (!window) { SDL_Quit(); return 1; } SDL_GLContext gl_context = SDL_GL_CreateContext(window); if (!gl_context) { SDL_DestroyWindow(window); SDL_Quit(); return 1; } SDL_GL_MakeCurrent(window, gl_context); SDL_GL_SetSwapInterval(1); if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) { return 1; } std::cout << "Shell: OpenGL Initialized: V:" << glGetString(GL_VERSION) << std::endl; std::cout << "Shell: OpenGL Renderer: " << glGetString(GL_RENDERER) << std::endl; std::cout << "Shell: OpenGL Vendor: " << glGetString(GL_VENDOR) << std::endl; IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; ImGui::StyleColorsDark(); if (!ImGui_ImplSDL2_InitForOpenGL(window, gl_context)) return 1; if (!ImGui_ImplOpenGL3_Init(glsl_version)) return 1;     std::cout << "Shell: All subsystems initialized." << std::endl;
+    initialize_engine(); Urbaxio::Engine::Scene* scene_ptr = reinterpret_cast<Urbaxio::Engine::Scene*>(get_engine_scene()); if (!scene_ptr) return 1; if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1; const char* glsl_version = "#version 430 core"; SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE); SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8); SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS); SDL_Window* window = SDL_CreateWindow("Urbaxio", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags); if (!window) { SDL_Quit(); return 1; } SDL_GLContext gl_context = SDL_GL_CreateContext(window); if (!gl_context) { SDL_DestroyWindow(window); SDL_Quit(); return 1; } SDL_GL_MakeCurrent(window, gl_context); SDL_GL_SetSwapInterval(1); if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) { return 1; } std::cout << "Shell: OpenGL Initialized: V:" << glGetString(GL_VERSION) << std::endl; std::cout << "Shell: OpenGL Renderer: " << glGetString(GL_RENDERER) << std::endl; std::cout << "Shell: OpenGL Vendor: " << glGetString(GL_VENDOR) << std::endl; IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; ImGui::StyleColorsDark(); if (!ImGui_ImplSDL2_InitForOpenGL(window, gl_context)) return 1; if (!ImGui_ImplOpenGL3_Init(glsl_version)) return 1;     std::cout << "Shell: All subsystems initialized." << std::endl;
 
     // --- NEW: Enable Drag and Drop events for the window ---
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
@@ -1802,7 +1803,8 @@ int main(int argc, char* argv[]) {
     glm::vec4 negativeAxisFadeColor(50.f / 255.f, 81.f / 255.f, 86.f / 255.f, 102.f / 255.f);
     float cursorRadius = 15.0f;
     float effectIntensity = 0.8f;
-    
+    Urbaxio::SkyParams skyParams; // <-- NEW: procedural cloud background (configurable below)
+
     // --- Other Settings ---
     float maxLineWidth = renderer.GetMaxLineWidth();
     bool show_style_editor = false;
@@ -1941,6 +1943,7 @@ int main(int argc, char* argv[]) {
     unsigned int importIconTexture = load_icon("import.png");
     unsigned int exportIconTexture = load_icon("export.png");
     unsigned int settingsIconTexture = load_icon("settings.png");
+    unsigned int logoTexture = load_icon("urbaxio_logo.png"); // <-- App logo for the top menu bar
     // ---------------------------------------
 
     // --- NEW: Setup our VR panels using the new system ---
@@ -2006,7 +2009,48 @@ int main(int argc, char* argv[]) {
     float elapsed = std::chrono::duration<float, std::milli>(t2 - t1).count();
     std::cout << "Shell: ✅ GPU resources ready (" << elapsed << "ms)" << std::endl;
 
-    bool should_quit = false; std::cout << "Shell: >>> Entering main loop..." << std::endl;
+    bool should_quit = false;
+
+    // --- Native HTML/CSS UI (RmlUi) ---
+    if (Urbaxio::UI::InitRml(window, display_w, display_h)) {
+        Urbaxio::UI::SetActionCallback([&](const std::string& a) {
+            if (a == "exit" || a == "close") should_quit = true;
+            else if (a == "minimize") SDL_MinimizeWindow(window);
+            else if (a == "maximize") {
+                // Borderless windows don't maximize reliably via SDL_MaximizeWindow,
+                // so toggle manually to/from the display's usable (work-area) bounds.
+                static bool ui_maximized = false;
+                static int restore_x = 0, restore_y = 0, restore_w = 1280, restore_h = 720;
+                if (!ui_maximized) {
+                    SDL_GetWindowPosition(window, &restore_x, &restore_y);
+                    SDL_GetWindowSize(window, &restore_w, &restore_h);
+                    SDL_Rect bounds;
+                    if (SDL_GetDisplayUsableBounds(SDL_GetWindowDisplayIndex(window), &bounds) == 0) {
+                        SDL_SetWindowPosition(window, bounds.x, bounds.y);
+                        SDL_SetWindowSize(window, bounds.w, bounds.h);
+                        ui_maximized = true;
+                    }
+                } else {
+                    SDL_SetWindowPosition(window, restore_x, restore_y);
+                    SDL_SetWindowSize(window, restore_w, restore_h);
+                    ui_maximized = false;
+                }
+            }
+            else if (a == "preferences" || a == "appearance") show_style_editor = true;
+            else if (a == "material_editor") show_material_editor = true;
+            else if (a == "toggle_grid") showGrid = !showGrid;
+            else if (a == "toggle_axes") showAxes = !showAxes;
+            else if (a == "tool_select") toolManager.SetTool(Urbaxio::Tools::ToolType::Select);
+            else if (a == "tool_move") toolManager.SetTool(Urbaxio::Tools::ToolType::Move);
+            else if (a == "tool_line") toolManager.SetTool(Urbaxio::Tools::ToolType::Line);
+            else if (a == "tool_pushpull") toolManager.SetTool(Urbaxio::Tools::ToolType::PushPull);
+            else if (a == "undo") scene_ptr->getCommandManager()->Undo();
+            else if (a == "redo") scene_ptr->getCommandManager()->Redo();
+            else std::cout << "[UI] action: " << a << std::endl;
+        });
+    }
+
+    std::cout << "Shell: >>> Entering main loop..." << std::endl;
     while (!should_quit) {
         SDL_GetWindowSize(window, &display_w, &display_h);
         
@@ -2389,8 +2433,10 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // (Top menu bar is now the native RmlUi HTML/CSS UI — see Urbaxio::UI / resources/ui)
+
         // --- Main Controls Window ---
-        { 
+        {
             ImGui::Begin("Urbaxio Controls");
             ImGui::Text("App avg %.3f ms/f (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::Separator();
@@ -2623,6 +2669,23 @@ int main(int argc, char* argv[]) {
         if (show_style_editor) {
             ImGui::Begin("Appearance Settings", &show_style_editor);
             if (ImGui::CollapsingHeader("Scene Colors")) { ImGui::ColorEdit3("Background", (float*)&clear_color); }
+            if (ImGui::CollapsingHeader("Sky & Clouds", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Checkbox("Enable Cloud Background", &skyParams.enabled);
+                ImGui::BeginDisabled(!skyParams.enabled);
+                ImGui::SeparatorText("Colors");
+                ImGui::ColorEdit3("Sky Top", glm::value_ptr(skyParams.skyTop));
+                ImGui::ColorEdit3("Sky Horizon", glm::value_ptr(skyParams.skyBottom));
+                ImGui::ColorEdit3("Cloud Highlight", glm::value_ptr(skyParams.cloudColor));
+                ImGui::ColorEdit3("Cloud Shadow", glm::value_ptr(skyParams.cloudShadow));
+                ImGui::SeparatorText("Shape");
+                ImGui::SliderFloat("Coverage", &skyParams.coverage, 0.0f, 1.0f);
+                ImGui::SliderFloat("Softness", &skyParams.softness, 0.05f, 1.0f);
+                ImGui::SliderFloat("Cloud Scale", &skyParams.scale, 0.2f, 4.0f);
+                ImGui::SliderFloat("Density", &skyParams.density, 0.0f, 1.0f);
+                ImGui::SliderFloat("Painterly (Dreams)", &skyParams.painterly, 0.0f, 1.0f);
+                ImGui::SliderFloat("Swirl / Vortices", &skyParams.swirl, 0.0f, 1.5f);
+                ImGui::EndDisabled();
+            }
             if (ImGui::CollapsingHeader("Lighting")) { 
                 ImGui::TextDisabled("Light follows camera direction (headlamp mode)");
                 ImGui::SliderFloat("Ambient Strength", &ambientStrength, 0.0f, 1.0f); 
@@ -3545,6 +3608,13 @@ int main(int argc, char* argv[]) {
             glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+            // --- NEW: Procedural cloud background, drawn before the scene ---
+            {
+                glm::mat4 skyView = camera.GetViewMatrix();
+                glm::mat4 skyProj = camera.GetProjectionMatrix((float)display_w / (float)display_h);
+                renderer.RenderSkyBackground(skyView, skyProj, camera.Position, skyParams);
+            }
+
             uint64_t previewObjId = 0;
             const Urbaxio::CadKernel::MeshBuffers* ghostMesh = nullptr;
             const std::vector<unsigned int>* ghostWireframeIndices = nullptr;
@@ -3597,7 +3667,17 @@ int main(int argc, char* argv[]) {
             float uiWidth = uiHeight * aspectRatio;
             
             glm::mat4 uiProjection = glm::ortho(-uiWidth/2.0f, uiWidth/2.0f, -uiHeight/2.0f, uiHeight/2.0f, -10.0f, 10.0f);
-            
+
+            // --- Left "water" dock strip geometry (shared by snapping + rendering) ---
+            // Narrow rectangular bar flush to the left edge, from just under the top menu bar to the bottom.
+            const float menuBarUI = (34.0f / (float)display_h) * uiHeight; // RmlUi top bar height (34px)
+            const float stripHalfW = 0.065f;
+            const float stripCenterX = -uiWidth * 0.5f + stripHalfW;        // flush to the left edge
+            const float stripTopY = uiHeight * 0.5f - menuBarUI;
+            const float stripBottomY = -uiHeight * 0.5f;
+            const float stripCenterY = (stripTopY + stripBottomY) * 0.5f;
+            const float stripHalfH = (stripTopY - stripBottomY) * 0.5f;
+
             // 2. Create Mouse Ray
             // Convert mouse pixels to virtual canvas coordinates
             // FIX: Remove redefinition of mouseX/mouseY by reusing variables from top of frame or getting state without declaring new vars
@@ -3629,7 +3709,7 @@ int main(int argc, char* argv[]) {
             
             // 4. Update UI
             // --- FIX: Pass ctrlDown for resizing logic ---
-            vruiManager.UpdateDesktop(mouseRay, isLeftClicked, isLeftDown, ctrlDown, scrollY);
+            vruiManager.UpdateDesktop(mouseRay, isLeftClicked, isLeftDown, ctrlDown, scrollY, uiWidth * 0.5f, uiHeight * 0.5f, stripCenterX);
             
             // 5. Render UI
             // Clear depth so UI draws on top of 3D scene
@@ -3644,7 +3724,7 @@ int main(int argc, char* argv[]) {
             static bool firstFrameDesktop = true;
             if (firstFrameDesktop) {
                 // Scale factor to make panels readable on desktop (VR panels are tiny real-world size)
-                float desktopScale = 2.5f; 
+                float desktopScale = 1.25f; // half size (was 2.5)
                 
                 // Helper to reset a panel's transform completely (Zero rotation, Clean scale)
                 auto resetPanel = [&](const std::string& name, const glm::vec3& pos, float scale) {
@@ -3693,31 +3773,37 @@ int main(int argc, char* argv[]) {
                 // We just position them to the LEFT of the parent.
                 // 0.25f is roughly the width of a panel in local space.
                 
+                // Child settings panels are 1.5x bigger on desktop (easier to read), open to the RIGHT.
+                const float subScale = 1.5f;
                 if (auto* drawSettings = vruiManager.GetPanel("DrawToolSettings")) {
                     drawSettings->SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
-                    // Reset to identity rotation, translate left
-                    drawSettings->GetOffsetTransform() = glm::translate(glm::mat4(1.0f), glm::vec3(-0.22f, 0.0f, 0.0f)); 
+                    drawSettings->GetOffsetTransform() = glm::translate(glm::mat4(1.0f), glm::vec3(0.22f * subScale, 0.0f, 0.0f))
+                                                       * glm::scale(glm::mat4(1.0f), glm::vec3(subScale));
                 }
                 if (auto* sculptSettings = vruiManager.GetPanel("SculptToolSettings")) {
                     sculptSettings->SetVisibilityMode(Urbaxio::UI::VisibilityMode::TOGGLE_VIA_FLAG);
-                    // Reset to identity rotation, translate left
-                    sculptSettings->GetOffsetTransform() = glm::translate(glm::mat4(1.0f), glm::vec3(-0.22f, 0.0f, 0.0f)); 
+                    sculptSettings->GetOffsetTransform() = glm::translate(glm::mat4(1.0f), glm::vec3(0.22f * subScale, 0.0f, 0.0f))
+                                                         * glm::scale(glm::mat4(1.0f), glm::vec3(subScale));
                 }
                 
                 firstFrameDesktop = false;
             }
             
+            // --- Render the left "water" dock strip (plain rectangle, behind the panels) ---
+            {
+                glm::mat4 stripModel = glm::translate(glm::mat4(1.0f), glm::vec3(stripCenterX, stripCenterY, -0.05f))
+                                     * glm::scale(glm::mat4(1.0f), glm::vec3(stripHalfW * 2.0f, stripHalfH * 2.0f, 1.0f));
+                renderer.RenderVRPanel(glm::mat4(1.0f), uiProjection, stripModel, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.4f);
+            }
+
             vruiManager.RenderDesktop(renderer, textRenderer, uiProjection);
 
             // --- NEW: Render Panel Manager Button (Top-Left Corner) ---
             if (menuSphereWidget) {
-                // 1. Calculate position: Top-Left with padding
-                float padding = 0.15f;
-                // Ortho top-left is (-W/2, H/2)
-                glm::vec3 buttonPos(-uiWidth/2.0f + padding, uiHeight/2.0f - padding, 0.0f);
-                
-                // Scale for 2D visibility. Kept modest so the button isn't oversized on desktop.
-                float buttonScale = 7.0f;
+                // 1. Position at the very top of the water strip, just under the menu bar.
+                float buttonScale = (stripHalfW * 2.0f * 0.82f) / 0.025f; // fit the strip width (base ~0.025)
+                float buttonRadius = 0.025f * 0.5f * buttonScale;
+                glm::vec3 buttonPos(stripCenterX, stripTopY - buttonRadius - 0.01f, 0.0f);
 
                 // 2. Create Model Matrix (Flat facing screen)
                 glm::mat4 buttonModel = glm::translate(glm::mat4(1.0f), buttonPos) * 
@@ -3755,12 +3841,20 @@ int main(int argc, char* argv[]) {
             }
             // ---------------------------
         }
-            
+
+        // --- Native HTML/CSS UI overlay (RmlUi), drawn on top of everything ---
+        if (!vr_mode) {
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, display_w, display_h); // ensure UI spans the full window
+            Urbaxio::UI::RenderRml(display_w, display_h); // sizes, updates and renders the UI
+        }
+
         SDL_GL_SwapWindow(window);
     }
 
     std::cout << "Shell: <<< Exiting main loop." << std::endl;
-    std::cout << "Shell: Cleaning up..." << std::endl; 
+    std::cout << "Shell: Cleaning up..." << std::endl;
+    Urbaxio::UI::ShutdownRml();
     if (vrManager) vrManager->Shutdown();
     // --- Texture cleanup ---
     if (scene_ptr && scene_ptr->getMaterialManager()) {

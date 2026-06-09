@@ -376,7 +376,8 @@ void VRPanel::Update(const Ray& worldRay, const glm::mat4& parentTransform, cons
 }
 
 // --- NEW: Desktop Update Implementation ---
-void VRPanel::UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHeld, bool isCtrlHeld, float scrollY) {
+void VRPanel::UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHeld, bool isCtrlHeld, float scrollY,
+                           float uiHalfW, float uiHalfH, float dockCenterX) {
     // Animation logic (same as VR)
     const float ANIM_SPEED = 0.1f;
     float targetAlpha = isVisible_ ? 1.0f : 0.0f;
@@ -386,10 +387,35 @@ void VRPanel::UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHe
     float targetT = minimizeTargetState_ ? 1.0f : 0.0f;
     minimizeT_ += (targetT - minimizeT_) * ANIM_SPEED;
 
+    // Dock dissolve animation (panel chrome melts into the left "water" strip).
+    dockT_ += ((isDocked_ ? 1.0f : 0.0f) - dockT_) * 0.18f;
+    // Reflow toolbar buttons into a vertical column as the panel dissolves into the water.
+    for (auto& w : widgets_) w->OnDock(dockT_);
+
     // --- FIX: Apply Parent Transform in Desktop Mode ---
     glm::mat4 parentMat = parentPanel_ ? parentPanel_->transform : glm::mat4(1.0f);
-    transform = parentMat * offsetTransform_; 
+    transform = parentMat * offsetTransform_;
     // --------------------------------------------------
+
+    // --- Child (settings) panels: open to the RIGHT of the parent by default,
+    //     flip to the LEFT when the right side would run off the screen edge. ---
+    if (parentPanel_ != nullptr && uiHalfW > 0.0f && !isGrabbing && !isResizing_ && !isChangingProportions_) {
+        float pScale = glm::length(glm::vec3(parentMat[0]));
+        float localScale = glm::length(glm::vec3(offsetTransform_[0])); // this panel's own scale (e.g. 1.5x)
+        float pCenterX = parentMat[3].x;
+        const float gap = 0.22f * localScale;    // side offset scales with the (bigger) child
+        float halfW = size_.x * 0.5f * pScale * localScale; // this panel's world half-width
+        float side = 1.0f;                       // default: right
+        float rightCenter = pCenterX + gap * pScale;
+        if (rightCenter + halfW > uiHalfW) {     // doesn't fit on the right -> try left
+            float leftCenter = pCenterX - gap * pScale;
+            if (leftCenter - halfW > -uiHalfW) side = -1.0f;
+        }
+        glm::vec3 t = glm::vec3(offsetTransform_[3]);
+        t.x = side * gap;
+        offsetTransform_[3] = glm::vec4(t, offsetTransform_[3].w);
+        transform = parentMat * offsetTransform_;
+    }
 
     bool isInteractive = (alpha > 0.2f);
 
@@ -489,6 +515,32 @@ void VRPanel::UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHe
         }
     }
 
+    // --- Magnetic docking into the left "water" strip (top-level panels only) ---
+    hasSnap_ = false;
+    bool dockTarget = false;
+    if (parentPanel_ == nullptr && uiHalfW > 0.0f && !isResizing_ && !isChangingProportions_) {
+        float sc = glm::length(glm::vec3(offsetTransform_[0])); // uniform desktop scale
+        float halfH = size_.y * 0.5f * sc;
+        glm::vec3 t = glm::vec3(transform[3]);
+
+        // Keep the panel vertically on-screen.
+        t.y = glm::clamp(t.y, -uiHalfH + halfH, uiHalfH - halfH);
+
+        // Horizontal magnet: only the left water strip.
+        const float dockThresh = 0.22f;
+        if (dockCenterX > -9000.0f && std::abs(t.x - dockCenterX) < dockThresh) {
+            t.x = dockCenterX;
+            hasSnap_ = true;
+            dockTarget = true;
+        }
+
+        snappedCenter_ = t;
+        transform[3] = glm::vec4(t, transform[3].w);
+        // Commit to the offset only when idle (no active drag) -> avoids drag "stickiness".
+        if (!isGrabbing) offsetTransform_[3] = glm::vec4(t, offsetTransform_[3].w);
+    }
+    isDocked_ = dockTarget;
+
     glm::mat4 invTransform = glm::inverse(transform);
     Ray localRay;
     localRay.origin = invTransform * glm::vec4(mouseRay.origin, 1.0f);
@@ -548,6 +600,21 @@ void VRPanel::UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHe
             }
         }
 
+        // Docked pull-out: grab the empty column area (the two lines) to pull the toolbar out of the water.
+        if (dockT_ > 0.4f && isLeftClick && !clickConsumed && !isGrabbing) {
+            bool overButton = false;
+            for (auto& w : widgets_) {
+                if (w->IsVisible() && w->CheckIntersection(localRay).didHit) { overButton = true; break; }
+            }
+            bool overPanel = std::abs(localRay.origin.x) < size_.x * 0.5f &&
+                             std::abs(localRay.origin.y) < size_.y * 0.5f;
+            if (!overButton && overPanel) {
+                isGrabbing = true;
+                lastControllerPosOnPlane_ = mouseRay.origin;
+                clickConsumed = true;
+            }
+        }
+
         // Main Widgets Interaction
         if (!clickConsumed && !isGrabbing && !isResizing_ && !isChangingProportions_ && minimizeT_ < 0.99f) {
             IVRWidget* newHoveredWidget = nullptr;
@@ -578,6 +645,46 @@ void VRPanel::UpdateDesktop(const Ray& mouseRay, bool isLeftClick, bool isLeftHe
         } else {
             if (hoveredWidget_) hoveredWidget_->SetHover(false);
             hoveredWidget_ = nullptr;
+        }
+    }
+
+    // --- "Liquid" droplet deformation (render-only, baked after hit-testing) ---
+    // Stretch along motion, squash perpendicular, with a springy settle (jiggle).
+    {
+        glm::vec2 center(transform[3].x, transform[3].y);
+        glm::vec2 instVel = hasLastCenter_ ? (center - lastCenter_) : glm::vec2(0.0f);
+        lastCenter_ = center;
+        hasLastCenter_ = true;
+        deformVel_ = glm::mix(deformVel_, instVel, 0.5f);
+
+        float speed = glm::length(deformVel_);
+        const float K = 7.0f;            // velocity -> stretch gain
+        const float MAX_STRETCH = 0.33f;
+        float target = glm::clamp(speed * K, 0.0f, MAX_STRETCH);
+        if (speed > 1e-4f) {
+            glm::vec2 d = deformVel_ / speed;
+            glm::vec2 sd = glm::mix(stretchDir_, d, 0.4f);
+            float l = glm::length(sd);
+            if (l > 1e-4f) stretchDir_ = sd / l;
+        }
+        // Spring toward target with overshoot for the droplet settle.
+        const float stiffness = 0.35f, damping = 0.62f;
+        springStretchVel_ += (target - springStretch_) * stiffness;
+        springStretchVel_ *= damping;
+        springStretch_ += springStretchVel_;
+
+        if (std::abs(springStretch_) > 1e-4f) {
+            float along = 1.0f + springStretch_;
+            float perp  = 1.0f / (1.0f + springStretch_); // area-preserving jelly
+            float ang = std::atan2(stretchDir_.y, stretchDir_.x);
+            float c = std::cos(ang), s = std::sin(ang);
+            glm::mat2 R(c, s, -s, c);                 // column-major
+            glm::mat2 S(along, 0.0f, 0.0f, perp);
+            glm::mat2 M = R * S * glm::transpose(R);
+            glm::mat4 deform(1.0f);
+            deform[0][0] = M[0][0]; deform[0][1] = M[0][1];
+            deform[1][0] = M[1][0]; deform[1][1] = M[1][1];
+            transform = transform * deform;          // scales around the panel center
         }
     }
 }
@@ -654,7 +761,23 @@ void VRPanel::Render(Urbaxio::Renderer& renderer, Urbaxio::TextRenderer& textRen
     // This ensures capsule shape when panel is narrow in any direction
     float normalizedRadius = currentRadius / std::min(currentSize.x, currentSize.y);
     normalizedRadius = std::min(normalizedRadius, 0.5f); // Clamp to 0.5 (full capsule)
-    renderer.RenderVRPanel(view, projection, backgroundModel, glm::vec3(0.43f, 0.65f, 0.82f), normalizedRadius, 0.25f * alpha);
+    // Background "card" dissolves as the panel docks into the water strip (only buttons remain).
+    renderer.RenderVRPanel(view, projection, backgroundModel, glm::vec3(0.43f, 0.65f, 0.82f), normalizedRadius, 0.25f * alpha * (1.0f - dockT_));
+
+    // --- Docked: two soft grab handles (top & bottom) to pull the toolbar back out of the water ---
+    if (dockT_ > 0.01f && minimizeT_ < 0.5f) {
+        float lineAlpha = dockT_ * 0.5f * alpha;
+        float lineW = size_.x * 0.30f;   // short, centered grip
+        float lineH = 0.008f;            // thin
+        float lineY = size_.y * 0.5f - 0.022f;
+        for (int s = -1; s <= 1; s += 2) {
+            glm::mat4 lineModel = transform
+                                * glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, lineY * (float)s, 0.02f))
+                                * glm::scale(glm::mat4(1.0f), glm::vec3(lineW, lineH, 1.0f));
+            // Fully rounded ends (capsule), soft cool-white.
+            renderer.RenderVRPanel(view, projection, lineModel, glm::vec3(0.88f, 0.92f, 1.0f), 0.5f, lineAlpha);
+        }
+    }
     
     // --- 4. Собираем ВСЕ виджеты (основные и служебные) для сортировки ---
     std::vector<IVRWidget*> allWidgetsToRender;
